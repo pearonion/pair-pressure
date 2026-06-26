@@ -33,11 +33,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "VNH|Round")
 	FVNHAccusationResult GetAccusationResult() const { return AccusationResult; }
 
+	UFUNCTION(BlueprintPure, Category = "VNH|Round")
+	AActor* GetPossessedShopper() const { return PossessedShopper; }
+
 	void SetRoundPhase(EVNHRoundPhase NewPhase, float NewPhaseEndsAtServerTime);
 	void SetRoundNumber(int32 NewRoundNumber);
 	void SetTestsRemaining(int32 NewTestsRemaining);
 	void SetActivePublicTest(EVNHPublicTestType NewActivePublicTest);
 	void SetAccusationResult(const FVNHAccusationResult& NewAccusationResult);
+	void SetPossessedShopper(AActor* NewPossessedShopper);
 	void ClearRoundOutcome();
 
 private:
@@ -59,6 +63,9 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_AccusationResult, BlueprintReadOnly, Category = "VNH|Round", meta = (AllowPrivateAccess = "true"))
 	FVNHAccusationResult AccusationResult;
 
+	UPROPERTY(ReplicatedUsing = OnRep_PossessedShopper, BlueprintReadOnly, Category = "VNH|Round", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<AActor> PossessedShopper = nullptr;
+
 	UFUNCTION()
 	void OnRep_RoundPhase();
 
@@ -67,4 +74,7 @@ private:
 
 	UFUNCTION()
 	void OnRep_AccusationResult();
+
+	UFUNCTION()
+	void OnRep_PossessedShopper();
 };

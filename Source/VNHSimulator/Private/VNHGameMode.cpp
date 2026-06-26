@@ -72,6 +72,7 @@ void AVNHGameMode::AdvanceRoundPhase()
 	switch (VNHGameState->GetRoundPhase())
 	{
 	case EVNHRoundPhase::AssigningRoles:
+		PossessAlienShopper();
 		EnterPhase(EVNHRoundPhase::AlienSetup, PhaseTiming.AlienSetupSeconds);
 		break;
 	case EVNHRoundPhase::AlienSetup:
@@ -199,6 +200,55 @@ bool AVNHGameMode::IsHunterController(const APlayerController* PlayerController)
 
 	const AVNHPlayerState* VNHPlayerState = PlayerController->GetPlayerState<AVNHPlayerState>();
 	return VNHPlayerState && VNHPlayerState->IsHunter();
+}
+
+APlayerController* AVNHGameMode::FindControllerForRole(EVNHPlayerRole Role) const
+{
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PlayerController = It->Get();
+		const AVNHPlayerState* VNHPlayerState = PlayerController ? PlayerController->GetPlayerState<AVNHPlayerState>() : nullptr;
+		if (VNHPlayerState && VNHPlayerState->GetRole() == Role)
+		{
+			return PlayerController;
+		}
+	}
+
+	return nullptr;
+}
+
+AVNHShopperCharacter* AVNHGameMode::SelectAlienShopper() const
+{
+	TArray<AVNHShopperCharacter*> EligibleShoppers;
+	for (TActorIterator<AVNHShopperCharacter> It(GetWorld()); It; ++It)
+	{
+		if (!It->IsPossessedByAlien())
+		{
+			EligibleShoppers.Add(*It);
+		}
+	}
+
+	if (EligibleShoppers.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	return EligibleShoppers[FMath::RandRange(0, EligibleShoppers.Num() - 1)];
+}
+
+void AVNHGameMode::PossessAlienShopper()
+{
+	AVNHGameState* VNHGameState = GetVNHGameState();
+	APlayerController* AlienController = FindControllerForRole(EVNHPlayerRole::Alien);
+	AVNHShopperCharacter* Shopper = SelectAlienShopper();
+	if (!VNHGameState || !AlienController || !Shopper)
+	{
+		return;
+	}
+
+	Shopper->SetPossessedByAlien(true);
+	AlienController->Possess(Shopper);
+	VNHGameState->SetPossessedShopper(Shopper);
 }
 
 void AVNHGameMode::ApplyPublicTestToShoppers(EVNHPublicTestType TestType)

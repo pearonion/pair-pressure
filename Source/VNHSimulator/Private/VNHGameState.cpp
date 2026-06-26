@@ -17,6 +17,7 @@ void AVNHGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(AVNHGameState, TestsRemaining);
 	DOREPLIFETIME(AVNHGameState, ActivePublicTest);
 	DOREPLIFETIME(AVNHGameState, AccusationResult);
+	DOREPLIFETIME(AVNHGameState, PossessedShopper);
 }
 
 void AVNHGameState::SetRoundPhase(EVNHRoundPhase NewPhase, float NewPhaseEndsAtServerTime)
@@ -63,12 +64,23 @@ void AVNHGameState::SetAccusationResult(const FVNHAccusationResult& NewAccusatio
 	}
 }
 
+void AVNHGameState::SetPossessedShopper(AActor* NewPossessedShopper)
+{
+	if (HasAuthority())
+	{
+		PossessedShopper = NewPossessedShopper;
+		OnRep_PossessedShopper();
+	}
+}
+
 void AVNHGameState::ClearRoundOutcome()
 {
 	if (HasAuthority())
 	{
 		AccusationResult = FVNHAccusationResult();
+		PossessedShopper = nullptr;
 		OnRep_AccusationResult();
+		OnRep_PossessedShopper();
 	}
 }
 
@@ -81,5 +93,9 @@ void AVNHGameState::OnRep_ActivePublicTest()
 }
 
 void AVNHGameState::OnRep_AccusationResult()
+{
+}
+
+void AVNHGameState::OnRep_PossessedShopper()
 {
 }
