@@ -5,6 +5,8 @@
 #include "VNHGameplayTypes.h"
 #include "VNHRoutineComponent.generated.h"
 
+class AVNHShopperWaypoint;
+
 UENUM(BlueprintType)
 enum class EVNHShopperContext : uint8
 {
@@ -63,6 +65,18 @@ public:
 	UFUNCTION(BlueprintPure, Category = "VNH|Routine")
 	FVNHShopperRoutineSnapshot GetSnapshot() const { return Snapshot; }
 
+	UFUNCTION(BlueprintPure, Category = "VNH|Routine")
+	bool IsRoutinePaused() const { return Snapshot.bPausedForPossession; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Routine")
+	AVNHShopperWaypoint* GetCurrentWaypoint() const;
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Routine")
+	void SetRoutineWaypoints(const TArray<AVNHShopperWaypoint*>& NewWaypoints);
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Routine")
+	void AdvanceToNextWaypoint();
+
 	UFUNCTION(BlueprintCallable, Category = "VNH|Routine")
 	void SetContext(EVNHShopperContext NewContext, FName NewSuggestedNextActivity);
 
@@ -81,6 +95,12 @@ public:
 private:
 	UPROPERTY(ReplicatedUsing = OnRep_Snapshot, EditAnywhere, BlueprintReadOnly, Category = "VNH|Routine", meta = (AllowPrivateAccess = "true"))
 	FVNHShopperRoutineSnapshot Snapshot;
+
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "VNH|Routine", meta = (AllowPrivateAccess = "true"))
+	TArray<TObjectPtr<AVNHShopperWaypoint>> RoutineWaypoints;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Routine", meta = (AllowPrivateAccess = "true"))
+	int32 CurrentWaypointIndex = 0;
 
 	UFUNCTION()
 	void OnRep_Snapshot();

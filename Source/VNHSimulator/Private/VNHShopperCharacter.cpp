@@ -1,10 +1,13 @@
 #include "VNHShopperCharacter.h"
 
+#include "VNHShopperAIController.h"
 #include "Net/UnrealNetwork.h"
 
 AVNHShopperCharacter::AVNHShopperCharacter()
 {
 	bReplicates = true;
+	AIControllerClass = AVNHShopperAIController::StaticClass();
+	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 
 	RoutineComponent = CreateDefaultSubobject<UVNHRoutineComponent>(TEXT("RoutineComponent"));
 }

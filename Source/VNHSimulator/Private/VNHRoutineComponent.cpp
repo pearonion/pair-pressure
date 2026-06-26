@@ -1,6 +1,7 @@
 #include "VNHRoutineComponent.h"
 
 #include "Net/UnrealNetwork.h"
+#include "VNHShopperWaypoint.h"
 
 UVNHRoutineComponent::UVNHRoutineComponent()
 {
@@ -13,6 +14,61 @@ void UVNHRoutineComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(UVNHRoutineComponent, Snapshot);
+	DOREPLIFETIME(UVNHRoutineComponent, CurrentWaypointIndex);
+}
+
+AVNHShopperWaypoint* UVNHRoutineComponent::GetCurrentWaypoint() const
+{
+	if (!RoutineWaypoints.IsValidIndex(CurrentWaypointIndex))
+	{
+		return nullptr;
+	}
+
+	return RoutineWaypoints[CurrentWaypointIndex];
+}
+
+void UVNHRoutineComponent::SetRoutineWaypoints(const TArray<AVNHShopperWaypoint*>& NewWaypoints)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	RoutineWaypoints.Reset(NewWaypoints.Num());
+	for (AVNHShopperWaypoint* Waypoint : NewWaypoints)
+	{
+		if (IsValid(Waypoint))
+		{
+			RoutineWaypoints.Add(Waypoint);
+		}
+	}
+
+	CurrentWaypointIndex = 0;
+	if (AVNHShopperWaypoint* Waypoint = GetCurrentWaypoint())
+	{
+		Snapshot.Context = Waypoint->GetContext();
+		Snapshot.SuggestedNextActivity = Waypoint->GetSuggestedNextActivity();
+		Snapshot.HeldProp = Waypoint->GetHeldProp();
+		BroadcastChanged();
+	}
+}
+
+void UVNHRoutineComponent::AdvanceToNextWaypoint()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority() || RoutineWaypoints.IsEmpty())
+	{
+		return;
+	}
+
+	CurrentWaypointIndex = RoutineWaypoints.IsValidIndex(CurrentWaypointIndex + 1) ? CurrentWaypointIndex + 1 : 0;
+
+	if (AVNHShopperWaypoint* Waypoint = GetCurrentWaypoint())
+	{
+		Snapshot.Context = Waypoint->GetContext();
+		Snapshot.SuggestedNextActivity = Waypoint->GetSuggestedNextActivity();
+		Snapshot.HeldProp = Waypoint->GetHeldProp();
+		BroadcastChanged();
+	}
 }
 
 void UVNHRoutineComponent::SetContext(EVNHShopperContext NewContext, FName NewSuggestedNextActivity)
