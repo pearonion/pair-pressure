@@ -15,6 +15,8 @@ void AVNHGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(AVNHGameState, PhaseEndsAtServerTime);
 	DOREPLIFETIME(AVNHGameState, RoundNumber);
 	DOREPLIFETIME(AVNHGameState, TestsRemaining);
+	DOREPLIFETIME(AVNHGameState, ActivePublicTest);
+	DOREPLIFETIME(AVNHGameState, AccusationResult);
 }
 
 void AVNHGameState::SetRoundPhase(EVNHRoundPhase NewPhase, float NewPhaseEndsAtServerTime)
@@ -43,6 +45,41 @@ void AVNHGameState::SetTestsRemaining(int32 NewTestsRemaining)
 	}
 }
 
+void AVNHGameState::SetActivePublicTest(EVNHPublicTestType NewActivePublicTest)
+{
+	if (HasAuthority())
+	{
+		ActivePublicTest = NewActivePublicTest;
+		OnRep_ActivePublicTest();
+	}
+}
+
+void AVNHGameState::SetAccusationResult(const FVNHAccusationResult& NewAccusationResult)
+{
+	if (HasAuthority())
+	{
+		AccusationResult = NewAccusationResult;
+		OnRep_AccusationResult();
+	}
+}
+
+void AVNHGameState::ClearRoundOutcome()
+{
+	if (HasAuthority())
+	{
+		AccusationResult = FVNHAccusationResult();
+		OnRep_AccusationResult();
+	}
+}
+
 void AVNHGameState::OnRep_RoundPhase()
+{
+}
+
+void AVNHGameState::OnRep_ActivePublicTest()
+{
+}
+
+void AVNHGameState::OnRep_AccusationResult()
 {
 }

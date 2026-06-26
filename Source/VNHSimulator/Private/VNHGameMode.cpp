@@ -1,14 +1,18 @@
 #include "VNHGameMode.h"
 
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
 #include "TimerManager.h"
 #include "VNHGameState.h"
+#include "VNHPlayerController.h"
 #include "VNHPlayerState.h"
+#include "VNHShopperCharacter.h"
 
 AVNHGameMode::AVNHGameMode()
 {
 	GameStateClass = AVNHGameState::StaticClass();
+	PlayerControllerClass = AVNHPlayerController::StaticClass();
 	PlayerStateClass = AVNHPlayerState::StaticClass();
 }
 
@@ -51,6 +55,7 @@ void AVNHGameMode::TryStartRound()
 	{
 		VNHGameState->SetRoundNumber(VNHGameState->GetRoundNumber() + 1);
 		VNHGameState->SetTestsRemaining(2);
+		VNHGameState->ClearRoundOutcome();
 	}
 
 	EnterPhase(EVNHRoundPhase::AssigningRoles, 3.0f);
@@ -90,6 +95,47 @@ void AVNHGameMode::AdvanceRoundPhase()
 	default:
 		break;
 	}
+}
+
+void AVNHGameMode::RequestPublicTest(AVNHPlayerController* RequestingPlayer, EVNHPublicTestType TestType)
+{
+	AVNHGameState* VNHGameState = GetVNHGameState();
+	if (!VNHGameState || !IsHunterController(RequestingPlayer))
+	{
+		return;
+	}
+
+	if (VNHGameState->GetRoundPhase() != EVNHRoundPhase::Investigation || VNHGameState->GetTestsRemaining() <= 0)
+	{
+		return;
+	}
+
+	VNHGameState->SetTestsRemaining(VNHGameState->GetTestsRemaining() - 1);
+	VNHGameState->SetActivePublicTest(TestType);
+	ApplyPublicTestToShoppers(TestType);
+}
+
+void AVNHGameMode::RequestAccusation(AVNHPlayerController* RequestingPlayer, AVNHShopperCharacter* AccusedShopper)
+{
+	AVNHGameState* VNHGameState = GetVNHGameState();
+	if (!VNHGameState || !IsHunterController(RequestingPlayer) || !AccusedShopper)
+	{
+		return;
+	}
+
+	const EVNHRoundPhase CurrentPhase = VNHGameState->GetRoundPhase();
+	if (CurrentPhase != EVNHRoundPhase::Investigation && CurrentPhase != EVNHRoundPhase::Accusation)
+	{
+		return;
+	}
+
+	FVNHAccusationResult Result;
+	Result.AccusedActor = AccusedShopper;
+	Result.bCorrect = AccusedShopper->IsPossessedByAlien();
+	Result.bResolved = true;
+	VNHGameState->SetAccusationResult(Result);
+
+	EnterPhase(EVNHRoundPhase::Reveal, PhaseTiming.RevealSeconds);
 }
 
 AVNHGameState* AVNHGameMode::GetVNHGameState() const
@@ -142,4 +188,23 @@ void AVNHGameMode::EnterPhase(EVNHRoundPhase NewPhase, float DurationSeconds)
 int32 AVNHGameMode::CountConnectedPlayers() const
 {
 	return GameState ? GameState->PlayerArray.Num() : 0;
+}
+
+bool AVNHGameMode::IsHunterController(const APlayerController* PlayerController) const
+{
+	if (!PlayerController)
+	{
+		return false;
+	}
+
+	const AVNHPlayerState* VNHPlayerState = PlayerController->GetPlayerState<AVNHPlayerState>();
+	return VNHPlayerState && VNHPlayerState->IsHunter();
+}
+
+void AVNHGameMode::ApplyPublicTestToShoppers(EVNHPublicTestType TestType)
+{
+	for (TActorIterator<AVNHShopperCharacter> It(GetWorld()); It; ++It)
+	{
+		It->ApplyPublicTest(TestType);
+	}
 }

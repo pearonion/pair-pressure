@@ -6,7 +6,9 @@
 #include "VNHGameMode.generated.h"
 
 class AVNHGameState;
+class AVNHPlayerController;
 class AVNHPlayerState;
+class AVNHShopperCharacter;
 
 UCLASS()
 class VNHSIMULATOR_API AVNHGameMode : public AGameModeBase
@@ -26,6 +28,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Round")
 	void AdvanceRoundPhase();
 
+	void RequestPublicTest(AVNHPlayerController* RequestingPlayer, EVNHPublicTestType TestType);
+	void RequestAccusation(AVNHPlayerController* RequestingPlayer, AVNHShopperCharacter* AccusedShopper);
+
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Round")
 	int32 RequiredPlayers = 2;
@@ -40,4 +45,6 @@ private:
 	void AssignRoles();
 	void EnterPhase(EVNHRoundPhase NewPhase, float DurationSeconds);
 	int32 CountConnectedPlayers() const;
+	bool IsHunterController(const APlayerController* PlayerController) const;
+	void ApplyPublicTestToShoppers(EVNHPublicTestType TestType);
 };

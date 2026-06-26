@@ -27,9 +27,18 @@ public:
 	UFUNCTION(BlueprintPure, Category = "VNH|Round")
 	int32 GetTestsRemaining() const { return TestsRemaining; }
 
+	UFUNCTION(BlueprintPure, Category = "VNH|Round")
+	EVNHPublicTestType GetActivePublicTest() const { return ActivePublicTest; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Round")
+	FVNHAccusationResult GetAccusationResult() const { return AccusationResult; }
+
 	void SetRoundPhase(EVNHRoundPhase NewPhase, float NewPhaseEndsAtServerTime);
 	void SetRoundNumber(int32 NewRoundNumber);
 	void SetTestsRemaining(int32 NewTestsRemaining);
+	void SetActivePublicTest(EVNHPublicTestType NewActivePublicTest);
+	void SetAccusationResult(const FVNHAccusationResult& NewAccusationResult);
+	void ClearRoundOutcome();
 
 private:
 	UPROPERTY(ReplicatedUsing = OnRep_RoundPhase, BlueprintReadOnly, Category = "VNH|Round", meta = (AllowPrivateAccess = "true"))
@@ -44,6 +53,18 @@ private:
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Round", meta = (AllowPrivateAccess = "true"))
 	int32 TestsRemaining = 2;
 
+	UPROPERTY(ReplicatedUsing = OnRep_ActivePublicTest, BlueprintReadOnly, Category = "VNH|Round", meta = (AllowPrivateAccess = "true"))
+	EVNHPublicTestType ActivePublicTest = EVNHPublicTestType::Freeze;
+
+	UPROPERTY(ReplicatedUsing = OnRep_AccusationResult, BlueprintReadOnly, Category = "VNH|Round", meta = (AllowPrivateAccess = "true"))
+	FVNHAccusationResult AccusationResult;
+
 	UFUNCTION()
 	void OnRep_RoundPhase();
+
+	UFUNCTION()
+	void OnRep_ActivePublicTest();
+
+	UFUNCTION()
+	void OnRep_AccusationResult();
 };

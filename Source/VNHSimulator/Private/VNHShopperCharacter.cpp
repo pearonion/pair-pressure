@@ -54,6 +54,21 @@ bool AVNHShopperCharacter::UseActNatural()
 	return true;
 }
 
+void AVNHShopperCharacter::ApplyPublicTest(EVNHPublicTestType TestType)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (RoutineComponent)
+	{
+		RoutineComponent->SetContext(EVNHShopperContext::Reacting, RoutineComponent->GetSnapshot().SuggestedNextActivity);
+	}
+
+	OnPublicTestReceived.Broadcast(TestType);
+}
+
 void AVNHShopperCharacter::OnRep_PossessedByAlien()
 {
 }

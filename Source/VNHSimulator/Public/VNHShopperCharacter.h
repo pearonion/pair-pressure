@@ -6,6 +6,7 @@
 #include "VNHShopperCharacter.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FVNHActNaturalUsed, EVNHActNaturalRecovery, Recovery);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FVNHPublicTestReceived, EVNHPublicTestType, TestType);
 
 UCLASS()
 class VNHSIMULATOR_API AVNHShopperCharacter : public ACharacter
@@ -32,8 +33,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Shopper")
 	bool UseActNatural();
 
+	UFUNCTION(BlueprintCallable, Category = "VNH|Shopper")
+	void ApplyPublicTest(EVNHPublicTestType TestType);
+
 	UPROPERTY(BlueprintAssignable, Category = "VNH|Shopper")
 	FVNHActNaturalUsed OnActNaturalUsed;
+
+	UPROPERTY(BlueprintAssignable, Category = "VNH|Shopper")
+	FVNHPublicTestReceived OnPublicTestReceived;
 
 private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Shopper", meta = (AllowPrivateAccess = "true"))

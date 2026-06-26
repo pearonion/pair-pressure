@@ -53,3 +53,18 @@ struct FVNHPhaseTiming
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Round")
 	float RevealSeconds = 10.0f;
 };
+
+USTRUCT(BlueprintType)
+struct FVNHAccusationResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Round")
+	TObjectPtr<AActor> AccusedActor = nullptr;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Round")
+	bool bCorrect = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Round")
+	bool bResolved = false;
+};
