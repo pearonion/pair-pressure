@@ -16,20 +16,20 @@ public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Player")
-	EVNHPlayerRole GetRole() const { return Role; }
+	EVNHPlayerRole GetRole() const { return AssignedRole; }
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Player")
-	bool IsAlien() const { return Role == EVNHPlayerRole::Alien; }
+	bool IsAlien() const { return AssignedRole == EVNHPlayerRole::Alien; }
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Player")
-	bool IsHunter() const { return Role == EVNHPlayerRole::Hunter; }
+	bool IsHunter() const { return AssignedRole == EVNHPlayerRole::Hunter; }
 
 	void SetRole(EVNHPlayerRole NewRole);
 
 private:
-	UPROPERTY(ReplicatedUsing = OnRep_Role, BlueprintReadOnly, Category = "VNH|Player", meta = (AllowPrivateAccess = "true"))
-	EVNHPlayerRole Role = EVNHPlayerRole::Unassigned;
+	UPROPERTY(ReplicatedUsing = OnRep_AssignedRole, BlueprintReadOnly, Category = "VNH|Player", meta = (AllowPrivateAccess = "true"))
+	EVNHPlayerRole AssignedRole = EVNHPlayerRole::Unassigned;
 
 	UFUNCTION()
-	void OnRep_Role();
+	void OnRep_AssignedRole();
 };

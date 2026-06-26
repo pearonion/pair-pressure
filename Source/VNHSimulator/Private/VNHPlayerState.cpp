@@ -11,18 +11,18 @@ void AVNHPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
-	DOREPLIFETIME(AVNHPlayerState, Role);
+	DOREPLIFETIME(AVNHPlayerState, AssignedRole);
 }
 
 void AVNHPlayerState::SetRole(EVNHPlayerRole NewRole)
 {
-	if (HasAuthority() && Role != NewRole)
+	if (HasAuthority() && AssignedRole != NewRole)
 	{
-		Role = NewRole;
-		OnRep_Role();
+		AssignedRole = NewRole;
+		OnRep_AssignedRole();
 	}
 }
 
-void AVNHPlayerState::OnRep_Role()
+void AVNHPlayerState::OnRep_AssignedRole()
 {
 }
