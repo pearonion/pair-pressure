@@ -46,7 +46,7 @@ private:
 	void EnterPhase(EVNHRoundPhase NewPhase, float DurationSeconds);
 	int32 CountConnectedPlayers() const;
 	bool IsHunterController(const APlayerController* PlayerController) const;
-	APlayerController* FindControllerForRole(EVNHPlayerRole Role) const;
+	APlayerController* FindControllerForRole(EVNHPlayerRole TargetRole) const;
 	AVNHShopperCharacter* SelectAlienShopper() const;
 	void PossessAlienShopper();
 	void ApplyPublicTestToShoppers(EVNHPublicTestType TestType);

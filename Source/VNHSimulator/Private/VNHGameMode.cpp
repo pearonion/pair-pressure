@@ -202,13 +202,13 @@ bool AVNHGameMode::IsHunterController(const APlayerController* PlayerController)
 	return VNHPlayerState && VNHPlayerState->IsHunter();
 }
 
-APlayerController* AVNHGameMode::FindControllerForRole(EVNHPlayerRole Role) const
+APlayerController* AVNHGameMode::FindControllerForRole(EVNHPlayerRole TargetRole) const
 {
 	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
 	{
 		APlayerController* PlayerController = It->Get();
 		const AVNHPlayerState* VNHPlayerState = PlayerController ? PlayerController->GetPlayerState<AVNHPlayerState>() : nullptr;
-		if (VNHPlayerState && VNHPlayerState->GetRole() == Role)
+		if (VNHPlayerState && VNHPlayerState->GetRole() == TargetRole)
 		{
 			return PlayerController;
 		}
