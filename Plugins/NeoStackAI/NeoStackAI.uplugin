@@ -1,0 +1,77 @@
+{
+  "FileVersion": 3,
+  "Version": 45,
+  "VersionName": "2.0.45",
+  "FriendlyName": "NeoStack AI",
+  "Description": "AI agents inside the Unreal Editor for asset editing, creation, project indexing, and workflow automation via Lua, MCP, and ACP.",
+  "Category": "Editor",
+  "CreatedBy": "Betide Studio",
+  "CreatedByURL": "https://betide.studio",
+  "DocsURL": "https://docs.neostack.dev",
+  "MarketplaceURL": "com.epicgames.launcher://ue/Fab/product/b4f03b65-7d8b-47f3-aeab-a23284295242",
+  "SupportURL": "https://neostack.dev/support",
+  "EngineVersion": "5.8.0",
+  "CanContainContent": false,
+  "Installed": true,
+  "HasExplicitPlatforms": true,
+  "SupportedTargetPlatforms": [
+    "Win64",
+    "Mac",
+    "Linux"
+  ],
+  "Modules": [
+    {
+      "Name": "NeoStackAI",
+      "Type": "EditorNoCommandlet",
+      "LoadingPhase": "PostEngineInit",
+      "PlatformAllowList": [
+        "Win64",
+        "Mac",
+        "Linux"
+      ]
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "EditorScriptingUtilities",
+      "Enabled": true
+    },
+    {
+      "Name": "MovieSceneTextTrack",
+      "Enabled": true
+    },
+    {
+      "Name": "GameplayTagsEditor",
+      "Enabled": true,
+      "Optional": true
+    },
+    {
+      "Name": "SQLiteSupport",
+      "Enabled": true
+    },
+    {
+      "Name": "PythonScriptPlugin",
+      "Enabled": true
+    },
+    {
+      "Name": "Metasound",
+      "Enabled": true,
+      "Optional": true
+    },
+    {
+      "Name": "CommonUI",
+      "Enabled": true,
+      "Optional": true
+    },
+    {
+      "Name": "WorldPartitionHLODUtilities",
+      "Enabled": true,
+      "Optional": true
+    },
+    {
+      "Name": "ToolsetRegistry",
+      "Enabled": true,
+      "Optional": true
+    }
+  ]
+}
