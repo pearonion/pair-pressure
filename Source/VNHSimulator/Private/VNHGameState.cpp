@@ -15,9 +15,33 @@ void AVNHGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(AVNHGameState, PhaseEndsAtServerTime);
 	DOREPLIFETIME(AVNHGameState, RoundNumber);
 	DOREPLIFETIME(AVNHGameState, TestsRemaining);
+	DOREPLIFETIME(AVNHGameState, DirectQuestionsRemaining);
+	DOREPLIFETIME(AVNHGameState, AccusationsRemaining);
 	DOREPLIFETIME(AVNHGameState, ActivePublicTest);
 	DOREPLIFETIME(AVNHGameState, AccusationResult);
 	DOREPLIFETIME(AVNHGameState, PossessedShopper);
+	DOREPLIFETIME(AVNHGameState, LastQuickChatMessage);
+}
+
+namespace
+{
+FText GetVNHQuickChatText(EVNHQuickChatLine Line)
+{
+	switch (Line)
+	{
+	case EVNHQuickChatLine::LookingForShirt:
+		return NSLOCTEXT("VNH", "QuickChatLookingForShirt", "I am looking for a shirt.");
+	case EVNHQuickChatLine::WaitingForFriend:
+		return NSLOCTEXT("VNH", "QuickChatWaitingForFriend", "I am waiting for someone.");
+	case EVNHQuickChatLine::NoThanks:
+		return NSLOCTEXT("VNH", "QuickChatNoThanks", "No thanks, I am good.");
+	case EVNHQuickChatLine::FoundWrongSize:
+		return NSLOCTEXT("VNH", "QuickChatFoundWrongSize", "Wrong size. I will keep looking.");
+	case EVNHQuickChatLine::JustBrowsing:
+	default:
+		return NSLOCTEXT("VNH", "QuickChatJustBrowsing", "Just browsing.");
+	}
+}
 }
 
 void AVNHGameState::SetRoundPhase(EVNHRoundPhase NewPhase, float NewPhaseEndsAtServerTime)
@@ -43,6 +67,22 @@ void AVNHGameState::SetTestsRemaining(int32 NewTestsRemaining)
 	if (HasAuthority())
 	{
 		TestsRemaining = FMath::Max(0, NewTestsRemaining);
+	}
+}
+
+void AVNHGameState::SetDirectQuestionsRemaining(int32 NewDirectQuestionsRemaining)
+{
+	if (HasAuthority())
+	{
+		DirectQuestionsRemaining = FMath::Max(0, NewDirectQuestionsRemaining);
+	}
+}
+
+void AVNHGameState::SetAccusationsRemaining(int32 NewAccusationsRemaining)
+{
+	if (HasAuthority())
+	{
+		AccusationsRemaining = FMath::Max(0, NewAccusationsRemaining);
 	}
 }
 
@@ -73,6 +113,44 @@ void AVNHGameState::SetPossessedShopper(AActor* NewPossessedShopper)
 	}
 }
 
+void AVNHGameState::PublishQuickChat(APlayerState* Speaker, EVNHQuickChatLine Line)
+{
+	if (HasAuthority())
+	{
+		LastQuickChatMessage.Speaker = Speaker;
+		LastQuickChatMessage.Line = Line;
+		LastQuickChatMessage.Text = GetVNHQuickChatText(Line);
+		++LastQuickChatMessage.Serial;
+		OnRep_LastQuickChatMessage();
+	}
+}
+
+FText AVNHGameState::GetRevealSummaryText() const
+{
+	if (!AccusationResult.bResolved)
+	{
+		return NSLOCTEXT("VNH", "RevealPending", "No accusation resolved yet.");
+	}
+
+	const FString AccusedName = GetNameSafe(AccusationResult.AccusedActor);
+	const FString AlienName = GetNameSafe(PossessedShopper);
+	if (AccusationResult.bCorrect)
+	{
+		return FText::FromString(FString::Printf(TEXT("Correct accusation. %s was the Alien."), *AccusedName));
+	}
+
+	return FText::FromString(FString::Printf(TEXT("Wrong accusation. %s was accused, but the Alien was %s."), *AccusedName, *AlienName));
+}
+
+FText AVNHGameState::GetHunterToolsText() const
+{
+	return FText::FromString(FString::Printf(
+		TEXT("Commands %d/2  |  Question %d/1  |  Accuse %d/1"),
+		TestsRemaining,
+		DirectQuestionsRemaining,
+		AccusationsRemaining));
+}
+
 void AVNHGameState::ClearRoundOutcome()
 {
 	if (HasAuthority())
@@ -97,5 +175,9 @@ void AVNHGameState::OnRep_AccusationResult()
 }
 
 void AVNHGameState::OnRep_PossessedShopper()
+{
+}
+
+void AVNHGameState::OnRep_LastQuickChatMessage()
 {
 }

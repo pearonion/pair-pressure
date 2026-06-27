@@ -28,10 +28,25 @@ public:
 	int32 GetTestsRemaining() const { return TestsRemaining; }
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Round")
+	int32 GetDirectQuestionsRemaining() const { return DirectQuestionsRemaining; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Round")
+	int32 GetAccusationsRemaining() const { return AccusationsRemaining; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Round")
 	EVNHPublicTestType GetActivePublicTest() const { return ActivePublicTest; }
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Round")
 	FVNHAccusationResult GetAccusationResult() const { return AccusationResult; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Round")
+	FText GetRevealSummaryText() const;
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Round")
+	FText GetHunterToolsText() const;
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Quick Chat")
+	FVNHQuickChatMessage GetLastQuickChatMessage() const { return LastQuickChatMessage; }
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Round")
 	AActor* GetPossessedShopper() const { return PossessedShopper; }
@@ -39,9 +54,12 @@ public:
 	void SetRoundPhase(EVNHRoundPhase NewPhase, float NewPhaseEndsAtServerTime);
 	void SetRoundNumber(int32 NewRoundNumber);
 	void SetTestsRemaining(int32 NewTestsRemaining);
+	void SetDirectQuestionsRemaining(int32 NewDirectQuestionsRemaining);
+	void SetAccusationsRemaining(int32 NewAccusationsRemaining);
 	void SetActivePublicTest(EVNHPublicTestType NewActivePublicTest);
 	void SetAccusationResult(const FVNHAccusationResult& NewAccusationResult);
 	void SetPossessedShopper(AActor* NewPossessedShopper);
+	void PublishQuickChat(APlayerState* Speaker, EVNHQuickChatLine Line);
 	void ClearRoundOutcome();
 
 private:
@@ -57,6 +75,12 @@ private:
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Round", meta = (AllowPrivateAccess = "true"))
 	int32 TestsRemaining = 2;
 
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Round", meta = (AllowPrivateAccess = "true"))
+	int32 DirectQuestionsRemaining = 1;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Round", meta = (AllowPrivateAccess = "true"))
+	int32 AccusationsRemaining = 1;
+
 	UPROPERTY(ReplicatedUsing = OnRep_ActivePublicTest, BlueprintReadOnly, Category = "VNH|Round", meta = (AllowPrivateAccess = "true"))
 	EVNHPublicTestType ActivePublicTest = EVNHPublicTestType::Freeze;
 
@@ -65,6 +89,9 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_PossessedShopper, BlueprintReadOnly, Category = "VNH|Round", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<AActor> PossessedShopper = nullptr;
+
+	UPROPERTY(ReplicatedUsing = OnRep_LastQuickChatMessage, BlueprintReadOnly, Category = "VNH|Quick Chat", meta = (AllowPrivateAccess = "true"))
+	FVNHQuickChatMessage LastQuickChatMessage;
 
 	UFUNCTION()
 	void OnRep_RoundPhase();
@@ -77,4 +104,7 @@ private:
 
 	UFUNCTION()
 	void OnRep_PossessedShopper();
+
+	UFUNCTION()
+	void OnRep_LastQuickChatMessage();
 };

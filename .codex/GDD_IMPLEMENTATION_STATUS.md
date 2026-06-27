@@ -411,3 +411,117 @@ Do not close, kill, restart, or force-stop the running Unreal Editor unless expl
   - run `vnh.LogShopperAnim`
   - expected for shoppers: Manny mesh, `ABP_Unarmed_C`, animation not paused, rate `1.00`, nonzero `SpeedXY` while moving
   - visually confirm shoppers walk instead of sliding
+
+## 2026-06-27 Updated GDD Core Loop Alignment Pass
+
+### GDD 4 / 8 / 9 / 24 Status
+
+- Added first-class `Human` role support.
+- Updated role assignment to match the new 3+ player MVP rule:
+  - exactly one Hunter
+  - exactly one Alien
+  - all remaining connected players are Humans
+- Raised normal `RequiredPlayers` to 3.
+- Added replicated Hunter tool budgets:
+  - two public commands
+  - one direct question
+  - one accusation
+- Routed direct question through the server so it is Hunter-only, investigation-phase-only, and consumes the one-question budget.
+- Real accusation now consumes the replicated one-accusation budget before entering Reveal.
+- Added Blueprint-facing role reveal text, role goal text, Hunter tool text, and reveal summary text.
+- Added replicated lightweight errand text for non-Hunter players. Alien receives the same kind of normal shopping cover errand so objective/UI structure does not reveal the role.
+- Added quick-chat MVP foundation:
+  - preset bark enum
+  - replicated latest quick-chat message on GameState
+  - `AVNHPlayerController::RequestQuickChat`
+  - `vnh.QuickChat Browse|Shirt|Friend|NoThanks|WrongSize`
+  - temporary default input: `T` / D-pad up sends "Just browsing."
+- Added host-authoritative lobby start skeleton:
+  - normal auto-start on BeginPlay/PostLogin is now gated behind `bAutoStartRoundOnPlayerJoin` and defaults off
+  - `AVNHGameMode::StartRoundFromLobby(APlayerController*)` accepts only the host and requires the normal MVP player count
+  - `AVNHPlayerController::RequestStartRoundFromLobby()` server RPC is ready for `BP_Lobby_PlayButton`
+  - `vnh.StartFromLobby` exercises the same path
+- Changed NPC public-test reactions to auto-run only on NPC shoppers. Player-controlled shopper bodies must react manually, matching the GDD command-read goal.
+- Changed Act Natural availability to player-controlled shopper bodies, not Alien-only, so Human and Alien share the same recovery button path.
+- Updated `vnh.ForceRole` to accept `Human`.
+- Updated the Canvas debug HUD status line to show command/question/accusation budgets.
+
+### Verification
+
+- `git diff --check` passed with only existing Windows CRLF warnings.
+- UHT processed successfully in the external build attempt.
+- Full external compile is still blocked while Live Coding is active in the running editor:
+  - `Unable to build while Live Coding is active. Exit the editor and game, or press Ctrl+Alt+F11...`
+
+### Immediate Test
+
+- Trigger Live Coding or restart editor when ready.
+- Run a 3-client PIE test:
+  - from the host, run `vnh.StartFromLobby`; expected round starts only when 3 players are connected
+  - start round
+  - verify exactly one Hunter, one Alien, one Human
+  - verify Hunter HUD budget starts at `Cmd 2 Q 1 Acc 1`
+  - aim at a shopper and press `E`; expected question budget decrements to `0`
+  - accuse a shopper; expected accusation budget decrements to `0` and Reveal summary reports correct/wrong result
+  - trigger Freeze / Look Here; expected NPC shoppers auto-react while player-controlled bodies must perform manually
+  - press `T` or run `vnh.QuickChat Shirt`; expected latest quick-chat text replicates and appears in interaction/debug feedback
+
+## 2026-06-27 Main Menu / Lobby Pass
+
+### GDD 4 / 28 Status
+
+- Added `UVNHGameInstance` and set it in `DefaultEngine.ini`.
+- Set `GameDefaultMap=/Game/Maps/MainMenu`.
+- Created `/Game/Maps/MainMenu`, `/Game/Maps/Lobby`, and `/Game/UI/WBP_VNHMainMenu`.
+- `/Game/UI/WBP_VNHMainMenu` is intentionally still parented to `UserWidget`; the runtime binds named buttons directly:
+  - `HostPrivateButton`
+  - `HostPublicButton`
+  - `JoinAddressTextBox`
+  - `JoinButton`
+  - `QuitButton`
+  - `MenuStatusText`
+- Main menu host actions open `/Game/Maps/Lobby` as a listen server.
+- Join action travels to the entered address, defaulting to `127.0.0.1`.
+- Added `AVNHLobbyPlayButton`.
+- `AVNHGameMode` now spawns a runtime lobby play button in the Lobby map if one is not already present.
+- `AVNHPlayerController` interaction targeting now supports the lobby play button as well as shoppers.
+- Lobby host start now travels connected players to `/Game/Maps/MVP_ClothingStore?listen?StartRound=1` instead of starting the round inside the lobby.
+- After store travel, `StartRound` waits for the required player count through `PostLogin`, then assigns roles and starts the role reveal flow.
+- Populated `/Game/Maps/Lobby` with saved MVP lobby markers:
+  - start pad
+  - backdrop
+  - waiting lane markers
+  - five additional player starts
+  - play-button light
+- Added a narrow always-on HUD phase overlay:
+  - in `/Game/Maps/Lobby`, players see the connected-player count and lobby readiness state
+  - during `AssigningRoles`, each local player sees their private role reveal, role goal, cover errand, and Hunter tool budget line
+  - during `Reveal`, players see the replicated accusation result summary
+- Expanded quick-chat input beyond the one default bark:
+  - `T`: Just browsing
+  - `Y`: Looking for a shirt
+  - `U`: Waiting for someone
+  - `I`: No thanks
+  - `O`: Wrong size
+  - D-pad up/right/down/left maps to the first four lines
+
+### Verification
+
+- `/Game/UI/WBP_VNHMainMenu` compile log: 0 errors, 0 warnings.
+- Reloaded `/Game/Maps/Lobby` and verified all labeled lobby actors are present.
+- Lobby viewport screenshot confirmed the pad, lanes, player starts, and backdrop are visible.
+- `git diff --check` passed with only Windows CRLF warnings.
+- UE 5.8 UBT through bundled .NET 10:
+  - UHT processed successfully.
+  - C++ compile reached and compiled edited game files after fixing a UE 5.8 checked-format issue in `AVNHShopperCharacter::DescribeAnimationDebugState()`.
+  - Follow-up C++ verifier compiled the role/reveal overlay and expanded quick-chat bindings.
+  - Follow-up C++ verifier compiled the Lobby waiting overlay.
+  - Final link is blocked by the running editor holding `UnrealEditor-VNHSimulator.dll` and NeoStackAI PDB files open.
+
+### Immediate Test
+
+- Restart the editor, or trigger Live Coding if it can relink the game module cleanly.
+- Launch the project to `/Game/Maps/MainMenu`.
+- Click `Host Private`; expected: listen-server Lobby opens.
+- With 3 clients connected, aim at the lobby start pad/button and press `E`; expected: host travels everyone to `/Game/Maps/MVP_ClothingStore`.
+- Expected after store travel: once all 3 players reconnect, one Hunter, one Alien, and remaining Human roles are assigned and the round enters role reveal.

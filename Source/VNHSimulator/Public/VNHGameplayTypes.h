@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "VNHGameplayTypes.generated.h"
 
+class APlayerState;
+
 UENUM(BlueprintType)
 enum class EVNHRoundPhase : uint8
 {
@@ -20,6 +22,7 @@ UENUM(BlueprintType)
 enum class EVNHPlayerRole : uint8
 {
 	Unassigned,
+	Human,
 	Alien,
 	Hunter
 };
@@ -31,6 +34,16 @@ enum class EVNHPublicTestType : uint8
 	LookToEntrance,
 	ClearAisle,
 	CheckoutOpen
+};
+
+UENUM(BlueprintType)
+enum class EVNHQuickChatLine : uint8
+{
+	JustBrowsing,
+	LookingForShirt,
+	WaitingForFriend,
+	NoThanks,
+	FoundWrongSize
 };
 
 USTRUCT(BlueprintType)
@@ -67,4 +80,22 @@ struct FVNHAccusationResult
 
 	UPROPERTY(BlueprintReadOnly, Category = "Round")
 	bool bResolved = false;
+};
+
+USTRUCT(BlueprintType)
+struct FVNHQuickChatMessage
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Quick Chat")
+	TObjectPtr<APlayerState> Speaker = nullptr;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Quick Chat")
+	EVNHQuickChatLine Line = EVNHQuickChatLine::JustBrowsing;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Quick Chat")
+	FText Text;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Quick Chat")
+	int32 Serial = 0;
 };

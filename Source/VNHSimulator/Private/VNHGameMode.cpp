@@ -6,9 +6,12 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
+#include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 #include "VNHDebugHUD.h"
+#include "VNHGameInstance.h"
 #include "VNHGameState.h"
+#include "VNHLobbyPlayButton.h"
 #include "VNHLog.h"
 #include "VNHPlayerController.h"
 #include "VNHPlayerState.h"
@@ -17,6 +20,20 @@
 namespace
 {
 const FName VNHDebugArenaTag(TEXT("VNHDebugArena"));
+const TCHAR* VNHStoreMapTravelURL = TEXT("/Game/Maps/MVP_ClothingStore?StartRound=1");
+
+const FText& GetVNHLightErrand(int32 Index)
+{
+	static const TArray<FText> LightErrands = {
+		NSLOCTEXT("VNH", "ErrandBrowseRacks", "Browse two clothing racks without looking rushed."),
+		NSLOCTEXT("VNH", "ErrandInspectMirror", "Inspect the mirror, then return to shopping."),
+		NSLOCTEXT("VNH", "ErrandWaitCheckout", "Wait near checkout like you are about to pay."),
+		NSLOCTEXT("VNH", "ErrandFindShirt", "Look for a shirt and act like you found the wrong size."),
+		NSLOCTEXT("VNH", "ErrandCheckPhone", "Check your phone, then keep browsing.")
+	};
+
+	return LightErrands[Index % LightErrands.Num()];
+}
 
 bool HasDebugArena(UWorld* World)
 {
@@ -45,16 +62,44 @@ AVNHGameMode::AVNHGameMode()
 	HUDClass = AVNHDebugHUD::StaticClass();
 }
 
+void AVNHGameMode::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
+{
+	Super::InitGame(MapName, Options, ErrorMessage);
+	bStartRoundWhenPlayersReady = UGameplayStatics::HasOption(Options, TEXT("StartRound"));
+}
+
 void AVNHGameMode::BeginPlay()
 {
 	Super::BeginPlay();
-	TryStartRound();
+
+	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
+	if (MapName.Contains(TEXT("MainMenu")))
+	{
+		if (UVNHGameInstance* VNHGameInstance = GetGameInstance<UVNHGameInstance>())
+		{
+			VNHGameInstance->ShowMainMenu();
+		}
+		return;
+	}
+
+	if (MapName.Contains(TEXT("Lobby")))
+	{
+		EnsureLobbyRuntimeActors();
+	}
+
+	if (bAutoStartRoundOnPlayerJoin)
+	{
+		TryStartRound();
+	}
 }
 
 void AVNHGameMode::PostLogin(APlayerController* NewPlayer)
 {
 	Super::PostLogin(NewPlayer);
-	TryStartRound();
+	if (bAutoStartRoundOnPlayerJoin || bStartRoundWhenPlayersReady)
+	{
+		TryStartRound();
+	}
 }
 
 void AVNHGameMode::Logout(AController* Exiting)
@@ -79,16 +124,51 @@ void AVNHGameMode::TryStartRound()
 	}
 
 	AssignRoles();
+	bStartRoundWhenPlayersReady = false;
 
 	if (AVNHGameState* VNHGameState = GetVNHGameState())
 	{
 		VNHGameState->SetRoundNumber(VNHGameState->GetRoundNumber() + 1);
 		VNHGameState->SetTestsRemaining(2);
+		VNHGameState->SetDirectQuestionsRemaining(1);
+		VNHGameState->SetAccusationsRemaining(1);
 		VNHGameState->ClearRoundOutcome();
 	}
 
 	StartShopperRoutines();
 	EnterPhase(EVNHRoundPhase::AssigningRoles, 3.0f);
+}
+
+bool AVNHGameMode::StartRoundFromLobby(APlayerController* RequestingPlayer)
+{
+	if (!IsHostController(RequestingPlayer))
+	{
+		UE_LOG(LogVNH, Warning, TEXT("LobbyStart: rejected non-host start request from %s."), *GetNameSafe(RequestingPlayer));
+		return false;
+	}
+
+	if (CountConnectedPlayers() < RequiredPlayers)
+	{
+		UE_LOG(LogVNH, Warning, TEXT("LobbyStart: need %d players, only %d connected."), RequiredPlayers, CountConnectedPlayers());
+		return false;
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		const FString MapName = World->GetMapName();
+		if (MapName.Contains(TEXT("MVP_ClothingStore")))
+		{
+			TryStartRound();
+			UE_LOG(LogVNH, Display, TEXT("LobbyStart: host started round with %d connected players in the store."), CountConnectedPlayers());
+			return true;
+		}
+
+		World->ServerTravel(VNHStoreMapTravelURL);
+		UE_LOG(LogVNH, Display, TEXT("LobbyStart: travelling %d connected players to %s."), CountConnectedPlayers(), VNHStoreMapTravelURL);
+		return true;
+	}
+
+	return false;
 }
 
 void AVNHGameMode::AdvanceRoundPhase()
@@ -146,6 +226,26 @@ void AVNHGameMode::RequestPublicTest(AVNHPlayerController* RequestingPlayer, EVN
 	ApplyPublicTestToShoppers(TestType);
 }
 
+bool AVNHGameMode::RequestDirectQuestion(AVNHPlayerController* RequestingPlayer, AVNHShopperCharacter* QuestionedShopper, FString& OutResponseText)
+{
+	OutResponseText.Reset();
+
+	AVNHGameState* VNHGameState = GetVNHGameState();
+	if (!VNHGameState || !IsHunterController(RequestingPlayer) || !QuestionedShopper)
+	{
+		return false;
+	}
+
+	if (VNHGameState->GetRoundPhase() != EVNHRoundPhase::Investigation || VNHGameState->GetDirectQuestionsRemaining() <= 0)
+	{
+		return false;
+	}
+
+	VNHGameState->SetDirectQuestionsRemaining(VNHGameState->GetDirectQuestionsRemaining() - 1);
+	OutResponseText = FString::Printf(TEXT("%s: %s"), *GetNameSafe(QuestionedShopper), *QuestionedShopper->BuildQuestionResponse());
+	return true;
+}
+
 void AVNHGameMode::RequestAccusation(AVNHPlayerController* RequestingPlayer, AVNHShopperCharacter* AccusedShopper)
 {
 	AVNHGameState* VNHGameState = GetVNHGameState();
@@ -159,6 +259,13 @@ void AVNHGameMode::RequestAccusation(AVNHPlayerController* RequestingPlayer, AVN
 	{
 		return;
 	}
+
+	if (VNHGameState->GetAccusationsRemaining() <= 0)
+	{
+		return;
+	}
+
+	VNHGameState->SetAccusationsRemaining(VNHGameState->GetAccusationsRemaining() - 1);
 
 	FVNHAccusationResult Result;
 	Result.AccusedActor = AccusedShopper;
@@ -199,6 +306,8 @@ void AVNHGameMode::DebugStartRound()
 	{
 		VNHGameState->SetRoundNumber(VNHGameState->GetRoundNumber() + 1);
 		VNHGameState->SetTestsRemaining(2);
+		VNHGameState->SetDirectQuestionsRemaining(1);
+		VNHGameState->SetAccusationsRemaining(1);
 		VNHGameState->ClearRoundOutcome();
 	}
 
@@ -290,6 +399,7 @@ bool AVNHGameMode::DebugResolveAccusation(AVNHShopperCharacter* AccusedShopper)
 	Result.bCorrect = AccusedShopper->IsPossessedByAlien();
 	Result.bResolved = true;
 	VNHGameState->SetAccusationResult(Result);
+	VNHGameState->SetAccusationsRemaining(0);
 
 	EnterPhase(EVNHRoundPhase::Reveal, PhaseTiming.RevealSeconds);
 	UE_LOG(LogVNH, Display, TEXT("vnh.AccuseTarget: accused %s correct=%s."), *GetNameSafe(AccusedShopper), Result.bCorrect ? TEXT("true") : TEXT("false"));
@@ -404,6 +514,37 @@ AVNHGameState* AVNHGameMode::GetVNHGameState() const
 	return GetGameState<AVNHGameState>();
 }
 
+void AVNHGameMode::EnsureLobbyRuntimeActors()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	for (TActorIterator<AVNHLobbyPlayButton> It(World); It; ++It)
+	{
+		return;
+	}
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AVNHLobbyPlayButton* PlayButton = World->SpawnActor<AVNHLobbyPlayButton>(
+		AVNHLobbyPlayButton::StaticClass(),
+		FVector(0.0f, 350.0f, 35.0f),
+		FRotator::ZeroRotator,
+		SpawnParameters);
+
+#if WITH_EDITOR
+	if (PlayButton)
+	{
+		PlayButton->SetActorLabel(TEXT("Lobby_PlayButton_Runtime"));
+	}
+#endif
+
+	UE_LOG(LogVNH, Display, TEXT("LobbyStart: runtime play button %s."), PlayButton ? TEXT("spawned") : TEXT("failed to spawn"));
+}
+
 void AVNHGameMode::AssignRoles()
 {
 	TArray<AVNHPlayerState*> PlayerStates;
@@ -420,10 +561,27 @@ void AVNHGameMode::AssignRoles()
 		return;
 	}
 
-	const int32 AlienIndex = FMath::RandRange(0, PlayerStates.Num() - 1);
+	const int32 HunterIndex = FMath::RandRange(0, PlayerStates.Num() - 1);
+	int32 AlienIndex = FMath::RandRange(0, PlayerStates.Num() - 1);
+	while (AlienIndex == HunterIndex && PlayerStates.Num() > 1)
+	{
+		AlienIndex = FMath::RandRange(0, PlayerStates.Num() - 1);
+	}
+
 	for (int32 Index = 0; Index < PlayerStates.Num(); ++Index)
 	{
-		PlayerStates[Index]->SetRole(Index == AlienIndex ? EVNHPlayerRole::Alien : EVNHPlayerRole::Hunter);
+		EVNHPlayerRole AssignedRole = EVNHPlayerRole::Human;
+		if (Index == HunterIndex)
+		{
+			AssignedRole = EVNHPlayerRole::Hunter;
+		}
+		else if (Index == AlienIndex)
+		{
+			AssignedRole = EVNHPlayerRole::Alien;
+		}
+
+		PlayerStates[Index]->SetRole(AssignedRole);
+		PlayerStates[Index]->SetLightErrandText(AssignedRole == EVNHPlayerRole::Hunter ? FText::GetEmpty() : GetVNHLightErrand(Index));
 	}
 }
 
@@ -460,6 +618,16 @@ bool AVNHGameMode::IsHunterController(const APlayerController* PlayerController)
 
 	const AVNHPlayerState* VNHPlayerState = PlayerController->GetPlayerState<AVNHPlayerState>();
 	return VNHPlayerState && VNHPlayerState->IsHunter();
+}
+
+bool AVNHGameMode::IsHostController(const APlayerController* PlayerController) const
+{
+	if (!PlayerController || !GameState || GameState->PlayerArray.IsEmpty())
+	{
+		return false;
+	}
+
+	return PlayerController->PlayerState == GameState->PlayerArray[0];
 }
 
 APlayerController* AVNHGameMode::FindControllerForRole(EVNHPlayerRole TargetRole) const

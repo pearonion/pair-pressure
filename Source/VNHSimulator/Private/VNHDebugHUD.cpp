@@ -9,6 +9,7 @@
 #include "UObject/ConstructorHelpers.h"
 #include "VNHGameState.h"
 #include "VNHPlayerController.h"
+#include "VNHPlayerState.h"
 
 AVNHDebugHUD::AVNHDebugHUD()
 {
@@ -39,6 +40,8 @@ void AVNHDebugHUD::DrawHUD()
 	{
 		return;
 	}
+
+	DrawRolePhaseOverlay();
 
 	if (!bDrawLegacyCanvasHud)
 	{
@@ -174,7 +177,7 @@ TArray<AVNHDebugHUD::FDebugButton> AVNHDebugHUD::BuildButtons() const
 		{TEXT("Possess0"), TEXT("Possess 0"), TEXT("vnh.PossessHuman 0")},
 		{TEXT("Possess1"), TEXT("Possess 1"), TEXT("vnh.PossessHuman 1")},
 		{TEXT("Freeze"), TEXT("Freeze Test"), TEXT("vnh.TriggerTest Freeze")},
-		{TEXT("LookEntrance"), TEXT("Look Entrance"), TEXT("vnh.TriggerTest LookToEntrance")},
+		{TEXT("LookEntrance"), TEXT("Look Here"), TEXT("vnh.TriggerTest LookHere")},
 		{TEXT("ClearAisle"), TEXT("Clear Aisle"), TEXT("vnh.TriggerTest ClearAisle")},
 		{TEXT("Question"), TEXT("Question Target"), TEXT("vnh.Interact")},
 		{TEXT("Mark"), TEXT("Mark Target"), TEXT("vnh.MarkTarget")},
@@ -226,11 +229,13 @@ FString AVNHDebugHUD::BuildRoundStatusText() const
 	const float RemainingSeconds = PhaseEndsAt > 0.0f ? FMath::Max(0.0f, PhaseEndsAt - VNHGameState->GetServerWorldTimeSeconds()) : 0.0f;
 
 	return FString::Printf(
-		TEXT("Round %d | %s | %.0fs | Tests %d"),
+		TEXT("Round %d | %s | %.0fs | Cmd %d Q %d Acc %d"),
 		VNHGameState->GetRoundNumber(),
 		PhaseText,
 		RemainingSeconds,
-		VNHGameState->GetTestsRemaining());
+		VNHGameState->GetTestsRemaining(),
+		VNHGameState->GetDirectQuestionsRemaining(),
+		VNHGameState->GetAccusationsRemaining());
 }
 
 void AVNHDebugHUD::DrawDebugText(const FString& Text, const FLinearColor& Color, float X, float Y, float Scale)
@@ -328,6 +333,71 @@ void AVNHDebugHUD::DrawInteractionPanel()
 		DrawRect(FLinearColor(1.0f, 0.82f, 0.05f, 0.95f), ResponseX + ResponseW - 58.0f, ResponseY, 58.0f, 4.0f);
 		DrawDebugText(InteractionText, FLinearColor(0.9f, 0.95f, 1.0f, 1.0f), ResponseX + 14.0f, ResponseY + 9.0f, 1.27f);
 	}
+}
+
+void AVNHDebugHUD::DrawRolePhaseOverlay()
+{
+	const AVNHGameState* VNHGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr;
+	const AVNHPlayerController* VNHPlayerController = Cast<AVNHPlayerController>(GetOwningPlayerController());
+	const AVNHPlayerState* VNHPlayerState = VNHPlayerController ? VNHPlayerController->GetPlayerState<AVNHPlayerState>() : nullptr;
+	if (!Canvas || !VNHGameState)
+	{
+		return;
+	}
+
+	const EVNHRoundPhase RoundPhase = VNHGameState->GetRoundPhase();
+	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
+	const bool bIsLobbyMap = MapName.Contains(TEXT("Lobby"));
+	if (RoundPhase != EVNHRoundPhase::AssigningRoles && RoundPhase != EVNHRoundPhase::Reveal && !(bIsLobbyMap && RoundPhase == EVNHRoundPhase::WaitingForPlayers))
+	{
+		return;
+	}
+
+	const float OverlayW = FMath::Min(740.0f, Canvas->ClipX - 48.0f);
+	const float OverlayH = RoundPhase == EVNHRoundPhase::Reveal || bIsLobbyMap ? 190.0f : 250.0f;
+	const float OverlayX = (Canvas->ClipX - OverlayW) * 0.5f;
+	const float OverlayY = FMath::Max(54.0f, Canvas->ClipY * 0.16f);
+
+	DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.62f), OverlayX + 8.0f, OverlayY + 10.0f, OverlayW, OverlayH);
+	DrawRect(FLinearColor(0.018f, 0.026f, 0.04f, 0.94f), OverlayX, OverlayY, OverlayW, OverlayH);
+	DrawRect(FLinearColor(0.0f, 0.78f, 1.0f, 1.0f), OverlayX, OverlayY, 8.0f, OverlayH);
+	DrawRect(FLinearColor(1.0f, 0.82f, 0.05f, 1.0f), OverlayX + 8.0f, OverlayY, 148.0f, 6.0f);
+
+	if (bIsLobbyMap && RoundPhase == EVNHRoundPhase::WaitingForPlayers)
+	{
+		const int32 PlayerCount = VNHGameState->PlayerArray.Num();
+		const FString Title = TEXT("PRIVATE LOBBY");
+		const FString PlayerText = FString::Printf(TEXT("Players connected: %d / 3"), PlayerCount);
+		const FString StartText = PlayerCount >= 3 ? TEXT("Host can start from the lit pad.") : TEXT("Waiting for the full three-player MVP group.");
+		DrawDebugText(Title, FLinearColor::White, OverlayX + 28.0f, OverlayY + 24.0f, 2.0f);
+		DrawDebugText(PlayerText, FLinearColor(0.88f, 0.95f, 1.0f, 1.0f), OverlayX + 28.0f, OverlayY + 86.0f, 1.38f);
+		DrawDebugText(StartText, FLinearColor(1.0f, 0.82f, 0.05f, 1.0f), OverlayX + 28.0f, OverlayY + 130.0f, 1.18f);
+		return;
+	}
+
+	if (RoundPhase == EVNHRoundPhase::Reveal)
+	{
+		const FString Title = TEXT("ROUND REVEAL");
+		const FString Summary = VNHGameState->GetRevealSummaryText().ToString();
+		DrawDebugText(Title, FLinearColor::White, OverlayX + 28.0f, OverlayY + 24.0f, 2.0f);
+		DrawDebugText(Summary, FLinearColor(0.88f, 0.95f, 1.0f, 1.0f), OverlayX + 28.0f, OverlayY + 86.0f, 1.38f);
+		return;
+	}
+
+	const FString RoleText = VNHPlayerState ? VNHPlayerState->GetPrivateRoleRevealText().ToString() : TEXT("Waiting for role");
+	const FString GoalText = VNHPlayerState ? VNHPlayerState->GetRoleGoalText().ToString() : TEXT("Wait for the host to start the round.");
+	const FString ErrandText = VNHPlayerState ? VNHPlayerState->GetLightErrandText().ToString() : FString();
+	const FString ToolsText = VNHGameState->GetHunterToolsText().ToString();
+
+	DrawDebugText(RoleText, FLinearColor::White, OverlayX + 28.0f, OverlayY + 24.0f, 2.0f);
+	DrawDebugText(GoalText, FLinearColor(0.88f, 0.95f, 1.0f, 1.0f), OverlayX + 28.0f, OverlayY + 86.0f, 1.28f);
+
+	if (!ErrandText.IsEmpty())
+	{
+		DrawDebugText(FString::Printf(TEXT("Cover errand: %s"), *ErrandText), FLinearColor(1.0f, 0.82f, 0.05f, 1.0f), OverlayX + 28.0f, OverlayY + 132.0f, 1.18f);
+	}
+
+	DrawDebugText(ToolsText, FLinearColor(0.68f, 0.88f, 1.0f, 1.0f), OverlayX + 28.0f, OverlayY + OverlayH - 54.0f, 1.1f);
 }
 
 void AVNHDebugHUD::PlayUISound(USoundBase* Sound, float VolumeMultiplier) const

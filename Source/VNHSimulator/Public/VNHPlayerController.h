@@ -9,6 +9,7 @@ class UInputAction;
 class UInputMappingContext;
 class UTextBlock;
 class UVNHAlienLocomotionComponent;
+class AVNHLobbyPlayButton;
 class AVNHShopperCharacter;
 
 UCLASS()
@@ -63,6 +64,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Interaction")
 	void DebugAccuseFocusedShopper();
 
+	UFUNCTION(BlueprintCallable, Category = "VNH|Quick Chat")
+	void RequestQuickChat(EVNHQuickChatLine Line);
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Lobby")
+	void RequestStartRoundFromLobby();
+
 	UFUNCTION(Server, Reliable)
 	void ServerRequestPublicTest(EVNHPublicTestType TestType);
 
@@ -70,7 +77,19 @@ public:
 	void ServerRequestAccusation(AVNHShopperCharacter* AccusedShopper);
 
 	UFUNCTION(Server, Reliable)
+	void ServerRequestDirectQuestion(AVNHShopperCharacter* QuestionedShopper);
+
+	UFUNCTION(Server, Reliable)
+	void ServerRequestQuickChat(EVNHQuickChatLine Line);
+
+	UFUNCTION(Server, Reliable)
+	void ServerRequestStartRoundFromLobby();
+
+	UFUNCTION(Server, Reliable)
 	void ServerRequestActNatural();
+
+	UFUNCTION(Client, Reliable)
+	void ClientReceiveInteractionText(const FString& InteractionText);
 
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Input|Alien")
@@ -105,6 +124,11 @@ private:
 	void HandleTurnAxis(float Value);
 	void HandleLookUpAxis(float Value);
 	void HandleInteractPressed();
+	void HandleQuickChatPressed();
+	void HandleQuickChatLookingForShirtPressed();
+	void HandleQuickChatWaitingForFriendPressed();
+	void HandleQuickChatNoThanksPressed();
+	void HandleQuickChatFoundWrongSizePressed();
 	void ToggleDebugHud();
 	void ApplyDebugHudInputMode(bool bDebugHudVisible);
 	void UpdateDebugDeckRuntimeLabels(float DeltaTime);
@@ -130,6 +154,7 @@ private:
 	bool bWasPolledActNaturalDown = false;
 	bool bWasPolledInteractDown = false;
 	TWeakObjectPtr<AVNHShopperCharacter> FocusedShopper;
+	TWeakObjectPtr<AVNHLobbyPlayButton> FocusedLobbyPlayButton;
 	TWeakObjectPtr<UTextBlock> RoleStatusTextBlock;
 	TWeakObjectPtr<UTextBlock> LocomotionStatusTextBlock;
 	TArray<TWeakObjectPtr<AVNHShopperCharacter>> MarkedSuspects;

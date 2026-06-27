@@ -103,6 +103,16 @@ void AVNHShopperCharacter::BeginPlay()
 	}
 }
 
+void AVNHShopperCharacter::PossessedBy(AController* NewController)
+{
+	Super::PossessedBy(NewController);
+
+	if (HasAuthority() && NewController && NewController->IsPlayerController())
+	{
+		bActNaturalAvailable = true;
+	}
+}
+
 void AVNHShopperCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
@@ -139,7 +149,7 @@ void AVNHShopperCharacter::SetPossessedByAlien(bool bNewPossessedByAlien)
 
 bool AVNHShopperCharacter::UseActNatural()
 {
-	if (!HasAuthority() || !bPossessedByAlien || !bActNaturalAvailable || !RoutineComponent)
+	if (!HasAuthority() || !IsPlayerControlled() || !bActNaturalAvailable || !RoutineComponent)
 	{
 		return false;
 	}
@@ -161,16 +171,17 @@ void AVNHShopperCharacter::ApplyPublicTest(EVNHPublicTestType TestType)
 		RoutineComponent->SetContext(EVNHShopperContext::Reacting, RoutineComponent->GetSnapshot().SuggestedNextActivity);
 	}
 
-	if (TestType == EVNHPublicTestType::Freeze && !bPossessedByAlien)
+	const bool bShouldAutoReactAsNpc = !IsPlayerControlled();
+	if (TestType == EVNHPublicTestType::Freeze && bShouldAutoReactAsNpc)
 	{
 		SetFrozenByPublicTest(true);
 		GetWorldTimerManager().SetTimer(FreezeTestTimerHandle, this, &AVNHShopperCharacter::ClearPublicTestFreeze, FreezeTestHoldSeconds, false);
 	}
-	else if (TestType == EVNHPublicTestType::LookToEntrance && !bPossessedByAlien)
+	else if (TestType == EVNHPublicTestType::LookToEntrance && bShouldAutoReactAsNpc)
 	{
 		ApplyLookToEntranceReaction();
 	}
-	else if (TestType == EVNHPublicTestType::ClearAisle && !bPossessedByAlien)
+	else if (TestType == EVNHPublicTestType::ClearAisle && bShouldAutoReactAsNpc)
 	{
 		ApplyClearAisleReaction();
 	}
@@ -348,19 +359,24 @@ FString AVNHShopperCharacter::BuildQuestionResponse() const
 
 FString AVNHShopperCharacter::DescribeAnimationDebugState() const
 {
-	const USkeletalMeshComponent* MeshComponent = GetMesh();
+	USkeletalMeshComponent* MeshComponent = GetMesh();
 	const UAnimInstance* AnimInstance = MeshComponent ? MeshComponent->GetAnimInstance() : nullptr;
 	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
 	const FVector Velocity = GetVelocity();
+	const FString ShopperName = GetNameSafe(this);
+	const FString MeshName = MeshComponent ? GetNameSafe(MeshComponent->GetSkeletalMeshAsset()) : TEXT("None");
+	const FString AnimClassName = MeshComponent ? GetNameSafe(MeshComponent->GetAnimClass()) : TEXT("None");
+	const FString AnimInstanceName = GetNameSafe(AnimInstance);
+	const FString PauseText = MeshComponent && MeshComponent->bPauseAnims ? TEXT("true") : TEXT("false");
 
 	return FString::Printf(
 		TEXT("Shopper=%s Mesh=%s AnimClass=%s AnimInstance=%s Mode=%d Pause=%s Rate=%.2f SpeedXY=%.1f MaxWalk=%.1f MoveMode=%d"),
-		*GetNameSafe(this),
-		MeshComponent ? *GetNameSafe(MeshComponent->GetSkeletalMeshAsset()) : TEXT("None"),
-		MeshComponent ? *GetNameSafe(MeshComponent->GetAnimClass()) : TEXT("None"),
-		*GetNameSafe(AnimInstance),
+		*ShopperName,
+		*MeshName,
+		*AnimClassName,
+		*AnimInstanceName,
 		MeshComponent ? static_cast<int32>(MeshComponent->GetAnimationMode()) : -1,
-		MeshComponent && MeshComponent->bPauseAnims ? TEXT("true") : TEXT("false"),
+		*PauseText,
 		MeshComponent ? MeshComponent->GlobalAnimRateScale : 0.0f,
 		Velocity.Size2D(),
 		MovementComponent ? MovementComponent->MaxWalkSpeed : 0.0f,

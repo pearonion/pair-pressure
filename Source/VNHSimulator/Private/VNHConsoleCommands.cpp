@@ -41,12 +41,17 @@ EVNHPlayerRole ParseRole(const FString& RoleName)
 		return EVNHPlayerRole::Alien;
 	}
 
+	if (RoleName.Equals(TEXT("Human"), ESearchCase::IgnoreCase))
+	{
+		return EVNHPlayerRole::Human;
+	}
+
 	return EVNHPlayerRole::Unassigned;
 }
 
 EVNHPublicTestType ParsePublicTest(const FString& TestName)
 {
-	if (TestName.Equals(TEXT("LookToEntrance"), ESearchCase::IgnoreCase))
+	if (TestName.Equals(TEXT("LookToEntrance"), ESearchCase::IgnoreCase) || TestName.Equals(TEXT("LookHere"), ESearchCase::IgnoreCase))
 	{
 		return EVNHPublicTestType::LookToEntrance;
 	}
@@ -64,6 +69,31 @@ EVNHPublicTestType ParsePublicTest(const FString& TestName)
 	return EVNHPublicTestType::Freeze;
 }
 
+EVNHQuickChatLine ParseQuickChatLine(const FString& LineName)
+{
+	if (LineName.Equals(TEXT("Shirt"), ESearchCase::IgnoreCase) || LineName.Equals(TEXT("LookingForShirt"), ESearchCase::IgnoreCase))
+	{
+		return EVNHQuickChatLine::LookingForShirt;
+	}
+
+	if (LineName.Equals(TEXT("Friend"), ESearchCase::IgnoreCase) || LineName.Equals(TEXT("WaitingForFriend"), ESearchCase::IgnoreCase))
+	{
+		return EVNHQuickChatLine::WaitingForFriend;
+	}
+
+	if (LineName.Equals(TEXT("NoThanks"), ESearchCase::IgnoreCase))
+	{
+		return EVNHQuickChatLine::NoThanks;
+	}
+
+	if (LineName.Equals(TEXT("WrongSize"), ESearchCase::IgnoreCase) || LineName.Equals(TEXT("FoundWrongSize"), ESearchCase::IgnoreCase))
+	{
+		return EVNHQuickChatLine::FoundWrongSize;
+	}
+
+	return EVNHQuickChatLine::JustBrowsing;
+}
+
 FAutoConsoleCommandWithWorld VNHStartRoundCommand(
 	TEXT("vnh.StartRound"),
 	TEXT("Debug: start a VNH round, allowing single-player Alien testing when fewer than the required player count is present."),
@@ -76,6 +106,21 @@ FAutoConsoleCommandWithWorld VNHStartRoundCommand(
 		else
 		{
 			UE_LOG(LogVNH, Warning, TEXT("vnh.StartRound failed: no VNH auth game mode in current world."));
+		}
+	}));
+
+FAutoConsoleCommandWithWorld VNHLobbyStartCommand(
+	TEXT("vnh.StartFromLobby"),
+	TEXT("Request the host-authoritative lobby start path. Requires the normal MVP player count."),
+	FConsoleCommandWithWorldDelegate::CreateStatic([](UWorld* World)
+	{
+		if (AVNHPlayerController* PlayerController = GetVNHPlayerController(World))
+		{
+			PlayerController->RequestStartRoundFromLobby();
+		}
+		else
+		{
+			UE_LOG(LogVNH, Warning, TEXT("vnh.StartFromLobby failed: no VNH player controller."));
 		}
 	}));
 
@@ -97,7 +142,7 @@ FAutoConsoleCommandWithWorld VNHSkipPhaseCommand(
 
 FAutoConsoleCommandWithWorldAndArgs VNHForceRoleCommand(
 	TEXT("vnh.ForceRole"),
-	TEXT("Debug: force the first local player role. Usage: vnh.ForceRole Alien|Hunter"),
+	TEXT("Debug: force the first local player role. Usage: vnh.ForceRole Alien|Hunter|Human"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
 	{
 		if (AVNHGameMode* GameMode = GetVNHGameMode(World))
@@ -113,7 +158,7 @@ FAutoConsoleCommandWithWorldAndArgs VNHForceRoleCommand(
 
 FAutoConsoleCommandWithWorldAndArgs VNHTriggerTestCommand(
 	TEXT("vnh.TriggerTest"),
-	TEXT("Debug: trigger a public test. Usage: vnh.TriggerTest Freeze|LookToEntrance|ClearAisle|CheckoutOpen"),
+	TEXT("Debug: trigger a public test. Usage: vnh.TriggerTest Freeze|LookHere|LookToEntrance|ClearAisle|CheckoutOpen"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
 	{
 		if (AVNHGameMode* GameMode = GetVNHGameMode(World))
@@ -123,6 +168,21 @@ FAutoConsoleCommandWithWorldAndArgs VNHTriggerTestCommand(
 		else
 		{
 			UE_LOG(LogVNH, Warning, TEXT("vnh.TriggerTest failed: no VNH auth game mode in current world."));
+		}
+	}));
+
+FAutoConsoleCommandWithWorldAndArgs VNHQuickChatCommand(
+	TEXT("vnh.QuickChat"),
+	TEXT("Debug: send a preset quick-chat bark. Usage: vnh.QuickChat Browse|Shirt|Friend|NoThanks|WrongSize"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
+	{
+		if (AVNHPlayerController* PlayerController = GetVNHPlayerController(World))
+		{
+			PlayerController->RequestQuickChat(Args.IsValidIndex(0) ? ParseQuickChatLine(Args[0]) : EVNHQuickChatLine::JustBrowsing);
+		}
+		else
+		{
+			UE_LOG(LogVNH, Warning, TEXT("vnh.QuickChat failed: no VNH player controller."));
 		}
 	}));
 

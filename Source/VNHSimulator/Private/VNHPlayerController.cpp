@@ -11,8 +11,11 @@
 #include "InputCoreTypes.h"
 #include "EngineUtils.h"
 #include "VNHGameMode.h"
+#include "VNHGameState.h"
 #include "VNHAlienLocomotionComponent.h"
 #include "VNHDebugHUD.h"
+#include "VNHGameInstance.h"
+#include "VNHLobbyPlayButton.h"
 #include "VNHLog.h"
 #include "VNHPlayerState.h"
 #include "VNHShopperCharacter.h"
@@ -20,6 +23,16 @@
 void AVNHPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
+
+	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
+	if (IsLocalController() && MapName.Contains(TEXT("MainMenu")))
+	{
+		if (UVNHGameInstance* VNHGameInstance = GetGameInstance<UVNHGameInstance>())
+		{
+			VNHGameInstance->ShowMainMenu();
+		}
+	}
+
 	UpdateAlienInputMapping();
 	ApplyDebugHudInputMode(true);
 }
@@ -52,6 +65,11 @@ void AVNHPlayerController::SetupInputComponent()
 	InputComponent->BindAction(TEXT("VNH_MarkSuspect"), IE_Pressed, this, &AVNHPlayerController::MarkFocusedShopper);
 	InputComponent->BindAction(TEXT("VNH_FakeAccuse"), IE_Pressed, this, &AVNHPlayerController::FakeAccuseFocusedShopper);
 	InputComponent->BindAction(TEXT("VNH_Accuse"), IE_Pressed, this, &AVNHPlayerController::DebugAccuseFocusedShopper);
+	InputComponent->BindAction(TEXT("VNH_QuickChat"), IE_Pressed, this, &AVNHPlayerController::HandleQuickChatPressed);
+	InputComponent->BindAction(TEXT("VNH_QuickChat_Shirt"), IE_Pressed, this, &AVNHPlayerController::HandleQuickChatLookingForShirtPressed);
+	InputComponent->BindAction(TEXT("VNH_QuickChat_Friend"), IE_Pressed, this, &AVNHPlayerController::HandleQuickChatWaitingForFriendPressed);
+	InputComponent->BindAction(TEXT("VNH_QuickChat_NoThanks"), IE_Pressed, this, &AVNHPlayerController::HandleQuickChatNoThanksPressed);
+	InputComponent->BindAction(TEXT("VNH_QuickChat_WrongSize"), IE_Pressed, this, &AVNHPlayerController::HandleQuickChatFoundWrongSizePressed);
 	InputComponent->BindAction(TEXT("VNH_ToggleDebugHud"), IE_Pressed, this, &AVNHPlayerController::ToggleDebugHud);
 
 	UE_LOG(LogVNH, Display, TEXT("AlienInput: setup complete. Controller=%s InputComponent=%s EnhancedComponent=%s"),
@@ -112,12 +130,14 @@ FString AVNHPlayerController::GetRoleStatusText() const
 
 	switch (AssignedRole)
 	{
+	case EVNHPlayerRole::Human:
+		return TEXT("ROLE: HUMAN  //  BLEND IN");
 	case EVNHPlayerRole::Alien:
 		return TEXT("ROLE: ALIEN  //  AWAITING POSSESSION");
 	case EVNHPlayerRole::Hunter:
-		return TEXT("ROLE: HUMAN  //  HUNTER");
+		return TEXT("ROLE: HUNTER  //  FIND THE ALIEN");
 	default:
-		return TEXT("ROLE: HUMAN  //  UNASSIGNED");
+		return TEXT("ROLE: UNASSIGNED  //  WAITING");
 	}
 }
 
@@ -156,6 +176,12 @@ void AVNHPlayerController::RequestActNatural()
 
 void AVNHPlayerController::RequestInteract()
 {
+	if (FocusedLobbyPlayButton.IsValid())
+	{
+		RequestStartRoundFromLobby();
+		return;
+	}
+
 	AVNHShopperCharacter* Shopper = FocusedShopper.Get();
 	if (!Shopper)
 	{
@@ -165,9 +191,7 @@ void AVNHPlayerController::RequestInteract()
 		return;
 	}
 
-	LastInteractionText = FString::Printf(TEXT("%s: %s"), *GetNameSafe(Shopper), *Shopper->BuildQuestionResponse());
-	LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
-	UE_LOG(LogVNH, Display, TEXT("Interaction: %s"), *LastInteractionText);
+	ServerRequestDirectQuestion(Shopper);
 }
 
 void AVNHPlayerController::MarkFocusedShopper()
@@ -243,6 +267,16 @@ void AVNHPlayerController::DebugAccuseFocusedShopper()
 	}
 }
 
+void AVNHPlayerController::RequestQuickChat(EVNHQuickChatLine Line)
+{
+	ServerRequestQuickChat(Line);
+}
+
+void AVNHPlayerController::RequestStartRoundFromLobby()
+{
+	ServerRequestStartRoundFromLobby();
+}
+
 void AVNHPlayerController::ServerRequestPublicTest_Implementation(EVNHPublicTestType TestType)
 {
 	if (AVNHGameMode* VNHGameMode = GetWorld()->GetAuthGameMode<AVNHGameMode>())
@@ -259,12 +293,54 @@ void AVNHPlayerController::ServerRequestAccusation_Implementation(AVNHShopperCha
 	}
 }
 
+void AVNHPlayerController::ServerRequestDirectQuestion_Implementation(AVNHShopperCharacter* QuestionedShopper)
+{
+	FString ResponseText;
+	if (AVNHGameMode* VNHGameMode = GetWorld()->GetAuthGameMode<AVNHGameMode>())
+	{
+		if (VNHGameMode->RequestDirectQuestion(this, QuestionedShopper, ResponseText))
+		{
+			ClientReceiveInteractionText(ResponseText);
+			return;
+		}
+	}
+
+	ClientReceiveInteractionText(TEXT("Direct question unavailable."));
+}
+
+void AVNHPlayerController::ServerRequestQuickChat_Implementation(EVNHQuickChatLine Line)
+{
+	if (AVNHGameState* VNHGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr)
+	{
+		VNHGameState->PublishQuickChat(PlayerState, Line);
+		ClientReceiveInteractionText(VNHGameState->GetLastQuickChatMessage().Text.ToString());
+	}
+}
+
+void AVNHPlayerController::ServerRequestStartRoundFromLobby_Implementation()
+{
+	if (AVNHGameMode* VNHGameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AVNHGameMode>() : nullptr)
+	{
+		if (!VNHGameMode->StartRoundFromLobby(this))
+		{
+			ClientReceiveInteractionText(TEXT("Only the host can start when enough players are connected."));
+		}
+	}
+}
+
 void AVNHPlayerController::ServerRequestActNatural_Implementation()
 {
 	if (AVNHShopperCharacter* Shopper = Cast<AVNHShopperCharacter>(GetPawn()))
 	{
 		Shopper->UseActNatural();
 	}
+}
+
+void AVNHPlayerController::ClientReceiveInteractionText_Implementation(const FString& InteractionText)
+{
+	LastInteractionText = InteractionText;
+	LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	UE_LOG(LogVNH, Display, TEXT("Interaction: %s"), *LastInteractionText);
 }
 
 UVNHAlienLocomotionComponent* AVNHPlayerController::GetAlienLocomotionComponent() const
@@ -411,6 +487,31 @@ void AVNHPlayerController::HandleLookUpAxis(float Value)
 void AVNHPlayerController::HandleInteractPressed()
 {
 	RequestInteract();
+}
+
+void AVNHPlayerController::HandleQuickChatPressed()
+{
+	RequestQuickChat(EVNHQuickChatLine::JustBrowsing);
+}
+
+void AVNHPlayerController::HandleQuickChatLookingForShirtPressed()
+{
+	RequestQuickChat(EVNHQuickChatLine::LookingForShirt);
+}
+
+void AVNHPlayerController::HandleQuickChatWaitingForFriendPressed()
+{
+	RequestQuickChat(EVNHQuickChatLine::WaitingForFriend);
+}
+
+void AVNHPlayerController::HandleQuickChatNoThanksPressed()
+{
+	RequestQuickChat(EVNHQuickChatLine::NoThanks);
+}
+
+void AVNHPlayerController::HandleQuickChatFoundWrongSizePressed()
+{
+	RequestQuickChat(EVNHQuickChatLine::FoundWrongSize);
 }
 
 void AVNHPlayerController::ToggleDebugHud()
@@ -568,6 +669,11 @@ void AVNHPlayerController::PollAlienKeyboardInput()
 
 FString AVNHPlayerController::GetInteractionPromptText() const
 {
+	if (FocusedLobbyPlayButton.IsValid())
+	{
+		return TEXT("E: Start round");
+	}
+
 	const AVNHShopperCharacter* Shopper = FocusedShopper.Get();
 	return Shopper ? FString::Printf(TEXT("E: Question %s"), *GetNameSafe(Shopper)) : FString();
 }
@@ -604,6 +710,7 @@ FString AVNHPlayerController::GetMarkedSuspectsText() const
 void AVNHPlayerController::UpdateFocusedShopper()
 {
 	FocusedShopper.Reset();
+	FocusedLobbyPlayButton.Reset();
 
 	if (!PlayerCameraManager || !GetWorld())
 	{
@@ -620,6 +727,15 @@ void AVNHPlayerController::UpdateFocusedShopper()
 	}
 
 	FHitResult Hit;
+	if (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, QueryParams))
+	{
+		if (AVNHLobbyPlayButton* LobbyPlayButton = Cast<AVNHLobbyPlayButton>(Hit.GetActor()))
+		{
+			FocusedLobbyPlayButton = LobbyPlayButton;
+			return;
+		}
+	}
+
 	if (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Pawn, QueryParams))
 	{
 		if (AVNHShopperCharacter* Shopper = Cast<AVNHShopperCharacter>(Hit.GetActor()))

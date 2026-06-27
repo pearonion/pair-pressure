@@ -59,6 +59,7 @@ private:
 	FString BuildRoundStatusText() const;
 	void DrawDebugText(const FString& Text, const FLinearColor& Color, float X, float Y, float Scale = 1.0f);
 	void DrawPolishedButton(const FDebugButton& Button, const FVector2D& Position, const FVector2D& Size, float DeltaSeconds);
+	void DrawRolePhaseOverlay();
 	void DrawInteractionPanel();
 	void PlayUISound(USoundBase* Sound, float VolumeMultiplier = 1.0f) const;
 };
