@@ -1,0 +1,42 @@
+# Unreal Engine generated files
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Visual Studio / Rider / IDE state
+.vs/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build artifacts and debug symbols
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+
+# Unreal local files
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.VC.opendb
+
+# Plugin generated files
+Plugins/*/Binaries/
+Plugins/*/Intermediate/
+Plugins/*/Saved/
+
+# Logs and temp files
+*.log
+*.tmp
+*.cache
+.DS_Store
+
+# Local Codex/MCP connection config
+.codex/config.toml
