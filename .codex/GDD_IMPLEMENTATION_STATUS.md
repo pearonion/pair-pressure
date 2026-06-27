@@ -329,3 +329,85 @@ Implement the MVP foundation from the GDD first-night checklist, with focus on:
 ## Editor Safety
 
 Do not close, kill, restart, or force-stop the running Unreal Editor unless explicitly approved.
+
+## 2026-06-26 Natural Locomotion Visibility Pass
+
+### GDD 11.3 Status
+
+- Natural alien locomotion is implemented in C++ and remains the current test target:
+  - acceleration ramp
+  - coast braking
+  - manual brake on reversal
+  - capped body turn rate
+  - camera-relative movement direction
+  - fast-walk state
+  - correction-step flag
+- Added visible runtime instrumentation so this can be tested without console commands:
+  - role label: Alien/Human state
+  - locomotion label: current speed, desired speed, fast-walk, brake, and turn delta
+
+### Changed
+
+- `AVNHPlayerController` now exposes:
+  - `GetRoleStatusText()`
+  - `GetLocomotionStatusText()`
+- `AVNHPlayerController::PlayerTick()` now updates the debug deck's named UMG text blocks when present:
+  - `RoleStatusText`
+  - `LocomotionStatusText`
+- `/Game/UI/WBP_VNHDebugDeck` now has a polished `CONTROL STATUS` panel using the Burbank font.
+
+### Verification
+
+- `/Game/UI/WBP_VNHDebugDeck` compile log: 0 errors, 0 warnings.
+- Widget preview screenshot verified the new panel is visible and text is inside bounds.
+- External UBT did not reach C++ compile due source-engine target-rule conflict:
+  - `VNHSimulatorEditor modifies StructMemberAlignment: 8 != null`
+  - likely follow-up: update target build settings for this engine or continue using Live Coding for the immediate test loop.
+
+### Immediate Test
+
+- Live Code/restart editor.
+- PIE:
+  - `Possess 0` or `Possess 1`
+  - move with WASD
+  - hold Shift for fast walk
+  - reverse direction to trigger manual brake/correction
+  - watch the `CONTROL STATUS` panel update live
+
+## 2026-06-26 Manny Animation Enforcement Pass
+
+### GDD 13 / 22 Status
+
+- The project is now using the imported Manny unarmed animation stack as the shared placeholder human animation path:
+  - `/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed`
+  - `/Game/Characters/Mannequins/Anims/Unarmed/BS_Idle_Walk_Run`
+- `ABP_Unarmed` already contains velocity/speed/direction update logic and a Control Rig IK node.
+
+### Changed
+
+- `AVNHShopperCharacter` now enforces Manny visual setup during runtime:
+  - Manny skeletal mesh assigned if missing
+  - `ABP_Unarmed` assigned if missing
+  - animation blueprint mode enabled
+  - animation unpaused
+  - normal animation rate
+  - pose and bones always tick for visible testing
+  - update-rate optimization disabled for debug readability
+- Added `DescribeAnimationDebugState()`.
+- Added console command `vnh.LogShopperAnim`.
+
+### Verification / Blockers
+
+- `git diff --check` passed.
+- Full external UBT is currently not a clean verifier because forcing a unique editor build environment made the source engine build large editor/plugin chunks and hit a NeoStack third-party Lua warning-as-error:
+  - `C4191` in `Plugins/NeoStackAI/Source/ThirdParty/Lua/src/loadlib.c`
+- Continue to use Live Coding/restart for the immediate test loop unless/until the NeoStack plugin build settings are adjusted.
+
+### Immediate Test
+
+- Live Code/restart editor.
+- PIE:
+  - click `Kick NPC Routines`
+  - run `vnh.LogShopperAnim`
+  - expected for shoppers: Manny mesh, `ABP_Unarmed_C`, animation not paused, rate `1.00`, nonzero `SpeedXY` while moving
+  - visually confirm shoppers walk instead of sliding

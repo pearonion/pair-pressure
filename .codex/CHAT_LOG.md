@@ -632,3 +632,58 @@
   - confirm all shoppers move from StateTree/routine start without manual kick
   - add one polished public test pass: Freeze first, then Look Entrance or Clear Aisle
   - test loop: Start Round -> observe moving NPCs -> question/mark/fake accuse -> public test -> accuse -> reveal
+
+### Natural Locomotion Visibility Pass
+
+- User asked to get GDD 11.3 natural skill-based locomotion visible/testable and add a polished Alien/Human role label.
+- Reviewed current locomotion implementation:
+  - `UVNHAlienLocomotionComponent` already uses GDD-aligned defaults: 120-330 cm/s walk range, 460 cm/s fast walk, 800 cm/s acceleration, 450 cm/s coast braking, 2.0x manual brake, 150 deg/sec body turn, 120 degree correction threshold.
+  - `AVNHPlayerController` polls WASD/Shift/Q/E and routes input to the possessed shopper's locomotion component.
+  - `AVNHShopperCharacter` exposes `IsPossessedByAlien()` and `GetAlienLocomotionComponent()`.
+- Added C++ debug/UMG-facing helpers to `AVNHPlayerController`:
+  - `GetRoleStatusText()`
+  - `GetLocomotionStatusText()`
+- Added a runtime debug-deck label updater in `AVNHPlayerController::PlayerTick()`:
+  - finds the active `/Game/UI/WBP_VNHDebugDeck` widget instance
+  - writes `RoleStatusText`
+  - writes `LocomotionStatusText`
+  - caches the text blocks after lookup
+- Added polished UMG widgets to `/Game/UI/WBP_VNHDebugDeck`:
+  - `RoleStatusBox`
+  - `RoleStatusRail`
+  - `RoleStatusLabel`
+  - `RoleStatusText`
+  - `LocomotionStatusText`
+- `/Game/UI/WBP_VNHDebugDeck` compiles with 0 errors/warnings.
+- Captured the widget preview and verified the new role/locomotion panel is visible and not running out of bounds.
+- External UBT build did not reach C++ compile because this source-built engine rejects the project target's current `DefaultBuildSettings = BuildSettingsVersion.V7` shared-editor settings:
+  - error: `StructMemberAlignment: 8 != null`
+  - this is separate from the locomotion code and should be handled as a target-rules cleanup or via the existing Live Coding workflow.
+
+### Immediate Test After Next Live Coding
+
+- Live Code/restart so the `AVNHPlayerController` updater is loaded.
+- In PIE:
+  - click `Possess 0` or `Possess 1`
+  - confirm role label changes to `ROLE: ALIEN // POSSESSED SHOPPER`
+  - use WASD and Shift
+  - confirm locomotion label updates current/desired speed, fast-walk, brake, and turn values
+
+### Manny Animation Enforcement Pass
+
+- User asked to continue after the locomotion visibility work.
+- Inspected `/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed` before editing:
+  - AnimBP has `Velocity`, `GroundSpeed`, `Direction`, `ShouldMove`, and `IsFalling` variables.
+  - `EventGraph` computes velocity, ground speed, direction, should-move, and falling state.
+  - `Walk / Run` state uses `/Game/Characters/Mannequins/Anims/Unarmed/BS_Idle_Walk_Run`.
+  - `AnimGraph` includes a Control Rig IK node gated by `!IsFalling`.
+- Added runtime visual enforcement to `AVNHShopperCharacter`:
+  - `ConfigureMannyVisuals()` runs in constructor path and again in `BeginPlay`.
+  - ensures Manny skeletal mesh is assigned if missing.
+  - ensures animation mode is Animation Blueprint.
+  - ensures `ABP_Unarmed` class is assigned if missing.
+  - forces animation unpaused, normal rate, always ticking pose/bones, and disables update-rate optimization for debug readability.
+- Added `AVNHShopperCharacter::DescribeAnimationDebugState()`.
+- Added console command `vnh.LogShopperAnim` to log mesh, AnimClass, AnimInstance, animation mode, pause/rate, speed, max walk, and movement mode for all shoppers.
+- Tried external UBT after briefly testing a unique editor build environment; reverted that target-rule experiment because it forced thousands of unique editor/plugin actions and hit a NeoStack bundled Lua warning-as-error (`C4191` in `Plugins/NeoStackAI/Source/ThirdParty/Lua/src/loadlib.c`).
+- Stopped the background UBT/dotnet processes that were spawned by that test.
