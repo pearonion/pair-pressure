@@ -37,3 +37,6 @@ Plugins/*/Saved/
 *.tmp
 *.cache
 .DS_Store
+
+# Local Codex/MCP connection config
+.codex/config.toml

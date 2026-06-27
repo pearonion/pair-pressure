@@ -31,6 +31,15 @@ public:
 	void RequestPublicTest(AVNHPlayerController* RequestingPlayer, EVNHPublicTestType TestType);
 	void RequestAccusation(AVNHPlayerController* RequestingPlayer, AVNHShopperCharacter* AccusedShopper);
 
+	void DebugStartRound();
+	void DebugForceRole(APlayerController* TargetController, EVNHPlayerRole NewRole);
+	void DebugTriggerPublicTest(EVNHPublicTestType TestType);
+	bool DebugPossessShopperByIndex(int32 ShopperIndex);
+	bool DebugResolveAccusation(AVNHShopperCharacter* AccusedShopper);
+	bool DebugSetupVisibleTestArena();
+	bool DebugSpawnAndPossessTestShopper(const FVector& SpawnLocation);
+	void DebugStartShopperRoutines();
+
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Round")
 	int32 RequiredPlayers = 2;
@@ -49,5 +58,6 @@ private:
 	APlayerController* FindControllerForRole(EVNHPlayerRole TargetRole) const;
 	AVNHShopperCharacter* SelectAlienShopper() const;
 	void PossessAlienShopper();
+	void StartShopperRoutines();
 	void ApplyPublicTestToShoppers(EVNHPublicTestType TestType);
 };
