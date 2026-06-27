@@ -64,6 +64,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "VNH|Shopper|Interaction")
 	FString BuildQuestionResponse() const;
 
+	UFUNCTION(BlueprintPure, Category = "VNH|Shopper|Debug")
+	FString DescribeAnimationDebugState() const;
+
 	UPROPERTY(BlueprintAssignable, Category = "VNH|Shopper")
 	FVNHActNaturalUsed OnActNaturalUsed;
 
@@ -116,4 +119,5 @@ private:
 	void ApplyLookToEntranceReaction();
 	void ApplyClearAisleReaction();
 	void ResumeRoutineMovement();
+	void ConfigureMannyVisuals();
 };

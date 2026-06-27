@@ -17,6 +17,12 @@
 #include "VNHShopperWaypoint.h"
 #include "Net/UnrealNetwork.h"
 
+namespace
+{
+const TCHAR* MannyMeshPath = TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple");
+const TCHAR* MannyAnimClassPath = TEXT("/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed.ABP_Unarmed_C");
+}
+
 AVNHShopperCharacter::AVNHShopperCharacter()
 {
 	bReplicates = true;
@@ -60,18 +66,14 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 	if (MannyMeshFinder.Succeeded())
 	{
 		GetMesh()->SetSkeletalMesh(MannyMeshFinder.Object);
-		GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -88.0f));
-		GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
-		GetMesh()->SetAnimationMode(EAnimationMode::AnimationBlueprint);
-		GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
-		GetMesh()->bEnableUpdateRateOptimizations = false;
-		DebugBodyMesh->SetHiddenInGame(true);
 
 		static ConstructorHelpers::FClassFinder<UAnimInstance> MannyAnimFinder(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed"));
 		if (MannyAnimFinder.Succeeded())
 		{
 			GetMesh()->SetAnimInstanceClass(MannyAnimFinder.Class);
 		}
+
+		ConfigureMannyVisuals();
 	}
 	else
 	{
@@ -86,6 +88,8 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 void AVNHShopperCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	ConfigureMannyVisuals();
 
 	if (HasAuthority() && !bPossessedByAlien && RoutineComponent && RoutineComponent->GetCurrentWaypoint())
 	{
@@ -340,4 +344,63 @@ FString AVNHShopperCharacter::BuildQuestionResponse() const
 	const FString HeldPropText = Snapshot.HeldProp.IsNone() ? TEXT("nothing") : Snapshot.HeldProp.ToString();
 	const FString NextText = Snapshot.SuggestedNextActivity.IsNone() ? TEXT("keep shopping") : Snapshot.SuggestedNextActivity.ToString();
 	return FString::Printf(TEXT("\"I'm %s. I have %s. I was about to %s.\""), ContextText, *HeldPropText, *NextText);
+}
+
+FString AVNHShopperCharacter::DescribeAnimationDebugState() const
+{
+	const USkeletalMeshComponent* MeshComponent = GetMesh();
+	const UAnimInstance* AnimInstance = MeshComponent ? MeshComponent->GetAnimInstance() : nullptr;
+	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	const FVector Velocity = GetVelocity();
+
+	return FString::Printf(
+		TEXT("Shopper=%s Mesh=%s AnimClass=%s AnimInstance=%s Mode=%d Pause=%s Rate=%.2f SpeedXY=%.1f MaxWalk=%.1f MoveMode=%d"),
+		*GetNameSafe(this),
+		MeshComponent ? *GetNameSafe(MeshComponent->GetSkeletalMeshAsset()) : TEXT("None"),
+		MeshComponent ? *GetNameSafe(MeshComponent->GetAnimClass()) : TEXT("None"),
+		*GetNameSafe(AnimInstance),
+		MeshComponent ? static_cast<int32>(MeshComponent->GetAnimationMode()) : -1,
+		MeshComponent && MeshComponent->bPauseAnims ? TEXT("true") : TEXT("false"),
+		MeshComponent ? MeshComponent->GlobalAnimRateScale : 0.0f,
+		Velocity.Size2D(),
+		MovementComponent ? MovementComponent->MaxWalkSpeed : 0.0f,
+		MovementComponent ? static_cast<int32>(MovementComponent->MovementMode) : -1);
+}
+
+void AVNHShopperCharacter::ConfigureMannyVisuals()
+{
+	USkeletalMeshComponent* MeshComponent = GetMesh();
+	if (!MeshComponent)
+	{
+		return;
+	}
+
+	if (!MeshComponent->GetSkeletalMeshAsset())
+	{
+		if (USkeletalMesh* MannyMesh = LoadObject<USkeletalMesh>(nullptr, MannyMeshPath))
+		{
+			MeshComponent->SetSkeletalMesh(MannyMesh);
+		}
+	}
+
+	MeshComponent->SetRelativeLocation(FVector(0.0f, 0.0f, -88.0f));
+	MeshComponent->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+	MeshComponent->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+	MeshComponent->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+	MeshComponent->bEnableUpdateRateOptimizations = false;
+	MeshComponent->bPauseAnims = false;
+	MeshComponent->GlobalAnimRateScale = 1.0f;
+
+	if (!MeshComponent->GetAnimClass())
+	{
+		if (UClass* MannyAnimClass = LoadClass<UAnimInstance>(nullptr, MannyAnimClassPath))
+		{
+			MeshComponent->SetAnimInstanceClass(MannyAnimClass);
+		}
+	}
+
+	if (DebugBodyMesh && MeshComponent->GetSkeletalMeshAsset())
+	{
+		DebugBodyMesh->SetHiddenInGame(true);
+	}
 }

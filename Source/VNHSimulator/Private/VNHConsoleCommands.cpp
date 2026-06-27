@@ -1,6 +1,7 @@
 #include "VNHGameMode.h"
 
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/IConsoleManager.h"
 #include "VNHAlienLocomotionComponent.h"
@@ -284,6 +285,36 @@ FAutoConsoleCommandWithWorld VNHLogAlienInputCommand(
 		}
 
 		UE_LOG(LogVNH, Display, TEXT("vnh.LogAlienInput: %s"), *PlayerController->DescribeAlienInputDebugState());
+	}));
+
+FAutoConsoleCommandWithWorld VNHLogShopperAnimCommand(
+	TEXT("vnh.LogShopperAnim"),
+	TEXT("Debug: log Manny mesh and AnimBP state for all shopper pawns."),
+	FConsoleCommandWithWorldDelegate::CreateStatic([](UWorld* World)
+	{
+		if (!World)
+		{
+			UE_LOG(LogVNH, Warning, TEXT("vnh.LogShopperAnim failed: no world."));
+			return;
+		}
+
+		int32 Count = 0;
+		for (TActorIterator<AVNHShopperCharacter> It(World); It; ++It)
+		{
+			AVNHShopperCharacter* Shopper = *It;
+			if (!IsValid(Shopper))
+			{
+				continue;
+			}
+
+			++Count;
+			UE_LOG(LogVNH, Display, TEXT("vnh.LogShopperAnim[%d]: %s"), Count - 1, *Shopper->DescribeAnimationDebugState());
+		}
+
+		if (Count == 0)
+		{
+			UE_LOG(LogVNH, Warning, TEXT("vnh.LogShopperAnim: no shoppers found."));
+		}
 	}));
 
 FAutoConsoleCommandWithWorldAndArgs VNHSetAlienMoveCommand(

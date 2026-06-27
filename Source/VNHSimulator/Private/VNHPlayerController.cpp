@@ -2,7 +2,10 @@
 
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Blueprint/UserWidget.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Camera/PlayerCameraManager.h"
+#include "Components/TextBlock.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "InputCoreTypes.h"
@@ -11,6 +14,7 @@
 #include "VNHAlienLocomotionComponent.h"
 #include "VNHDebugHUD.h"
 #include "VNHLog.h"
+#include "VNHPlayerState.h"
 #include "VNHShopperCharacter.h"
 
 void AVNHPlayerController::BeginPlay()
@@ -61,6 +65,7 @@ void AVNHPlayerController::PlayerTick(float DeltaTime)
 	Super::PlayerTick(DeltaTime);
 	UpdateFocusedShopper();
 	PollAlienKeyboardInput();
+	UpdateDebugDeckRuntimeLabels(DeltaTime);
 }
 
 FString AVNHPlayerController::DescribeAlienInputDebugState() const
@@ -92,6 +97,46 @@ FString AVNHPlayerController::DescribeAlienInputDebugState() const
 		FastWalkStoppedSamples,
 		bLastPolledFastWalkRequested ? TEXT("true") : TEXT("false"),
 		PolledActNaturalSamples);
+}
+
+FString AVNHPlayerController::GetRoleStatusText() const
+{
+	const AVNHShopperCharacter* Shopper = Cast<AVNHShopperCharacter>(GetPawn());
+	const AVNHPlayerState* VNHPlayerState = GetPlayerState<AVNHPlayerState>();
+	const EVNHPlayerRole AssignedRole = VNHPlayerState ? VNHPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
+
+	if (Shopper && Shopper->IsPossessedByAlien())
+	{
+		return TEXT("ROLE: ALIEN  //  POSSESSED SHOPPER");
+	}
+
+	switch (AssignedRole)
+	{
+	case EVNHPlayerRole::Alien:
+		return TEXT("ROLE: ALIEN  //  AWAITING POSSESSION");
+	case EVNHPlayerRole::Hunter:
+		return TEXT("ROLE: HUMAN  //  HUNTER");
+	default:
+		return TEXT("ROLE: HUMAN  //  UNASSIGNED");
+	}
+}
+
+FString AVNHPlayerController::GetLocomotionStatusText() const
+{
+	const UVNHAlienLocomotionComponent* AlienLocomotionComponent = GetAlienLocomotionComponent();
+	if (!AlienLocomotionComponent)
+	{
+		return TEXT("LOCO: HUMAN OBSERVER  //  POSSESS A SHOPPER TO TEST 11.3");
+	}
+
+	const FVNHAlienLocomotionState State = AlienLocomotionComponent->GetLocomotionState();
+	return FString::Printf(
+		TEXT("LOCO: %.0f/%.0f CM/S  //  FAST %s  //  BRAKE %s  //  TURN %.0f"),
+		State.CurrentSpeed,
+		State.DesiredSpeed,
+		State.bFastWalkRequested ? TEXT("ON") : TEXT("OFF"),
+		State.bManualBrake ? TEXT("ON") : TEXT("OFF"),
+		State.BodyYawDeltaDegrees);
 }
 
 void AVNHPlayerController::RequestPublicTest(EVNHPublicTestType TestType)
@@ -396,6 +441,50 @@ void AVNHPlayerController::ApplyDebugHudInputMode(bool bDebugHudVisible)
 	else
 	{
 		SetInputMode(FInputModeGameOnly());
+	}
+}
+
+void AVNHPlayerController::UpdateDebugDeckRuntimeLabels(float DeltaTime)
+{
+	if (!IsLocalController() || !GetWorld())
+	{
+		return;
+	}
+
+	TimeUntilDebugDeckLabelLookup -= DeltaTime;
+	if ((!RoleStatusTextBlock.IsValid() || !LocomotionStatusTextBlock.IsValid()) && TimeUntilDebugDeckLabelLookup <= 0.0f)
+	{
+		TimeUntilDebugDeckLabelLookup = 0.5f;
+
+		TArray<UUserWidget*> Widgets;
+		UWidgetBlueprintLibrary::GetAllWidgetsOfClass(GetWorld(), Widgets, UUserWidget::StaticClass(), false);
+		for (UUserWidget* Widget : Widgets)
+		{
+			if (!Widget || !Widget->GetClass()->GetName().Contains(TEXT("WBP_VNHDebugDeck")))
+			{
+				continue;
+			}
+
+			if (!RoleStatusTextBlock.IsValid())
+			{
+				RoleStatusTextBlock = Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("RoleStatusText")));
+			}
+
+			if (!LocomotionStatusTextBlock.IsValid())
+			{
+				LocomotionStatusTextBlock = Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("LocomotionStatusText")));
+			}
+		}
+	}
+
+	if (UTextBlock* RoleText = RoleStatusTextBlock.Get())
+	{
+		RoleText->SetText(FText::FromString(GetRoleStatusText()));
+	}
+
+	if (UTextBlock* LocomotionText = LocomotionStatusTextBlock.Get())
+	{
+		LocomotionText->SetText(FText::FromString(GetLocomotionStatusText()));
 	}
 }
 

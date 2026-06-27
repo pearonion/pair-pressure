@@ -7,6 +7,7 @@
 
 class UInputAction;
 class UInputMappingContext;
+class UTextBlock;
 class UVNHAlienLocomotionComponent;
 class AVNHShopperCharacter;
 
@@ -22,6 +23,12 @@ public:
 	virtual void PlayerTick(float DeltaTime) override;
 
 	FString DescribeAlienInputDebugState() const;
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Debug")
+	FString GetRoleStatusText() const;
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Debug")
+	FString GetLocomotionStatusText() const;
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Interaction")
 	AVNHShopperCharacter* GetFocusedShopper() const { return FocusedShopper.Get(); }
@@ -100,6 +107,7 @@ private:
 	void HandleInteractPressed();
 	void ToggleDebugHud();
 	void ApplyDebugHudInputMode(bool bDebugHudVisible);
+	void UpdateDebugDeckRuntimeLabels(float DeltaTime);
 	void PushLegacyAlienMoveInput();
 	void PollAlienKeyboardInput();
 	void UpdateFocusedShopper();
@@ -122,7 +130,10 @@ private:
 	bool bWasPolledActNaturalDown = false;
 	bool bWasPolledInteractDown = false;
 	TWeakObjectPtr<AVNHShopperCharacter> FocusedShopper;
+	TWeakObjectPtr<UTextBlock> RoleStatusTextBlock;
+	TWeakObjectPtr<UTextBlock> LocomotionStatusTextBlock;
 	TArray<TWeakObjectPtr<AVNHShopperCharacter>> MarkedSuspects;
 	FString LastInteractionText;
 	float LastInteractionTimeSeconds = -100.0f;
+	float TimeUntilDebugDeckLabelLookup = 0.0f;
 };
