@@ -4,6 +4,7 @@
 #include "Engine/Canvas.h"
 #include "Engine/Font.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerState.h"
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundBase.h"
 #include "UObject/ConstructorHelpers.h"
@@ -194,48 +195,74 @@ FString AVNHDebugHUD::BuildRoundStatusText() const
 		return TEXT("Round: no VNHGameState");
 	}
 
-	const TCHAR* PhaseText = TEXT("Unknown");
-	switch (VNHGameState->GetRoundPhase())
-	{
-	case EVNHRoundPhase::WaitingForPlayers:
-		PhaseText = TEXT("Waiting");
-		break;
-	case EVNHRoundPhase::AssigningRoles:
-		PhaseText = TEXT("Assigning");
-		break;
-	case EVNHRoundPhase::AlienSetup:
-		PhaseText = TEXT("Alien Setup");
-		break;
-	case EVNHRoundPhase::AlienHeadStart:
-		PhaseText = TEXT("Head Start");
-		break;
-	case EVNHRoundPhase::Investigation:
-		PhaseText = TEXT("Investigation");
-		break;
-	case EVNHRoundPhase::Accusation:
-		PhaseText = TEXT("Accusation");
-		break;
-	case EVNHRoundPhase::Reveal:
-		PhaseText = TEXT("Reveal");
-		break;
-	case EVNHRoundPhase::Resetting:
-		PhaseText = TEXT("Resetting");
-		break;
-	default:
-		break;
-	}
-
 	const float PhaseEndsAt = VNHGameState->GetPhaseEndsAtServerTime();
 	const float RemainingSeconds = PhaseEndsAt > 0.0f ? FMath::Max(0.0f, PhaseEndsAt - VNHGameState->GetServerWorldTimeSeconds()) : 0.0f;
 
 	return FString::Printf(
 		TEXT("Round %d | %s | %.0fs | Cmd %d Q %d Acc %d"),
 		VNHGameState->GetRoundNumber(),
-		PhaseText,
+		*GetPhaseLabel(VNHGameState->GetRoundPhase()),
 		RemainingSeconds,
 		VNHGameState->GetTestsRemaining(),
 		VNHGameState->GetDirectQuestionsRemaining(),
 		VNHGameState->GetAccusationsRemaining());
+}
+
+FString AVNHDebugHUD::GetPhaseLabel(EVNHRoundPhase RoundPhase) const
+{
+	switch (RoundPhase)
+	{
+	case EVNHRoundPhase::WaitingForPlayers:
+		return TEXT("Waiting");
+	case EVNHRoundPhase::AssigningRoles:
+		return TEXT("Role Reveal");
+	case EVNHRoundPhase::AlienSetup:
+		return TEXT("Alien Setup");
+	case EVNHRoundPhase::AlienHeadStart:
+		return TEXT("Alien Head Start");
+	case EVNHRoundPhase::Investigation:
+		return TEXT("Investigation");
+	case EVNHRoundPhase::Accusation:
+		return TEXT("Accusation");
+	case EVNHRoundPhase::Reveal:
+		return TEXT("Reveal");
+	case EVNHRoundPhase::Resetting:
+		return TEXT("Resetting");
+	default:
+		return TEXT("Unknown");
+	}
+}
+
+FString AVNHDebugHUD::GetQuickChatLabel(const AVNHGameState* VNHGameState) const
+{
+	if (!VNHGameState || VNHGameState->GetLastQuickChatMessage().Serial <= 0)
+	{
+		return TEXT("Quick chat: Browse / Shirt / Friend / NoThanks / WrongSize");
+	}
+
+	const FVNHQuickChatMessage Message = VNHGameState->GetLastQuickChatMessage();
+	const FString SpeakerName = Message.Speaker ? Message.Speaker->GetPlayerName() : TEXT("Someone");
+	return FString::Printf(TEXT("%s: %s"), *SpeakerName, *Message.Text.ToString());
+}
+
+FLinearColor AVNHDebugHUD::GetRoleAccentColor(const AVNHPlayerState* VNHPlayerState) const
+{
+	if (!VNHPlayerState)
+	{
+		return FLinearColor(0.0f, 0.78f, 1.0f, 1.0f);
+	}
+
+	switch (VNHPlayerState->GetRole())
+	{
+	case EVNHPlayerRole::Human:
+		return FLinearColor(0.30f, 0.86f, 0.58f, 1.0f);
+	case EVNHPlayerRole::Alien:
+		return FLinearColor(0.78f, 0.42f, 1.0f, 1.0f);
+	case EVNHPlayerRole::Hunter:
+		return FLinearColor(1.0f, 0.72f, 0.12f, 1.0f);
+	default:
+		return FLinearColor(0.0f, 0.78f, 1.0f, 1.0f);
+	}
 }
 
 void AVNHDebugHUD::DrawDebugText(const FString& Text, const FLinearColor& Color, float X, float Y, float Scale)
@@ -284,6 +311,15 @@ void AVNHDebugHUD::DrawPolishedButton(const FDebugButton& Button, const FVector2
 	DrawRect(FLinearColor(1.0f, 0.82f, 0.05f, 0.9f * HoverAmount), DrawPosition.X + DrawSize.X - 34.0f, DrawPosition.Y + DrawSize.Y - 4.0f, 34.0f, 4.0f);
 
 	DrawDebugText(Button.Label, TextColor, DrawPosition.X + 14.0f + PressAmount * 2.0f, DrawPosition.Y + 4.0f + PressAmount * 2.0f, 1.22f + HoverAmount * 0.08f);
+}
+
+void AVNHDebugHUD::DrawSection15Panel(float X, float Y, float W, float H, const FLinearColor& AccentColor, float Alpha)
+{
+	DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.56f), X + 7.0f, Y + 8.0f, W, H);
+	DrawRect(FLinearColor(0.018f, 0.024f, 0.034f, Alpha), X, Y, W, H);
+	DrawRect(AccentColor, X, Y, 7.0f, H);
+	DrawRect(FLinearColor(1.0f, 0.82f, 0.05f, 0.95f), X + 7.0f, Y, FMath::Min(154.0f, W - 14.0f), 5.0f);
+	DrawRect(FLinearColor(1.0f, 1.0f, 1.0f, 0.08f), X + 14.0f, Y + H - 2.0f, W - 28.0f, 1.0f);
 }
 
 void AVNHDebugHUD::DrawInteractionPanel()
@@ -348,56 +384,152 @@ void AVNHDebugHUD::DrawRolePhaseOverlay()
 	const EVNHRoundPhase RoundPhase = VNHGameState->GetRoundPhase();
 	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
 	const bool bIsLobbyMap = MapName.Contains(TEXT("Lobby"));
-	if (RoundPhase != EVNHRoundPhase::AssigningRoles && RoundPhase != EVNHRoundPhase::Reveal && !(bIsLobbyMap && RoundPhase == EVNHRoundPhase::WaitingForPlayers))
-	{
-		return;
-	}
-
-	const float OverlayW = FMath::Min(740.0f, Canvas->ClipX - 48.0f);
-	const float OverlayH = RoundPhase == EVNHRoundPhase::Reveal || bIsLobbyMap ? 190.0f : 250.0f;
-	const float OverlayX = (Canvas->ClipX - OverlayW) * 0.5f;
-	const float OverlayY = FMath::Max(54.0f, Canvas->ClipY * 0.16f);
-
-	DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.62f), OverlayX + 8.0f, OverlayY + 10.0f, OverlayW, OverlayH);
-	DrawRect(FLinearColor(0.018f, 0.026f, 0.04f, 0.94f), OverlayX, OverlayY, OverlayW, OverlayH);
-	DrawRect(FLinearColor(0.0f, 0.78f, 1.0f, 1.0f), OverlayX, OverlayY, 8.0f, OverlayH);
-	DrawRect(FLinearColor(1.0f, 0.82f, 0.05f, 1.0f), OverlayX + 8.0f, OverlayY, 148.0f, 6.0f);
 
 	if (bIsLobbyMap && RoundPhase == EVNHRoundPhase::WaitingForPlayers)
 	{
-		const int32 PlayerCount = VNHGameState->PlayerArray.Num();
-		const FString Title = TEXT("PRIVATE LOBBY");
-		const FString PlayerText = FString::Printf(TEXT("Players connected: %d / 3"), PlayerCount);
-		const FString StartText = PlayerCount >= 3 ? TEXT("Host can start from the lit pad.") : TEXT("Waiting for the full three-player MVP group.");
-		DrawDebugText(Title, FLinearColor::White, OverlayX + 28.0f, OverlayY + 24.0f, 2.0f);
-		DrawDebugText(PlayerText, FLinearColor(0.88f, 0.95f, 1.0f, 1.0f), OverlayX + 28.0f, OverlayY + 86.0f, 1.38f);
-		DrawDebugText(StartText, FLinearColor(1.0f, 0.82f, 0.05f, 1.0f), OverlayX + 28.0f, OverlayY + 130.0f, 1.18f);
+		DrawLobbyHUD(VNHGameState);
 		return;
 	}
 
-	if (RoundPhase == EVNHRoundPhase::Reveal)
+	switch (RoundPhase)
 	{
-		const FString Title = TEXT("ROUND REVEAL");
-		const FString Summary = VNHGameState->GetRevealSummaryText().ToString();
-		DrawDebugText(Title, FLinearColor::White, OverlayX + 28.0f, OverlayY + 24.0f, 2.0f);
-		DrawDebugText(Summary, FLinearColor(0.88f, 0.95f, 1.0f, 1.0f), OverlayX + 28.0f, OverlayY + 86.0f, 1.38f);
+	case EVNHRoundPhase::AssigningRoles:
+		DrawRoleRevealScreen(VNHGameState, VNHPlayerState);
+		return;
+	case EVNHRoundPhase::AlienSetup:
+	case EVNHRoundPhase::AlienHeadStart:
+	case EVNHRoundPhase::Investigation:
+		DrawRoleGameplayHUD(VNHGameState, VNHPlayerState);
+		return;
+	case EVNHRoundPhase::Accusation:
+		DrawAccusationScreen(VNHGameState, VNHPlayerState);
+		return;
+	case EVNHRoundPhase::Reveal:
+		DrawRevealScreen(VNHGameState);
+		return;
+	default:
 		return;
 	}
+}
+
+void AVNHDebugHUD::DrawLobbyHUD(const AVNHGameState* VNHGameState)
+{
+	const float OverlayW = FMath::Min(780.0f, Canvas->ClipX - 48.0f);
+	const float OverlayH = 270.0f;
+	const float OverlayX = (Canvas->ClipX - OverlayW) * 0.5f;
+	const float OverlayY = FMath::Max(50.0f, Canvas->ClipY * 0.12f);
+	DrawSection15Panel(OverlayX, OverlayY, OverlayW, OverlayH, FLinearColor(0.0f, 0.78f, 1.0f, 1.0f));
+
+	DrawDebugText(TEXT("PRIVATE LOBBY"), FLinearColor::White, OverlayX + 28.0f, OverlayY + 22.0f, 2.0f);
+	DrawDebugText(TEXT("Visibility: private listen session"), FLinearColor(0.72f, 0.86f, 1.0f, 1.0f), OverlayX + 28.0f, OverlayY + 72.0f, 1.1f);
+	DrawDebugText(TEXT("Host must start when everyone is ready."), FLinearColor(1.0f, 0.82f, 0.05f, 1.0f), OverlayX + 28.0f, OverlayY + 102.0f, 1.18f);
+
+	const int32 PlayerCount = VNHGameState ? VNHGameState->PlayerArray.Num() : 0;
+	DrawDebugText(FString::Printf(TEXT("Players connected: %d / 3"), PlayerCount), FLinearColor(0.88f, 0.95f, 1.0f, 1.0f), OverlayX + 28.0f, OverlayY + 138.0f, 1.32f);
+	for (int32 Index = 0; VNHGameState && Index < VNHGameState->PlayerArray.Num() && Index < 4; ++Index)
+	{
+		const APlayerState* PlayerState = VNHGameState->PlayerArray[Index];
+		const FString HostSuffix = Index == 0 ? TEXT("  [HOST]") : TEXT("");
+		DrawDebugText(FString::Printf(TEXT("%d. %s%s"), Index + 1, *GetNameSafe(PlayerState), *HostSuffix), FLinearColor::White, OverlayX + 330.0f, OverlayY + 72.0f + Index * 32.0f, 1.12f);
+	}
+}
+
+void AVNHDebugHUD::DrawRoleRevealScreen(const AVNHGameState* VNHGameState, const AVNHPlayerState* VNHPlayerState)
+{
+	const FLinearColor Accent = GetRoleAccentColor(VNHPlayerState);
+	const float OverlayW = FMath::Min(800.0f, Canvas->ClipX - 48.0f);
+	const float OverlayH = 270.0f;
+	const float OverlayX = (Canvas->ClipX - OverlayW) * 0.5f;
+	const float OverlayY = FMath::Max(54.0f, Canvas->ClipY * 0.15f);
+	DrawSection15Panel(OverlayX, OverlayY, OverlayW, OverlayH, Accent);
 
 	const FString RoleText = VNHPlayerState ? VNHPlayerState->GetPrivateRoleRevealText().ToString() : TEXT("Waiting for role");
 	const FString GoalText = VNHPlayerState ? VNHPlayerState->GetRoleGoalText().ToString() : TEXT("Wait for the host to start the round.");
 	const FString ErrandText = VNHPlayerState ? VNHPlayerState->GetLightErrandText().ToString() : FString();
 	const FString ToolsText = VNHGameState->GetHunterToolsText().ToString();
+	const float RemainingSeconds = VNHGameState && VNHGameState->GetPhaseEndsAtServerTime() > 0.0f
+		? FMath::Max(0.0f, VNHGameState->GetPhaseEndsAtServerTime() - VNHGameState->GetServerWorldTimeSeconds())
+		: 0.0f;
 
 	DrawDebugText(RoleText, FLinearColor::White, OverlayX + 28.0f, OverlayY + 24.0f, 2.0f);
-	DrawDebugText(GoalText, FLinearColor(0.88f, 0.95f, 1.0f, 1.0f), OverlayX + 28.0f, OverlayY + 86.0f, 1.28f);
+	DrawDebugText(GoalText, FLinearColor(0.88f, 0.95f, 1.0f, 1.0f), OverlayX + 28.0f, OverlayY + 88.0f, 1.28f);
 
 	if (!ErrandText.IsEmpty())
 	{
-		DrawDebugText(FString::Printf(TEXT("Cover errand: %s"), *ErrandText), FLinearColor(1.0f, 0.82f, 0.05f, 1.0f), OverlayX + 28.0f, OverlayY + 132.0f, 1.18f);
+		DrawDebugText(FString::Printf(TEXT("Cover errand: %s"), *ErrandText), FLinearColor(1.0f, 0.82f, 0.05f, 1.0f), OverlayX + 28.0f, OverlayY + 134.0f, 1.18f);
 	}
 
-	DrawDebugText(ToolsText, FLinearColor(0.68f, 0.88f, 1.0f, 1.0f), OverlayX + 28.0f, OverlayY + OverlayH - 54.0f, 1.1f);
+	DrawDebugText(TEXT("Controls: Move / Interact / Act Natural / Quick Chat"), FLinearColor(0.70f, 0.88f, 1.0f, 1.0f), OverlayX + 28.0f, OverlayY + OverlayH - 78.0f, 1.08f);
+	DrawDebugText(ToolsText, FLinearColor(0.68f, 0.88f, 1.0f, 1.0f), OverlayX + 28.0f, OverlayY + OverlayH - 48.0f, 1.08f);
+	DrawDebugText(FString::Printf(TEXT("Starting in %.0fs"), RemainingSeconds), Accent, OverlayX + OverlayW - 180.0f, OverlayY + 28.0f, 1.35f);
+}
+
+void AVNHDebugHUD::DrawRoleGameplayHUD(const AVNHGameState* VNHGameState, const AVNHPlayerState* VNHPlayerState)
+{
+	const FLinearColor Accent = GetRoleAccentColor(VNHPlayerState);
+	const float PanelW = FMath::Min(560.0f, Canvas->ClipX - 32.0f);
+	const float PanelH = 138.0f;
+	const float PanelX = 18.0f;
+	const float PanelY = Canvas->ClipY - PanelH - 18.0f;
+	DrawSection15Panel(PanelX, PanelY, PanelW, PanelH, Accent, 0.86f);
+
+	const FString RoleName = VNHPlayerState ? VNHPlayerState->GetRoleDisplayText().ToString() : TEXT("Unassigned");
+	const FString GoalText = VNHPlayerState ? VNHPlayerState->GetRoleGoalText().ToString() : TEXT("Wait for role assignment.");
+	DrawDebugText(FString::Printf(TEXT("%s HUD"), *RoleName.ToUpper()), FLinearColor::White, PanelX + 18.0f, PanelY + 14.0f, 1.35f);
+	DrawDebugText(GoalText, FLinearColor(0.86f, 0.94f, 1.0f, 1.0f), PanelX + 18.0f, PanelY + 48.0f, 1.0f);
+
+	if (VNHPlayerState && VNHPlayerState->IsHunter())
+	{
+		DrawDebugText(VNHGameState ? VNHGameState->GetHunterToolsText().ToString() : TEXT("Commands 0/2 | Question 0/1 | Accuse 0/1"), Accent, PanelX + 18.0f, PanelY + 82.0f, 1.05f);
+		DrawDebugText(TEXT("Mark suspects, then confirm one accusation."), FLinearColor::White, PanelX + 18.0f, PanelY + 108.0f, 0.92f);
+		return;
+	}
+
+	const FString ErrandText = VNHPlayerState ? VNHPlayerState->GetLightErrandText().ToString() : FString();
+	if (!ErrandText.IsEmpty())
+	{
+		DrawDebugText(FString::Printf(TEXT("Errand: %s"), *ErrandText), Accent, PanelX + 18.0f, PanelY + 82.0f, 1.02f);
+	}
+
+	const FString QuickChat = GetQuickChatLabel(VNHGameState);
+	const FString PrivateHint = VNHPlayerState && VNHPlayerState->IsAlien()
+		? TEXT("Private thought: move weird, then recover before anyone notices.")
+		: TEXT("Quick-chat hints: Browse, Shirt, Friend, NoThanks, WrongSize.");
+	DrawDebugText(PrivateHint, FLinearColor::White, PanelX + 18.0f, PanelY + 108.0f, 0.92f);
+	DrawDebugText(QuickChat, FLinearColor(0.72f, 0.88f, 1.0f, 1.0f), 18.0f, PanelY - 30.0f, 0.95f);
+}
+
+void AVNHDebugHUD::DrawAccusationScreen(const AVNHGameState* VNHGameState, const AVNHPlayerState* VNHPlayerState)
+{
+	const FLinearColor Accent = FLinearColor(1.0f, 0.32f, 0.16f, 1.0f);
+	const float OverlayW = FMath::Min(800.0f, Canvas->ClipX - 48.0f);
+	const float OverlayH = 230.0f;
+	const float OverlayX = (Canvas->ClipX - OverlayW) * 0.5f;
+	const float OverlayY = FMath::Max(54.0f, Canvas->ClipY * 0.16f);
+	DrawSection15Panel(OverlayX, OverlayY, OverlayW, OverlayH, Accent);
+
+	const float RemainingSeconds = VNHGameState && VNHGameState->GetPhaseEndsAtServerTime() > 0.0f
+		? FMath::Max(0.0f, VNHGameState->GetPhaseEndsAtServerTime() - VNHGameState->GetServerWorldTimeSeconds())
+		: 0.0f;
+	DrawDebugText(TEXT("ACCUSATION"), FLinearColor::White, OverlayX + 28.0f, OverlayY + 24.0f, 2.0f);
+	DrawDebugText(TEXT("Everyone freezes. Hunter confirms one target."), FLinearColor(0.95f, 0.95f, 1.0f, 1.0f), OverlayX + 28.0f, OverlayY + 86.0f, 1.26f);
+	DrawDebugText(VNHPlayerState && VNHPlayerState->IsHunter() ? TEXT("Use your suspect marks. Accuse only when sure.") : TEXT("Stay still. Do not reveal private role information."), Accent, OverlayX + 28.0f, OverlayY + 132.0f, 1.16f);
+	DrawDebugText(FString::Printf(TEXT("Reveal in %.0fs"), RemainingSeconds), FLinearColor::White, OverlayX + OverlayW - 170.0f, OverlayY + 28.0f, 1.25f);
+}
+
+void AVNHDebugHUD::DrawRevealScreen(const AVNHGameState* VNHGameState)
+{
+	const float OverlayW = FMath::Min(840.0f, Canvas->ClipX - 48.0f);
+	const float OverlayH = 245.0f;
+	const float OverlayX = (Canvas->ClipX - OverlayW) * 0.5f;
+	const float OverlayY = FMath::Max(54.0f, Canvas->ClipY * 0.15f);
+	DrawSection15Panel(OverlayX, OverlayY, OverlayW, OverlayH, FLinearColor(1.0f, 0.82f, 0.05f, 1.0f));
+
+	const FString Summary = VNHGameState ? VNHGameState->GetRevealSummaryText().ToString() : TEXT("No reveal data.");
+	DrawDebugText(TEXT("ROUND REVEAL"), FLinearColor::White, OverlayX + 28.0f, OverlayY + 24.0f, 2.0f);
+	DrawDebugText(Summary, FLinearColor(0.88f, 0.95f, 1.0f, 1.0f), OverlayX + 28.0f, OverlayY + 88.0f, 1.25f);
+	DrawDebugText(TEXT("Awards: Most Normal Human  |  Wrongfully Accused  |  Hunter Was Cooking"), FLinearColor(1.0f, 0.82f, 0.05f, 1.0f), OverlayX + 28.0f, OverlayY + 140.0f, 1.05f);
+	DrawDebugText(TEXT("Rematch countdown / button placeholder for MVP flow."), FLinearColor::White, OverlayX + 28.0f, OverlayY + 180.0f, 0.95f);
 }
 
 void AVNHDebugHUD::PlayUISound(USoundBase* Sound, float VolumeMultiplier) const

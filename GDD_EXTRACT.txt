@@ -1,0 +1,841 @@
+
+
+VERY NORMAL HUMAN 
+SIMULATOR
+Brand-New 3+ Player MVP Game Design Document
+UE5.8 Implementation-Focused Version 2
+One-Sentence Pitch
+One player is the Hunter, one player is secretly an Alien operating a human body, and the remaining players are 
+Human civilians creating believable chaos. The Hunter uses public commands, one direct question, and one 
+accusation to identify who is pretending.
+Design North Star
+Chase fun, memories, laughs, trolling opportunities, deception, and instant rematches. Keep every feature in 
+service of: Watch. React. Lie. Accuse. Reveal.
+Document goal: give enough design and technical detail to start coding in Unreal Engine 5.8 while 
+keeping the MVP small enough for a 2-3 person team.
+1
+
+1. MVP Scope Lock
+This document replaces the earlier larger versions for active development. It is intentionally 
+smaller, sharper, and built around the 3+ player social chaos version.
+CategoryMVP Decision
+Minimum players3 players: 1 Hunter, 1 Alien, 1 Human.
+Recommended players4 players: 1 Hunter, 1 Alien, 2 Humans. This is the best first 
+playtest target.
+Maximum MVP players6 players: 1 Hunter, 1 Alien, up to 4 Humans.
+MapOne compact clothing store. No mall, no multiple zones.
+Round length2-3 minutes plus short role reveal and reveal screen.
+NPCs4-8 NPCs. They exist to establish normal behaviour and false 
+positives, not simulate a real crowd.
+Public commandsTwo Hunter commands per round. MVP commands: Freeze 
+and Look Here.
+Direct questionOne Hunter direct question per round.
+AccusationOne real accusation per round.
+Core loopPlayers act normal under pressure. Hunter creates 
+situations. Reveal creates laughs.
+Out of scopeMulti-zone mall, inventory, large AI crowds, disguise 
+damage, voice analysis, MetaHuman crowds, advanced 
+progression.
+2. Why This Version Should Be More Fun
+The previous design risked becoming a checklist stealth game. This version puts people at the 
+centre. Human players create false positives, the Alien hides inside social chaos, and the Hunter 
+creates public situations that force everyone to perform.
+⦁ Friends are the chaos engine. Human players can be nervous, funny, misleading, or 
+accidentally more suspicious than the Alien.
+⦁ The Alien is not doing chores. The Alien is trying to survive human rituals and public pressure.
+⦁ The Hunter is not scanning for a model difference. The Hunter is creating situations and 
+reading reactions.
+⦁ Every round should produce a story: someone froze weirdly, someone lied badly, the wrong 
+person got accused, or the Alien was in plain sight.
+⦁ The game is simple to explain: one person is pretending, everyone else is trying not to get 
+blamed.
+2
+
+3. Core Design Pillars
+PillarMeaningDesign Rule
+Social chaos over systemsThe best content comes from player 
+behaviour, not long task lists.
+Add situations, not chores.
+Readable normalityNPCs and humans establish what 
+normal looks like.
+If normal is unreadable, suspicion feels 
+random.
+Mistakes become comedyA weird movement or bad answer 
+should create laughter before 
+punishment.
+Never make mistakes feel like pure 
+failure.
+Hunter has agencyThe Hunter creates moments that 
+expose people.
+No passive “watch only” hunter 
+gameplay.
+Humans must matterHuman players are not spectators or 
+bait.
+Give Humans goals, awards, and 
+deception opportunities.
+One accusation mattersThe final choice should be tense and 
+funny.
+No spam accusations.
+Fast rematchRounds should be short enough that 
+losing is funny.
+If a round feels wasted, it is too long.
+4. Target Player Count and Role Rules
+⦁ Minimum: 3 players. One Hunter, one Alien, one Human.
+⦁ Recommended: 4 players. One Hunter, one Alien, two Humans.
+⦁ Maximum MVP: 6 players. One Hunter, one Alien, remaining players are Humans.
+⦁ Only one Hunter is allowed per round.
+⦁ Only one Alien is allowed per round.
+⦁ Roles are randomly assigned every round after the host starts the game.
+⦁ The same player can receive the same role again, but an optional anti-repeat rule should be 
+added after core testing if players dislike repeats.
+Role Randomization Guardrail
+For the first implementation, use pure random with exactly one Hunter and one Alien. After playtests, add a soft 
+anti-repeat option: avoid assigning the same player Hunter or Alien three rounds in a row unless player count 
+forces it.
+5. Server and Lobby Flow
+The game supports both public and private server options. For MVP, these can be implemented 
+as listen-server sessions. True dedicated public servers are a post-MVP upgrade unless the 
+3
+
+multiplayer codebase proves stable and there is a public matchmaking need.
+5.1 Server Options
+Server TypeMVP BehaviourNotes
+Private lobbyHost creates a private session. Friends 
+join through invite, session browser, or 
+code/password.
+Best for early playtesting and 
+streamer/friend groups.
+Public lobbyHost creates a visible public session. 
+Other players can join from a server 
+browser.
+Use host controls, kick, mute, and fast 
+rematch.
+Listen serverThe host is also a player and owns the 
+session.
+Recommended MVP approach.
+Dedicated serverServer exists independently of host.Post-MVP. Adds complexity but 
+improves public reliability.
+5.2 Lobby Level Flow
+The lobby is a small playable level, not just a menu. This helps the game feel social before the 
+round starts.
+1. Player chooses Host Public, Host Private, or Join Game.
+2. Host loads into the Lobby Level.
+3. Friends or public players join the lobby.
+4. Players can walk around, emote, test movement, and see who is connected.
+5. A large physical Play button or gate exists in the lobby level.
+6. Only the host can activate the Play button.
+7. When the host runs to the Play button and activates it, the server locks the lobby and begins 
+round loading.
+8. The game transitions to a private Role Reveal screen for each player.
+9. Each player sees only their own assigned role: Hunter, Alien, or Human.
+10. After a short countdown, the Store Level loads and the round starts.
+5.3 Lobby Feature Requirements
+FeatureRequired for MVPImplementation Notes
+Player listYesShow player names, ready state 
+optional, host icon, ping optional.
+Host Play buttonYesIn-world interactable. Server-
+authoritative start request.
+Public/private toggleYesSession setting: visibility public or 
+invite/password only.
+Password/codePrivate optionalCan be post-MVP if platform invites are 
+sufficient.
+4
+
+Kick playerRecommendedNeeded for public lobbies and grief 
+control.
+Ready checkOptionalNot needed if host controls start.
+Text/quick chatRecommendedUseful before VOIP exists.
+Role preferenceNoRoles should be random. Preferences 
+can bias future non-MVP queues.
+6. Full Round Flow
+PhaseApprox. TimeWhat Happens
+LobbyVariablePlayers join. Host activates in-world 
+Play button.
+Loading / lock-in5-10 secServer validates player count, locks 
+joins, randomly assigns roles.
+Private role reveal8-12 secEach player sees only their role, goal, 
+and controls reminder.
+Store spawn5 secPlayers load into the clothing store. 
+NPCs are already in routine.
+Normalisation window10 secHunter is delayed or placed outside the 
+store while Humans and Alien settle.
+Investigation2-3 minHunter observes, triggers two 
+commands, asks one direct question, 
+and makes one accusation.
+Accusation10 secHunter selects target and confirms. 
+Everyone freezes.
+Reveal15-25 secAccused identity and actual Alien are 
+revealed with awards and funny recap.
+Rematch / lobby10 secPlayers can immediately run another 
+round or return to lobby.
+Critical Flow Principle
+The role reveal must be private. The Store Level should not reveal role through spawn position, model 
+differences, or UI visible to other players.
+7. Win Conditions
+RolePrimary GoalWin/Loss
+HunterIdentify the Alien.Wins if the real Alien is accused. Loses 
+if a Human or NPC is accused, or time 
+expires.
+AlienAvoid the real accusation.Wins if Hunter accuses someone else 
+or time expires.
+HumanAvoid false accusation and help create 
+a believable crowd.
+Personal success if not accused. 
+Shared comedy if falsely accused. In 
+public mode, rewards should favour 
+looking believable, not griefing.
+NPCNon-player baseline.Can be accused as a false positive.
+The game should celebrate funny losses. A Human falsely accused should get a comedic 
+spotlight, but public mode should not overly reward deliberate sabotage that ruins the Hunter 
+5
+
+experience.
+8. Role Feature Requirements
+This section defines exactly what each player type needs in UE5.8 for MVP.
+8.1 Human Player
+Human players are real civilians. They are not the Alien, but they are allowed to be suspicious, 
+deceptive, funny, nervous, or deliberately misleading within reason. Their purpose is to create 
+social noise and memorable false positives.
+FeatureMVP Required?Design Purpose
+UE5.8 Implementation 
+Notes
+Human role revealYesTell player they are Human 
+and should avoid being 
+accused.
+WBP_RoleReveal with role-
+specific copy.
+Same body/control system 
+as Alien
+YesPrevents Hunter from 
+detecting Alien through 
+unique movement systems.
+Use shared 
+AVNHSPlayableCharacter 
+base.
+Normal interactionsYesLet Humans browse, inspect, 
+phone, carry item, line up.
+Shared BPI_Interactable and 
+Smart Object slots.
+Light personal errandRecommendedPrevents Humans from 
+feeling like bait.
+One optional objective: buy 
+item, inspect mirror, wait in 
+line. No hard win 
+dependency.
+Act NaturalYesLets Humans also recover or 
+troll, preserving parity with 
+Alien.
+Contextual montage 
+triggered by input. Same as 
+Alien.
+Quick-chat barksRecommendedCreates comedy and 
+communication without 
+VOIP.
+Data-driven bark wheel with 
+local/server broadcast.
+Report SuspicionOptional MVP+Let Humans point at 
+someone to deceive or help 
+Hunter.
+Simple ping visible to Hunter 
+as “Civilian report”.
+Anti-grief guardrailYes for publicDiscourage Humans from 
+turning every round into 
+nonsense.
+Track Scene Disruption for 
+rewards only, not a hard 
+punishment.
+Human Controls
+InputAction
+WASD / Left StickMove with natural acceleration, coast, and turn arcs.
+Mouse / Right StickLook / camera. Body should not snap instantly to camera.
+E / Face ButtonInteract with rack, mirror, phone point, checkout, prop.
+Q / Shoulder ButtonAct Natural / contextual recovery.
+R / Face ButtonProp action: phone check, coffee sip, bag adjust, clothing 
+inspect.
+Hold Shift / TriggerFaster walk. Suspicious if spammed.
+Quick Chat Key / D-padSay preset human line.
+6
+
+8.2 Alien Player
+The Alien is secretly one of the human-looking players in the store. The Alien should not be 
+detectable by model, shader, spawn, or UI. The Alien wins by operating a human body 
+convincingly under social pressure.
+FeatureMVP Required?Design Purpose
+UE5.8 Implementation 
+Notes
+Secret role revealYesOnly the Alien knows they 
+are Alien.
+Private client role reveal. 
+Replicated role hidden from 
+other clients except server.
+Same visible body as HumanYesAvoid visual metagaming.Same skeletal 
+mesh/animation system as 
+Human players.
+Same public controls as 
+Human
+YesHunter cannot infer role from 
+allowed actions.
+Shared input mapping 
+context; Alien has private UI 
+only.
+Private Alien pressure copyYesCreates comedy without 
+public mechanics.
+Private hints such as “do not 
+act suspicious”. No visible 
+meter.
+Act NaturalYesLets Alien recover from 
+mistakes and bluff.
+Same contextual montage 
+system as Humans.
+Terrible alien thought barksRecommendedAdds personality for Alien 
+player only.
+Local-only subtitles/audio: 
+“Your walking is convincing.”
+Subtle pressure feedbackOptionalTension when Hunter stares 
+or commands trigger.
+Local audio/heartbeat or 
+vignette; no gameplay meter 
+at first.
+Alien-specific objectiveNo for MVPAvoid task bloat.Future only. MVP Alien 
+simply survives.
+Alien Controls
+Alien controls should be identical to Human controls in public-facing behaviour. The fun is 
+knowing you are lying while everyone else may also look suspicious.
+⦁ Move, look, interact, prop action, Act Natural, and quick-chat use the same controls as 
+Human.
+⦁ Private role UI reminds the Alien: “You are pretending. Do not get accused.”
+⦁ Do not add unique alien emotes in MVP. Unique visible actions make the role too easy to 
+identify.
+⦁ Alien-only content should be private feedback, not public animation differences.
+8.3 Hunter Player
+The Hunter is an undercover investigator. The Hunter should feel active, clever, and dangerous, 
+but not omniscient. Their fun comes from creating situations and reading who reacts wrong.
+FeatureMVP Required?Design Purpose
+UE5.8 Implementation 
+Notes
+7
+
+First-person cameraYesInvestigation fantasy and 
+limited awareness.
+AVNHSHunterCharacter or 
+same character with FPS 
+camera.
+Public Command: FreezeYesCreates a high-pressure 
+readable reaction.
+Server broadcasts 
+Event.Freeze. NPCs and 
+players react 
+manually/automatically.
+Public Command: Look HereYesTests gaze and reaction 
+timing.
+Server broadcasts 
+Event.LookHere with target 
+location.
+Direct QuestionYesOne suspect pressure test.Targeted interaction with 
+response wheel or quick-
+choice UI.
+Suspect markRecommendedHelps Hunter track 
+suspicious people.
+Local-only markers; no 
+automatic scoring.
+Real accusationYesOne final commitment.Server-authoritative target 
+selection and reveal.
+Fake accusationMVP+Lets Hunter bluff without 
+committing.
+Add only after core loop 
+works.
+Undercover etiquetteRecommendedPrevents FPS-like rushing 
+and harassment.
+NPCs react if Hunter 
+sprints/stares too much. Soft 
+feedback only.
+Hunter Controls
+InputAction
+WASD / Left StickMove. Faster movement is possible but socially suspicious.
+Mouse / Right StickLook.
+Left Click / TriggerFocus / mark suspect under crosshair.
+Q / Command ButtonOpen public command radial or trigger selected command.
+E / Face ButtonDirect Question if near valid target.
+F / Face ButtonAccuse target. Requires hold-to-confirm.
+Tab / View ButtonSuspect notes / role reminders.
+9. Core Mechanics
+9.1 Human Body Operation
+The central skill is not a task list. It is operating a human body convincingly. All non-Hunter players 
+use the same movement and interaction system so the Hunter must read timing, context, and 
+reaction rather than obvious role-specific powers.
+⦁ Movement uses acceleration and deceleration rather than instant start/stop.
+⦁ Body rotation follows movement direction with a subtle turn arc.
+⦁ Camera can look independently without instantly snapping the body.
+⦁ Sudden changes cause visible correction steps, but should never feel random.
+⦁ Standing still is not automatically suspicious if the player uses a believable context: phone, 
+8
+
+rack, line, mirror, conversation.
+⦁ Props create readable behaviour: coffee sip, phone check, shopping bag adjust, clothing 
+inspect.
+9.2 Public Commands
+Public Commands are the Hunter’s main active mechanic. They create normal social situations 
+and let the Hunter watch reactions.
+CommandMVP StatusExpected NPC ReactionPlayer Challenge
+FreezeRequiredNPCs stop in natural poses 
+after short reaction time.
+Players must stop smoothly 
+without obvious correction.
+Look HereRequiredNPCs glance toward Hunter 
+or announcement point, with 
+role-based variation.
+Players must look naturally, 
+not too late, too fast, or too 
+perfectly.
+Line UpMVP+NPCs carrying items may 
+queue. Employees may 
+ignore.
+Players must know if their 
+role should line up.
+Clear AisleMVP+NPCs step aside or continue 
+if far away.
+Players must move socially, 
+not panic.
+Command Balance Rule
+Commands should expose reaction quality, not instantly reveal the Alien. Humans can fail too. NPCs can be 
+quirky. The Hunter must connect multiple signs before accusing.
+9.3 Direct Question
+The Hunter gets one direct question per round. It is a high-pressure social test, not a full dialogue 
+system.
+Question ExampleValid Human-Like RepliesBad/Funny Replies
+Are you finding everything okay?Yes, thanks. / Just browsing. / I am 
+looking for a shirt.
+Your fabrics are emotionally stable. / I 
+require leg coverings.
+Do you work here?No, sorry. / Yes, can I help?I perform commerce. / I am employed 
+by clothing.
+Why are you standing here?Waiting for someone. / Checking my 
+phone.
+I am practicing stillness.
+For MVP, implement one question with three quick choices. All non-Hunter player types receive 
+the same possible UI style so the Hunter cannot identify role by response latency alone.
+9.4 Act Natural / Mistake Recovery
+Act Natural is the most important comedy button. It lets a player try to make a mistake look 
+intentional. Humans and Alien both have it.
+ContextAct Natural Result
+Bumped clothing rackInspects fallen shirt or adjusts rack.
+Stopped facing wallChecks phone or reads sign.
+Standing awkwardlyLooks at product tag or adjusts outfit.
+9
+
+Holding coffeeTakes sip or checks cup.
+Near mirrorAdjusts jacket or hair.
+Near checkoutChecks wallet/card.
+Comedy Rule
+Act Natural should not always save the player. Sometimes it should be slightly wrong but plausible. The laugh 
+comes from trying to sell the lie.
+9.5 Suspicious Civilian
+Every round should contain at least one suspicious but innocent element. This may be a Human 
+player, an NPC quirk, or both.
+⦁ One NPC might walk stiffly, avoid the Hunter, hold a bag awkwardly, or repeatedly change 
+their mind.
+⦁ This prevents the Hunter from simply picking the weirdest character.
+⦁ The Alien can use suspicious civilians as cover.
+⦁ Do not make suspicious civilians too extreme in public mode or deduction becomes random.
+10. Human Player Design: Preventing Boredom
+The biggest design worry is that Human players could feel like bait. The solution is to give them a 
+clear but lightweight social role.
+Human Goal
+Look normal, avoid being falsely accused, and optionally mislead the Hunter without destroying the round.
+Human FeatureWhy It ExistsMVP Implementation
+Light errandGives Humans direction.One optional card: buy item, inspect 
+mirror, browse two racks, wait in line.
+Act NaturalGives Humans the same recovery/troll 
+tool as Alien.
+Context-sensitive montage.
+Quick chatLets Humans lie, joke, or defend 
+themselves.
+Preset barks. No full VOIP required.
+Wrongfully Accused revealMakes losing as Human funny.End screen award and spotlight.
+Scene Disruption scoreDiscourages public-match griefing.Hidden/reward-only metric. Do not 
+overpunish private chaos.
+11. Hunter Design: Preventing Helplessness
+Another major worry is that the Hunter may feel bullied by a lobby full of trolls. The Hunter must 
+10
+
+have strong but limited tools.
+⦁ Freeze and Look Here create readable group reactions.
+⦁ The direct question lets the Hunter test one person deeply.
+⦁ Suspect marking helps the Hunter remember who looked off.
+⦁ The one accusation creates tension and prevents spam.
+⦁ Undercover etiquette stops the Hunter from sprinting and harassing everyone, but should not 
+be a hard failure condition in MVP.
+Hunter Feel Target
+The Hunter should feel like a clever instigator: “I made everyone react, and now I know who is lying.”
+12. Alien Design: Preventing Passivity
+The Alien should not win by standing still in the corner. Public Commands, the presence of 
+Human players, and the need to look socially appropriate force the Alien to participate.
+⦁ No secret task list in MVP. Survival and performance are enough.
+⦁ Alien can use Act Natural and quick chat like Humans.
+⦁ Alien receives private alien-thought barks for tension and comedy.
+⦁ Hunter commands force the Alien to react under pressure.
+⦁ The Alien should be able to lie through behaviour, not through complex abilities.
+13. Store Level Design
+The first map should be a compact clothing store, not a mall. Every object should support 
+observation, reaction, or social ambiguity.
+AreaPurposeRequired Interactables
+EntrancePlayers enter/exit, Hunter observes 
+flow.
+Door, display sign, announcement 
+speaker.
+Main racksCore browsing space.2-4 clothing racks with Smart Object 
+slots.
+Mirror areaGood for idle actions and suspicion.Mirror Smart Object, outfit adjust 
+montage.
+CheckoutLine-up and direct question context.Counter, cashier NPC, queue slots.
+Bench / waiting spotLets players pause believably.Bench or wall lean point.
+Back/storage doorTempting suspicious space.Door should be visible but not enterable 
+in MVP.
+11
+
+Keep sightlines readable. The Hunter should be able to observe multiple people, but no single 
+point should reveal the whole store perfectly.
+14. NPC System
+NPCs are not the star. They establish normal behaviour and false positives. Build fewer, cleaner 
+NPCs instead of a large crowd.
+NPC RequirementMVP Decision
+Count4-8 NPCs. Start with 4, then increase only if the store feels 
+empty.
+RolesAll shoppers for first build. Cashier can be a static/limited 
+NPC.
+RoutinesBrowse rack, check phone, inspect mirror, join queue, leave.
+QuirksOne harmless quirk assigned to some NPCs.
+ImplementationStateTree for high-level routine state, Smart Objects for 
+activity locations.
+NetworkingServer owns NPC state. Clients receive replicated 
+movement/activity state.
+14.1 Example NPC StateTree
+⦁ SelectActivity
+⦁ MoveToSmartObject
+⦁ UseSmartObject
+⦁ ReactToPublicCommand
+⦁ ResumePreviousActivity
+⦁ ExitStore
+15. UI and Screens
+Screen / HUDAudienceRequired Contents
+Main MenuAllHost Public, Host Private, Join, 
+Settings, Quit.
+Lobby HUDAllPlayer list, host marker, session 
+visibility, quick chat, “host must start” 
+prompt.
+Role RevealPrivate per playerRole, goal, controls reminder, 8-12 sec 
+countdown.
+Human HUDHumanGoal: avoid accusation, optional errand, 
+quick-chat hints.
+12
+
+Alien HUDAlienPrivate Alien label, “blend in” reminder, 
+subtle alien thought barks.
+Hunter HUDHunterCommand charges, direct question 
+charge, suspect marks, accusation 
+prompt.
+Accusation screenAllEveryone freezes. Hunter target is 
+highlighted after confirmation.
+Reveal screenAllAccused identity, actual Alien, winner, 
+awards, rematch button/countdown.
+Role Privacy Rule
+Never show role-coloured outlines, spawn tells, or role-specific widgets to other clients. Role UI is private except 
+during reveal.
+16. Communication and VOIP Plan
+The game is social, but in-game VOIP is a moderation and engineering risk. The MVP should 
+prove the core loop first.
+Communication FeatureMVP RecommendationReason
+Discord / external voiceUse for private playtestsFastest way to test whether voice 
+improves fun.
+Built-in VOIPPost-MVPPowerful for private lobbies, risky for 
+public moderation.
+Quick-chat wheelMVP recommendedLow-risk comedy and deception.
+Preset barksMVP recommendedSupports laughs without open voice 
+risk.
+Public text chatOptionalCan create moderation issues. Quick-
+chat is safer.
+Mute/report/blockRequired before public VOIPDo not ship public VOIP without basic 
+safety controls.
+Long-term: private lobbies can support proximity or push-to-talk VOIP. Public lobbies should 
+default to quick chat and push-to-talk only if moderation tools are in place.
+17. Technical Architecture for UE5.8
+Use a C++ foundation with Blueprint-driven content. Keep replicated authority in C++; keep 
+animation, UI, and interaction content in Blueprint/Data Assets.
+17.1 Recommended C++ Classes
+ClassParentPurpose
+AVNHSGameModeAGameModeBaseServer-only rules, role assignment, 
+round transitions, validation.
+AVNHSGameStateAGameStateBaseReplicated round state, timer, 
+command state, accusation state.
+AVNHSPlayerStateAPlayerStateReplicated public player info; private 
+role only to owning client via RPC/UI.
+13
+
+AVNHSPlayerControllerAPlayerControllerInput setup, private UI, commands, 
+accusation requests.
+AVNHSPlayableCharacterACharacterShared Human/Alien body controls and 
+interactions.
+AVNHSHunterCharacterACharacterHunter first-person controller and 
+command interface.
+AVNHSNPCCharacterACharacterServer-driven NPC with 
+StateTree/Smart Object usage.
+UVNHSMovementAssistComponentUActorComponentAcceleration, braking, turn smoothing, 
+suspicious movement events.
+UVNHSInteractionComponentUActorComponentShared interaction scanning, validation, 
+and requests.
+UVNHSRoleComponentUActorComponentRole state and private role behaviours.
+UVNHSCommandComponentUActorComponentHunter commands and 
+cooldown/charge tracking.
+17.2 Blueprint Assets
+BlueprintPurpose
+BP_Lobby_PlayButtonIn-world host-only start interaction.
+BP_ClothingRackSmart Object / interactable rack.
+BP_MirrorSmart Object / interactable mirror.
+BP_CheckoutCounterQueue and cashier interaction.
+BP_AnnouncementSpeakerPublic command origin.
+WBP_RoleRevealPrivate role reveal UI.
+WBP_HunterHUDHunter commands, marks, and accusation prompts.
+WBP_PlayerHUDHuman/Alien minimal HUD.
+WBP_RevealRound reveal, winner, awards, rematch.
+17.3 Enums and Structs
+TypeValues / Fields
+EPlayerRoundRoleNone, Hunter, Alien, Human
+ERoundPhaseLobby, Loading, RoleReveal, StoreIntro, Investigation, 
+Accusation, Reveal, Rematch
+EPublicCommandTypeFreeze, LookHere, LineUp, ClearAisle
+ESocialResponseTypeNormal, Awkward, Deflect, Silent
+FRoleAssignmentPlayerState, AssignedRole, CharacterSpawnId
+FPublicCommandDataCommandType, Origin, Direction, StartTime, Duration
+FAccusationResultAccuser, AccusedActor, WasAlien, ActualAlienActor
+FQuickChatLineLineId, Text, RoleAllowed, Cooldown
+17.4 Gameplay Tags
+⦁ Role.Hunter, Role.Alien, Role.Human, Role.NPC
+⦁ Event.Command.Freeze, Event.Command.LookHere, Event.Command.LineUp
+⦁ Interact.Rack.Browse, Interact.Mirror.Adjust, Interact.Prop.Phone, Interact.Prop.Coffee, 
+Interact.Queue.Wait
+14
+
+⦁ State.Round.Lobby, State.Round.RoleReveal, State.Round.Investigation, State.Round.Reveal
+⦁ NPC.Quirk.SlowWalker, NPC.Quirk.PhoneChecker, NPC.Quirk.AwkwardBag, 
+NPC.Quirk.DirectionChange
+⦁ Award.WrongfullyAccused, Award.MostNormal, Award.MostSuspiciousHuman, 
+Award.AlienInPlainSight
+18. Networking and Replication
+The server must be authoritative over role assignment, commands, direct questions, accusation, 
+round state, and NPC routines. Clients may predict/cosmetically play local animations, but 
+gameplay decisions should validate on server.
+SystemReplication Rule
+RolesServer assigns. Role is revealed privately to owning client 
+and stored server-side. Other clients only know role at 
+reveal.
+Round phaseReplicated through GameState.
+TimerReplicated GameState timer or server timestamp.
+Public commandsServer validates Hunter has charges, replicates command 
+event to all clients.
+Direct questionServer validates target and charge, sends prompt to target 
+client, replicates visible interaction state.
+AccusationServer validates one accusation, determines result, 
+replicates reveal.
+NPCsServer controls routine selection and Smart Object 
+reservations. Clients receive movement/activity replication.
+Quick chatServer relays line if allowed and cooldown valid.
+Act NaturalClient requests, server validates context, multicast cosmetic 
+montage if needed.
+MVP Networking Recommendation
+Start with listen-server sessions. Build all authority boundaries correctly so a dedicated server can be added later 
+without rewriting the whole game.
+19. Input and Movement Implementation
+Use Enhanced Input for role-specific mapping contexts. UE5.8 improves the unified input 
+workflow with Common UI/Enhanced Input, but the MVP can use a small number of Input Actions 
+and simple UMG/Common UI widgets.
+⦁ IA_Move, IA_Look, IA_Interact, IA_ActNatural, IA_PropAction, IA_Command, 
+IA_DirectQuestion, IA_Accuse, IA_QuickChat.
+⦁ IMC_PlayableHumanBody for Human and Alien.
+15
+
+⦁ IMC_Hunter for Hunter.
+⦁ IMC_UI for lobby, role reveal, and response choices.
+⦁ Movement smoothing should be data-tuned: acceleration, braking, turn rate, body-follow 
+delay, correction step threshold.
+⦁ All player-controlled non-Hunters use the same movement component to avoid role detection 
+through feel or animation.
+20. Animation Requirements
+Animation CategoryMVP Minimum
+LocomotionIdle, walk, faster walk, start, stop, turn-in-place/correction.
+Rack interactionBrowse rack, inspect clothing.
+Mirror interactionAdjust outfit / inspect self.
+Phone propCheck phone, fake text.
+Coffee propSip, hold idle.
+Shopping bag propHold bag, adjust grip.
+Command reactionsFreeze pose, look toward direction.
+Direct questionListen idle, answer gesture.
+Act NaturalContextual recovery montages.
+RevealAccused spotlight, Alien reveal, wrongfully accused reaction.
+Use placeholder Manny/Quinn-compatible animations first. Do not wait for perfect custom 
+animations to test the fun.
+21. Scoring, Awards, and Reveal
+Scoring should be simple. Awards create memories and make losses funny.
+AwardTrigger
+Alien In Plain SightAlien was close to Hunter for several seconds and survived.
+Wrongfully AccusedHuman or NPC was accused instead of Alien.
+Most Normal HumanHuman completed errand and was never 
+marked/questioned.
+Most Suspicious HumanHuman was marked/questioned often but was not Alien.
+Worst FreezePlayer moved the most after Freeze command.
+Perfectly AveragePlayer matched NPC behaviour closely.
+Hunter Was CookingHunter accused correctly after using both commands and 
+question.
+Reveal Requirement
+The reveal must be funny and clear. Show who was accused, who the Alien actually was, and one or two awards. 
+Do not dump a scoreboard full of numbers.
+16
+
+22. Public Server Guardrails
+Public lobbies create additional risk. Build private first, but design public rules early so you do not 
+paint yourself into a corner.
+ConcernGuardrail
+Humans grief Hunter constantlyReward believable play and light errands. Track scene 
+disruption for awards/rewards. Keep rounds short.
+Hunter harasses everyoneLimit direct question to one, accusation to one, commands to 
+two. NPCs react to aggressive Hunter movement.
+Players leave when not Alien/HunterShort rounds, role randomization, Human awards, immediate 
+rematch.
+Voice toxicityNo public open VOIP in MVP. Use quick chat. Add 
+mute/report before VOIP.
+Host abusePublic lobbies need kick controls, but post-match 
+migration/dedicated servers are post-MVP.
+Random guessingOne accusation only. Reveal should show missed clues and 
+awards, not just win/loss.
+Too much chaosLimit Humans’ disruptive tools. Keep public commands 
+server-paced.
+23. Major Risks and Mitigations
+RiskWhy It MattersMitigation
+Humans have nothing to doThey become bait and may disengage.Give light errands, Act Natural, quick 
+chat, awards, and false-positive 
+agency.
+Humans troll too hardDeduction becomes random and 
+Hunter feels bullied.
+Reward believable play in public mode; 
+keep trolling social, not mechanical.
+Alien becomes passiveHiding still is boring.Public commands force reactions. Store 
+layout should expose idle corner 
+camping.
+Hunter feels helplessEveryone lies and Hunter cannot parse 
+clues.
+Give Hunter two strong public 
+commands, one direct question, marks, 
+and one meaningful accusation.
+NPCs look too roboticHunter cannot tell normal from player-
+controlled.
+Use fewer NPCs with cleaner loops and 
+quirks. Players create most chaos.
+Animation quality breaks the gameThe game depends on subtle 
+movement differences.
+Use consistent animation sets for NPCs 
+and players. Prototype with readable, 
+not perfect, animation.
+Public servers become toxicSocial games attract griefing.Private first. Quick-chat MVP. Add 
+mute/report before VOIP.
+3 players is less funny than 4Only one Human gives fewer false 
+positives.
+Support 3, but design/playtest around 4 
+as ideal.
+Scope creeps back upThe old GDD had too many systems.Keep the scope lock. Any feature must 
+support Watch, React, Lie, Accuse, 
+Reveal.
+Role assignment feels unfairPlayers may not get desired role.Short rounds and soft anti-repeat option 
+after core fun is proven.
+Hunter wins by model differencesRole becomes visually obvious.Use identical playable body pipeline for 
+Human and Alien. No role-specific 
+cosmetics in round.
+17
+
+Accusation feels randomHunter cannot explain decision.Commands and direct question must 
+create readable evidence. Reveal 
+should show funny clues.
+24. MVP Development Priority Order
+1. Create UE5.8 C++ project, source control, basic map travel, and listen-server test.
+2. Implement role/session skeleton: lobby, host Play button, role assignment, role reveal screen.
+3. Implement shared non-Hunter movement and interaction base.
+4. Implement Hunter first-person controller and command framework.
+5. Build graybox clothing store with rack, mirror, checkout, and entrance.
+6. Implement 2-4 NPCs with simple StateTree routines and Smart Object usage.
+7. Implement Human/Alien playable bodies with same animations and controls.
+8. Implement Freeze command and Look Here command.
+9. Implement Act Natural contextual action.
+10. Implement one Direct Question and one Accusation.
+11. Implement reveal screen with wrong/right result and two awards.
+12. Add quick chat and light Human errand cards.
+13. Increase to 4 players and 4-8 NPCs only after 3-player loop is working.
+14. Playtest private lobbies, tune round length, then consider public session browser.
+25. First-Night Coding Checklist
+⦁ Create AVNHSGameMode, AVNHSGameState, AVNHSPlayerState, and ERoundPhase.
+⦁ Create lobby map with BP_Lobby_PlayButton.
+⦁ Create three placeholder PlayerStarts: Hunter, Human/Alien group, NPC spawn points.
+⦁ Implement server function StartRoundFromLobby() callable only by host.
+⦁ Implement AssignRoles(): one Hunter, one Alien, everyone else Human.
+⦁ Create WBP_RoleReveal with role text and countdown.
+18
+
+⦁ Create Store map travel after role reveal.
+⦁ Spawn players into Store map with private role UI.
+⦁ Implement simple Hunter Accuse action that checks target role on server and triggers reveal.
+⦁ Do a 3-client PIE test: one Hunter, one Alien, one Human, correct role reveal per client.
+Do Not Build Tonight
+Do not build MetaHumans, VOIP, public matchmaking, advanced NPC AI, complex scoring, or multi-map content 
+yet. Get role assignment, map flow, and one accusation working first.
+26. Explicitly Out of Scope for MVP
+⦁ Multiple maps or mall zones.
+⦁ More than one Hunter or more than one Alien.
+⦁ Disguise customization, silicone masks, gloves, heat, or repair systems.
+⦁ Secret Alien tasks or long objective checklists.
+⦁ Complex dialogue trees.
+⦁ Thermal scanners, voice analysis, or evidence database.
+⦁ Large MetaHuman crowds.
+⦁ Mass Entity / MassCrowd.
+⦁ Progression, cosmetics store, ranks, or unlock economy.
+⦁ Built-in public VOIP.
+⦁ Dedicated servers.
+⦁ Full replay system. Use lightweight reveal highlights first.
+27. Future Expansion Ideas
+⦁ 4-6 player public matchmaking after private playtests prove the loop.
+⦁ Additional public commands: Line Up, Clear Aisle, Checkout Open, Store Closing.
+19
+
+⦁ More maps: cafe, office lobby, wedding hall, gym.
+⦁ Private-lobby proximity VOIP with host mute controls.
+⦁ Suspicious civilian archetypes: shoplifter, nervous employee, lost tourist, influencer.
+⦁ One-use body swap for Alien, only if MVP is already fun without it.
+⦁ Soft role preference queue and anti-repeat role assignment.
+⦁ Light replay clips for accusation moments.
+⦁ Cosmetic-only disguises outside competitive round readability.
+28. UE5.8 Official Reference Notes
+The following official Unreal Engine documentation influenced the technical plan. These are not 
+required reading before first coding, but they are useful anchors for implementation decisions.
+⦁ Unreal Engine 5.8 Release Notes - especially unified input workflow notes for Enhanced Input 
+and Common UI: https://dev.epicgames.com/documentation/unreal-engine/unreal-engine-5-8-
+release-notes
+⦁ Enhanced Input in Unreal Engine - Input Actions, Mapping Contexts, Modifiers, and Triggers: 
+https://dev.epicgames.com/documentation/unreal-engine/enhanced-input-in-unreal-engine
+⦁ Using Common UI With Enhanced Input - setup notes for UI input integration: 
+https://dev.epicgames.com/documentation/unreal-engine/using-commonui-with-enhnaced-
+input-in-unreal-engine
+⦁ StateTree in Unreal Engine - hierarchical state machine approach for NPC routines: 
+https://dev.epicgames.com/documentation/unreal-engine/state-tree-in-unreal-engine
+⦁ Smart Objects in Unreal Engine - interactable level activities and reservation system: 
+https://dev.epicgames.com/documentation/unreal-engine/smart-objects-in-unreal-engine---
+overview
+⦁ Networking and Multiplayer in Unreal Engine - replication and authoritative server model: 
+https://dev.epicgames.com/documentation/unreal-engine/networking-and-multiplayer-in-
+unreal-engine
+29. Final MVP Statement
+20
+
+Build This First
+A 3+ player social deception round where one Hunter uses Freeze, Look Here, one Direct Question, and one 
+Accusation to find the secretly Alien player among Human players, NPCs, and public chaos inside one clothing 
+store.
+If this loop makes players laugh, accuse the wrong person, demand a rematch, and quote the 
+reveal afterward, the game has a foundation. If not, do not add content. Improve the public 
+commands, the social reactions, the movement feel, and the reveal.
+21

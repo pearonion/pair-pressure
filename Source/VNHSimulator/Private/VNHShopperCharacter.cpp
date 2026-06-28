@@ -110,6 +110,12 @@ void AVNHShopperCharacter::PossessedBy(AController* NewController)
 	if (HasAuthority() && NewController && NewController->IsPlayerController())
 	{
 		bActNaturalAvailable = true;
+
+		const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
+		if (MapName.Contains(TEXT("Lobby")))
+		{
+			SetPossessedByAlien(true);
+		}
 	}
 }
 

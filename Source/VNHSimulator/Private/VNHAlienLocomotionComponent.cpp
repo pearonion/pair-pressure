@@ -3,6 +3,7 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "VNHMovementTuningData.h"
 
 UVNHAlienLocomotionComponent::UVNHAlienLocomotionComponent()
@@ -34,13 +35,20 @@ void UVNHAlienLocomotionComponent::TickComponent(float DeltaTime, ELevelTick Tic
 		LocomotionState.DesiredWorldDirection = FVector::ZeroVector;
 		LocomotionState.bHasMoveInput = false;
 		LocomotionState.BodyYawDeltaDegrees = 0.0f;
+		LocomotionState.Stability = 1.0f;
+		LocomotionState.Instability = 0.0f;
+		LocomotionState.WobbleDegrees = 0.0f;
+		LastDesiredDirection = FVector::ZeroVector;
+		UpdateAnimationRate();
 		return;
 	}
 
 	const FVector DesiredDirection = BuildCameraRelativeMoveDirection();
+	UpdateInstability(DeltaTime, DesiredDirection);
 	UpdateSpeed(DeltaTime, DesiredDirection);
 	ApplyMovement(DesiredDirection);
 	UpdateBodyFacing(DeltaTime, DesiredDirection);
+	UpdateAnimationRate();
 }
 
 void UVNHAlienLocomotionComponent::SetMoveInput(FVector2D NewMoveInput)
@@ -62,7 +70,7 @@ void UVNHAlienLocomotionComponent::ClearInput()
 FString UVNHAlienLocomotionComponent::DescribeLocomotionState() const
 {
 	return FString::Printf(
-		TEXT("DesiredSpeed=%.1f CurrentSpeed=%.1f HasInput=%s FastWalk=%s ManualBrake=%s CorrectionStep=%s BodyYawDelta=%.1f DesiredDir=(%.2f, %.2f, %.2f)"),
+		TEXT("DesiredSpeed=%.1f CurrentSpeed=%.1f HasInput=%s FastWalk=%s ManualBrake=%s CorrectionStep=%s BodyYawDelta=%.1f Stability=%.2f Instability=%.2f Wobble=%.1f DesiredDir=(%.2f, %.2f, %.2f)"),
 		LocomotionState.DesiredSpeed,
 		LocomotionState.CurrentSpeed,
 		LocomotionState.bHasMoveInput ? TEXT("true") : TEXT("false"),
@@ -70,6 +78,9 @@ FString UVNHAlienLocomotionComponent::DescribeLocomotionState() const
 		LocomotionState.bManualBrake ? TEXT("true") : TEXT("false"),
 		LocomotionState.bCorrectionStepRequested ? TEXT("true") : TEXT("false"),
 		LocomotionState.BodyYawDeltaDegrees,
+		LocomotionState.Stability,
+		LocomotionState.Instability,
+		LocomotionState.WobbleDegrees,
 		LocomotionState.DesiredWorldDirection.X,
 		LocomotionState.DesiredWorldDirection.Y,
 		LocomotionState.DesiredWorldDirection.Z);
@@ -102,6 +113,36 @@ FVector UVNHAlienLocomotionComponent::BuildCameraRelativeMoveDirection() const
 	const FVector DesiredDirection = Forward * MoveInput.Y + Right * MoveInput.X;
 
 	return DesiredDirection.GetSafeNormal();
+}
+
+void UVNHAlienLocomotionComponent::UpdateInstability(float DeltaTime, const FVector& DesiredDirection)
+{
+	const bool bHasInput = MoveInput.SizeSquared() > KINDA_SMALL_NUMBER && !DesiredDirection.IsNearlyZero();
+	if (!bHasInput)
+	{
+		LocomotionState.Stability = FMath::FInterpConstantTo(LocomotionState.Stability, 0.0f, DeltaTime, StabilityDecayRate);
+		LocomotionState.Instability = 1.0f - LocomotionState.Stability;
+		LocomotionState.WobbleDegrees = 0.0f;
+		LastDesiredDirection = FVector::ZeroVector;
+		return;
+	}
+
+	float AbruptTurnAmount = 0.0f;
+	if (!LastDesiredDirection.IsNearlyZero())
+	{
+		const float DirectionDot = FMath::Clamp(FVector::DotProduct(LastDesiredDirection, DesiredDirection), -1.0f, 1.0f);
+		AbruptTurnAmount = 1.0f - FMath::Max(0.0f, DirectionDot);
+	}
+
+	const float BuildRate = StabilityBuildRate * (LocomotionState.bFastWalkRequested ? 0.55f : 1.0f);
+	LocomotionState.Stability = FMath::FInterpConstantTo(LocomotionState.Stability, 1.0f, DeltaTime, BuildRate);
+	LocomotionState.Stability = FMath::Clamp(LocomotionState.Stability - AbruptTurnAmount * AbruptTurnInstability - (LocomotionState.bFastWalkRequested ? FastWalkInstability * DeltaTime : 0.0f), 0.0f, 1.0f);
+	LocomotionState.Instability = 1.0f - LocomotionState.Stability;
+
+	constexpr float TwoPi = 2.0f * PI;
+	WobblePhaseRadians = FMath::Fmod(WobblePhaseRadians + DeltaTime * WobbleFrequencyHz * TwoPi * FMath::Lerp(1.25f, 0.65f, LocomotionState.Stability), TwoPi);
+	LocomotionState.WobbleDegrees = FMath::Sin(WobblePhaseRadians) * WobbleYawDegrees * LocomotionState.Instability;
+	LastDesiredDirection = DesiredDirection;
 }
 
 void UVNHAlienLocomotionComponent::UpdateSpeed(float DeltaTime, const FVector& DesiredDirection)
@@ -143,8 +184,13 @@ void UVNHAlienLocomotionComponent::ApplyMovement(const FVector& DesiredDirection
 		return;
 	}
 
-	MovementComponent->MaxWalkSpeed = FMath::Max(LocomotionState.CurrentSpeed, 1.0f);
-	OwnerCharacter->AddMovementInput(DesiredDirection, 1.0f);
+	const FVector DriftRight = FVector::CrossProduct(FVector::UpVector, DesiredDirection).GetSafeNormal();
+	const float DriftAmount = FMath::Sin(WobblePhaseRadians) * LateralDriftStrength * LocomotionState.Instability;
+	const FVector UnstableDirection = (DesiredDirection + DriftRight * DriftAmount).GetSafeNormal();
+	const float UnevenStride = 1.0f + FMath::Sin(WobblePhaseRadians * 1.7f) * UnevenStrideStrength * LocomotionState.Instability;
+
+	MovementComponent->MaxWalkSpeed = FMath::Max(LocomotionState.CurrentSpeed * UnevenStride, 1.0f);
+	OwnerCharacter->AddMovementInput(UnstableDirection, 1.0f);
 }
 
 void UVNHAlienLocomotionComponent::UpdateBodyFacing(float DeltaTime, const FVector& DesiredDirection)
@@ -155,10 +201,22 @@ void UVNHAlienLocomotionComponent::UpdateBodyFacing(float DeltaTime, const FVect
 	}
 
 	const FRotator CurrentRotation = OwnerCharacter->GetActorRotation();
-	const FRotator TargetRotation = DesiredDirection.Rotation();
+	const FRotator TargetRotation(0.0f, DesiredDirection.Rotation().Yaw + LocomotionState.WobbleDegrees, 0.0f);
 	LocomotionState.BodyYawDeltaDegrees = FMath::FindDeltaAngleDegrees(CurrentRotation.Yaw, TargetRotation.Yaw);
 	const FRotator NewRotation = FMath::RInterpConstantTo(CurrentRotation, TargetRotation, DeltaTime, GetBodyTurnRateDegrees());
 	OwnerCharacter->SetActorRotation(FRotator(0.0f, NewRotation.Yaw, 0.0f));
+}
+
+void UVNHAlienLocomotionComponent::UpdateAnimationRate()
+{
+	if (!OwnerCharacter.IsValid() || !OwnerCharacter->GetMesh())
+	{
+		return;
+	}
+
+	const float UnstableAnimRate = FMath::Lerp(MinAlienAnimRate, MaxAlienAnimRate, 0.5f + 0.5f * FMath::Sin(WobblePhaseRadians * 2.3f));
+	const float TargetAnimRate = FMath::Lerp(1.0f, UnstableAnimRate, LocomotionState.Instability);
+	OwnerCharacter->GetMesh()->GlobalAnimRateScale = TargetAnimRate;
 }
 
 float UVNHAlienLocomotionComponent::GetWalkSpeed() const

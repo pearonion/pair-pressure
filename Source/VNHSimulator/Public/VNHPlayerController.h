@@ -8,6 +8,7 @@
 class UInputAction;
 class UInputMappingContext;
 class UTextBlock;
+class UUserWidget;
 class UVNHAlienLocomotionComponent;
 class AVNHLobbyPlayButton;
 class AVNHShopperCharacter;
@@ -91,6 +92,9 @@ public:
 	UFUNCTION(Client, Reliable)
 	void ClientReceiveInteractionText(const FString& InteractionText);
 
+	UFUNCTION(Client, Reliable)
+	void ClientShowLobbyMenu();
+
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Input|Alien")
 	TObjectPtr<UInputMappingContext> AlienInputMappingContext;
@@ -131,6 +135,7 @@ private:
 	void HandleQuickChatFoundWrongSizePressed();
 	void ToggleDebugHud();
 	void ApplyDebugHudInputMode(bool bDebugHudVisible);
+	void ShowLobbyMenu();
 	void UpdateDebugDeckRuntimeLabels(float DeltaTime);
 	void PushLegacyAlienMoveInput();
 	void PollAlienKeyboardInput();
@@ -161,4 +166,5 @@ private:
 	FString LastInteractionText;
 	float LastInteractionTimeSeconds = -100.0f;
 	float TimeUntilDebugDeckLabelLookup = 0.0f;
+	TWeakObjectPtr<UUserWidget> LobbyMenuWidget;
 };

@@ -60,6 +60,7 @@ AVNHGameMode::AVNHGameMode()
 	PlayerControllerClass = AVNHPlayerController::StaticClass();
 	PlayerStateClass = AVNHPlayerState::StaticClass();
 	HUDClass = AVNHDebugHUD::StaticClass();
+	DefaultPawnClass = AVNHShopperCharacter::StaticClass();
 }
 
 void AVNHGameMode::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
@@ -96,6 +97,16 @@ void AVNHGameMode::BeginPlay()
 void AVNHGameMode::PostLogin(APlayerController* NewPlayer)
 {
 	Super::PostLogin(NewPlayer);
+
+	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
+	if (MapName.Contains(TEXT("Lobby")))
+	{
+		if (AVNHShopperCharacter* LobbyPawn = NewPlayer ? Cast<AVNHShopperCharacter>(NewPlayer->GetPawn()) : nullptr)
+		{
+			LobbyPawn->SetPossessedByAlien(true);
+		}
+	}
+
 	if (bAutoStartRoundOnPlayerJoin || bStartRoundWhenPlayersReady)
 	{
 		TryStartRound();
@@ -116,6 +127,14 @@ void AVNHGameMode::TryStartRound()
 {
 	if (CountConnectedPlayers() < RequiredPlayers)
 	{
+		if (bStartRoundWhenPlayersReady && CountConnectedPlayers() > 0)
+		{
+			bStartRoundWhenPlayersReady = false;
+			DebugStartRound();
+			UE_LOG(LogVNH, Display, TEXT("LobbyStart: used debug solo start path with %d connected player(s)."), CountConnectedPlayers());
+			return;
+		}
+
 		if (AVNHGameState* VNHGameState = GetVNHGameState())
 		{
 			VNHGameState->SetRoundPhase(EVNHRoundPhase::WaitingForPlayers, 0.0f);
@@ -149,8 +168,13 @@ bool AVNHGameMode::StartRoundFromLobby(APlayerController* RequestingPlayer)
 
 	if (CountConnectedPlayers() < RequiredPlayers)
 	{
-		UE_LOG(LogVNH, Warning, TEXT("LobbyStart: need %d players, only %d connected."), RequiredPlayers, CountConnectedPlayers());
-		return false;
+		if (CountConnectedPlayers() <= 0)
+		{
+			UE_LOG(LogVNH, Warning, TEXT("LobbyStart: need at least one connected player."));
+			return false;
+		}
+
+		UE_LOG(LogVNH, Display, TEXT("LobbyStart: continuing with %d/%d players for local test flow."), CountConnectedPlayers(), RequiredPlayers);
 	}
 
 	if (UWorld* World = GetWorld())

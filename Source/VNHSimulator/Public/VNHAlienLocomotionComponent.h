@@ -36,6 +36,15 @@ struct FVNHAlienLocomotionState
 
 	UPROPERTY(BlueprintReadOnly, Category = "VNH|Alien Locomotion")
 	float BodyYawDeltaDegrees = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "VNH|Alien Locomotion")
+	float Stability = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "VNH|Alien Locomotion")
+	float Instability = 1.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "VNH|Alien Locomotion")
+	float WobbleDegrees = 0.0f;
 };
 
 UCLASS(ClassGroup = (VNH), meta = (BlueprintSpawnableComponent))
@@ -69,40 +78,74 @@ protected:
 	TObjectPtr<UVNHMovementTuningData> TuningData;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "0.0"))
-	float DefaultWalkSpeed = 330.0f;
+	float DefaultWalkSpeed = 285.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "0.0"))
-	float DefaultMinWalkSpeed = 120.0f;
+	float DefaultMinWalkSpeed = 95.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "0.0"))
-	float DefaultFastWalkSpeed = 460.0f;
+	float DefaultFastWalkSpeed = 415.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "0.0"))
-	float DefaultAcceleration = 800.0f;
+	float DefaultAcceleration = 520.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "0.0"))
-	float DefaultCoastBraking = 450.0f;
+	float DefaultCoastBraking = 320.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "1.0"))
 	float DefaultManualBrakeMultiplier = 2.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "0.0"))
-	float DefaultBodyTurnRateDegrees = 150.0f;
+	float DefaultBodyTurnRateDegrees = 110.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "0.0", ClampMax = "180.0"))
 	float DefaultCorrectionStepAngleDegrees = 120.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.0"))
+	float StabilityBuildRate = 0.65f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.0"))
+	float StabilityDecayRate = 1.15f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.0"))
+	float AbruptTurnInstability = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.0"))
+	float FastWalkInstability = 0.22f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.0"))
+	float WobbleFrequencyHz = 1.85f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.0"))
+	float WobbleYawDegrees = 14.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.0"))
+	float LateralDriftStrength = 0.34f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.0"))
+	float UnevenStrideStrength = 0.18f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.1"))
+	float MinAlienAnimRate = 0.72f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.1"))
+	float MaxAlienAnimRate = 1.18f;
 
 private:
 	UPROPERTY(BlueprintReadOnly, Category = "VNH|Alien Locomotion", meta = (AllowPrivateAccess = "true"))
 	FVNHAlienLocomotionState LocomotionState;
 
 	FVector2D MoveInput = FVector2D::ZeroVector;
+	FVector LastDesiredDirection = FVector::ZeroVector;
+	float WobblePhaseRadians = 0.0f;
 
 	TWeakObjectPtr<ACharacter> OwnerCharacter;
 	TWeakObjectPtr<UCharacterMovementComponent> MovementComponent;
 
 	bool ShouldDriveLocomotion() const;
 	FVector BuildCameraRelativeMoveDirection() const;
+	void UpdateInstability(float DeltaTime, const FVector& DesiredDirection);
+	void UpdateAnimationRate();
 	float GetWalkSpeed() const;
 	float GetMinWalkSpeed() const;
 	float GetFastWalkSpeed() const;

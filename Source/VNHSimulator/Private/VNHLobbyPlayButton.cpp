@@ -23,7 +23,7 @@ AVNHLobbyPlayButton::AVNHLobbyPlayButton()
 
 	InteractionVolume = CreateDefaultSubobject<UBoxComponent>(TEXT("InteractionVolume"));
 	InteractionVolume->SetupAttachment(ButtonMesh);
-	InteractionVolume->SetBoxExtent(FVector(180.0f, 180.0f, 120.0f));
+	InteractionVolume->SetBoxExtent(FVector(260.0f, 260.0f, 160.0f));
 	InteractionVolume->SetRelativeLocation(FVector(0.0f, 0.0f, 85.0f));
 	InteractionVolume->SetCollisionProfileName(TEXT("OverlapAllDynamic"));
 }

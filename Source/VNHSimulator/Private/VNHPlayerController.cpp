@@ -32,6 +32,17 @@ void AVNHPlayerController::BeginPlay()
 			VNHGameInstance->ShowMainMenu();
 		}
 	}
+	else if (MapName.Contains(TEXT("Lobby")))
+	{
+		if (IsLocalController())
+		{
+			ShowLobbyMenu();
+		}
+		else
+		{
+			ClientShowLobbyMenu();
+		}
+	}
 
 	UpdateAlienInputMapping();
 	ApplyDebugHudInputMode(true);
@@ -151,12 +162,13 @@ FString AVNHPlayerController::GetLocomotionStatusText() const
 
 	const FVNHAlienLocomotionState State = AlienLocomotionComponent->GetLocomotionState();
 	return FString::Printf(
-		TEXT("LOCO: %.0f/%.0f CM/S  //  FAST %s  //  BRAKE %s  //  TURN %.0f"),
+		TEXT("LOCO: %.0f/%.0f CM/S  //  FAST %s  //  BRAKE %s  //  TURN %.0f  //  STABLE %.0f%%"),
 		State.CurrentSpeed,
 		State.DesiredSpeed,
 		State.bFastWalkRequested ? TEXT("ON") : TEXT("OFF"),
 		State.bManualBrake ? TEXT("ON") : TEXT("OFF"),
-		State.BodyYawDeltaDegrees);
+		State.BodyYawDeltaDegrees,
+		State.Stability * 100.0f);
 }
 
 void AVNHPlayerController::RequestPublicTest(EVNHPublicTestType TestType)
@@ -179,6 +191,14 @@ void AVNHPlayerController::RequestInteract()
 	if (FocusedLobbyPlayButton.IsValid())
 	{
 		RequestStartRoundFromLobby();
+		return;
+	}
+
+	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
+	if (MapName.Contains(TEXT("Lobby")))
+	{
+		LastInteractionText = TEXT("Look at the PLAY button and press E to start.");
+		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 		return;
 	}
 
@@ -341,6 +361,11 @@ void AVNHPlayerController::ClientReceiveInteractionText_Implementation(const FSt
 	LastInteractionText = InteractionText;
 	LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 	UE_LOG(LogVNH, Display, TEXT("Interaction: %s"), *LastInteractionText);
+}
+
+void AVNHPlayerController::ClientShowLobbyMenu_Implementation()
+{
+	ShowLobbyMenu();
 }
 
 UVNHAlienLocomotionComponent* AVNHPlayerController::GetAlienLocomotionComponent() const
@@ -543,6 +568,44 @@ void AVNHPlayerController::ApplyDebugHudInputMode(bool bDebugHudVisible)
 	{
 		SetInputMode(FInputModeGameOnly());
 	}
+}
+
+void AVNHPlayerController::ShowLobbyMenu()
+{
+	if (!IsLocalController() || !GetWorld())
+	{
+		return;
+	}
+
+	if (LobbyMenuWidget.IsValid())
+	{
+		return;
+	}
+
+	UClass* LobbyWidgetClass = LoadClass<UUserWidget>(nullptr, TEXT("/Game/UI/WBP_LobbyMenu.WBP_LobbyMenu_C"));
+	if (!LobbyWidgetClass)
+	{
+		UE_LOG(LogVNH, Warning, TEXT("LobbyMenu: could not load /Game/UI/WBP_LobbyMenu."));
+		return;
+	}
+
+	UUserWidget* NewLobbyMenu = CreateWidget<UUserWidget>(this, LobbyWidgetClass);
+	if (!NewLobbyMenu)
+	{
+		UE_LOG(LogVNH, Warning, TEXT("LobbyMenu: CreateWidget failed."));
+		return;
+	}
+
+	NewLobbyMenu->AddToViewport(7500);
+	NewLobbyMenu->SetVisibility(ESlateVisibility::HitTestInvisible);
+	LobbyMenuWidget = NewLobbyMenu;
+
+	bShowMouseCursor = false;
+	bEnableClickEvents = false;
+	bEnableMouseOverEvents = false;
+	SetInputMode(FInputModeGameOnly());
+
+	UE_LOG(LogVNH, Display, TEXT("LobbyMenu: shown as non-blocking overlay."));
 }
 
 void AVNHPlayerController::UpdateDebugDeckRuntimeLabels(float DeltaTime)

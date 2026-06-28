@@ -2,8 +2,11 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/HUD.h"
+#include "VNHGameplayTypes.h"
 #include "VNHDebugHUD.generated.h"
 
+class AVNHGameState;
+class AVNHPlayerState;
 class UFont;
 class USoundBase;
 
@@ -57,9 +60,18 @@ private:
 
 	TArray<FDebugButton> BuildButtons() const;
 	FString BuildRoundStatusText() const;
+	FString GetPhaseLabel(EVNHRoundPhase RoundPhase) const;
+	FString GetQuickChatLabel(const AVNHGameState* VNHGameState) const;
+	FLinearColor GetRoleAccentColor(const AVNHPlayerState* VNHPlayerState) const;
 	void DrawDebugText(const FString& Text, const FLinearColor& Color, float X, float Y, float Scale = 1.0f);
 	void DrawPolishedButton(const FDebugButton& Button, const FVector2D& Position, const FVector2D& Size, float DeltaSeconds);
+	void DrawSection15Panel(float X, float Y, float W, float H, const FLinearColor& AccentColor, float Alpha = 0.94f);
 	void DrawRolePhaseOverlay();
+	void DrawLobbyHUD(const AVNHGameState* VNHGameState);
+	void DrawRoleRevealScreen(const AVNHGameState* VNHGameState, const AVNHPlayerState* VNHPlayerState);
+	void DrawRoleGameplayHUD(const AVNHGameState* VNHGameState, const AVNHPlayerState* VNHPlayerState);
+	void DrawAccusationScreen(const AVNHGameState* VNHGameState, const AVNHPlayerState* VNHPlayerState);
+	void DrawRevealScreen(const AVNHGameState* VNHGameState);
 	void DrawInteractionPanel();
 	void PlayUISound(USoundBase* Sound, float VolumeMultiplier = 1.0f) const;
 };
