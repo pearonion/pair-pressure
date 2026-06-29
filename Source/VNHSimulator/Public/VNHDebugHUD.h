@@ -63,6 +63,7 @@ private:
 	FString GetPhaseLabel(EVNHRoundPhase RoundPhase) const;
 	FString GetQuickChatLabel(const AVNHGameState* VNHGameState) const;
 	FLinearColor GetRoleAccentColor(const AVNHPlayerState* VNHPlayerState) const;
+	void DrawTargetActionRadial();
 	void DrawDebugText(const FString& Text, const FLinearColor& Color, float X, float Y, float Scale = 1.0f);
 	void DrawPolishedButton(const FDebugButton& Button, const FVector2D& Position, const FVector2D& Size, float DeltaSeconds);
 	void DrawSection15Panel(float X, float Y, float W, float H, const FLinearColor& AccentColor, float Alpha = 0.94f);

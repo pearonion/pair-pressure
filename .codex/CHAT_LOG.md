@@ -687,3 +687,102 @@
 - Added console command `vnh.LogShopperAnim` to log mesh, AnimClass, AnimInstance, animation mode, pause/rate, speed, max walk, and movement mode for all shoppers.
 - Tried external UBT after briefly testing a unique editor build environment; reverted that target-rule experiment because it forced thousands of unique editor/plugin actions and hit a NeoStack bundled Lua warning-as-error (`C4191` in `Plugins/NeoStackAI/Source/ThirdParty/Lua/src/loadlib.c`).
 - Stopped the background UBT/dotnet processes that were spawned by that test.
+
+### MVP Test Loop Sprint
+
+- User asked whether current work aligns with the MVP GDD and requested a big sprint to add more testable/showable functionality.
+- Current alignment assessment:
+  - Strongly aligned: one-store map, shopper crowd, possession, public tests, accusation path, natural locomotion, Manny placeholder humans, UMG debug deck.
+  - Still short of MVP-complete: real two-player flow, role-swap/rematch reset, polished role-specific HUD, proper reveal screen, full direct interaction confirmation, data-driven NPC quirks.
+- Added live UMG deck text from `AVNHPlayerController`:
+  - `GetRoundStatusText()` now formats round number, real phase name, countdown seconds, and tests remaining.
+  - `GetDebugDeckInteractionText()` shows recent interaction result, current prompt, marked suspects, or reveal hint.
+  - `GetRevealStatusText()` shows reveal winner, accused shopper, and actual possessed shopper.
+- Extended debug deck runtime updater:
+  - now writes `RoundStatusText`
+  - now writes `InteractionText`
+  - now toggles `RevealStatusText`, `RevealStatusBox`, `RevealStatusShadow`, and `RevealRail`
+- Added reveal result widgets to `/Game/UI/WBP_VNHDebugDeck`, hidden by default with zero opacity.
+- Added new UMG button:
+  - `12 Jump Investigation`
+  - runs `vnh.JumpInvestigation`
+- Added `AVNHGameMode::DebugJumpToInvestigation()`:
+  - sets the local player to Alien for single-player testing
+  - increments round number
+  - resets test charges
+  - clears previous round outcome
+  - resets previous shopper possession state
+  - starts shopper routines
+  - possesses shopper index 0 if possible
+  - enters `Investigation` with the normal investigation timer
+- Added `vnh.JumpInvestigation` console command.
+- Debug public-test command now decrements visible test charges.
+- `DebugStartRound`, `TryStartRound`, and the jump-investigation path now reset previous shopper possession state so repeated tests do not leave multiple alien-marked shoppers.
+- `/Game/UI/WBP_VNHDebugDeck` compiles with 0 errors/warnings.
+- `git diff --check` passed.
+
+### Next Live Coding Test Script
+
+- Live Code/restart the editor.
+- PIE:
+  - click `12 Jump Investigation`
+  - verify round status says `Investigation` with countdown and `Tests 2`
+  - verify role panel says `ROLE: ALIEN // POSSESSED SHOPPER`
+  - WASD/Shift to test locomotion numbers
+  - click `Freeze Test` and verify tests drop to `1`
+  - aim at shopper and use `Question Target`, `Mark Target`, `Fake Accuse`
+  - click `Accuse Target`
+  - verify reveal panel appears with winner / accused / actual alien
+
+### Target-Lock Interaction MVP
+
+- User proposed a Hitman-style context action cluster: aim at a shopper, right-click to select/outline, press E to choose actions.
+- MVP decision: implement target lock and direct action prompts now; defer a full radial wheel until the core loop is proven.
+- Added `VNH_TargetFocus` input:
+  - Right Mouse Button
+  - Gamepad Right Shoulder
+- Added controller target state:
+  - `FocusedShopper` remains the shopper under the crosshair.
+  - `TargetedShopper` is the locked interaction target.
+  - Right-click locks the current focused shopper.
+  - Right-click with no focused shopper clears the target.
+- Existing interaction actions now use the locked target first, falling back to the focused shopper:
+  - `E` questions target.
+  - `R` marks target.
+  - `F` fake-accuses target.
+  - Left Mouse accuses target.
+- Added `AVNHShopperCharacter::SetInteractionHighlighted()` using Custom Depth / stencil value 252 so selected shoppers can be picked up by an outline post-process.
+- Updated the UMG prompt copy:
+  - no target: `Aim at shopper + Right Click lock // then E/R/F/LMB`
+  - focused shopper: `Right Click: Target <shopper>`
+  - locked shopper: `TARGET <shopper> // E Question | R Mark | F Fake | LMB Accuse`
+- Fixed camera look gating:
+  - mouse/gamepad look no longer requires the alien locomotion component.
+  - this should make hunter/test camera rotation work while preserving alien body-facing locomotion.
+- `git diff --check` passed after these C++/input changes.
+
+### HUD Cleanup / Targeting Hardening
+
+- User reported the old C++ canvas HUD was still visibly rendering behind the UMG deck and that target-lock/action feedback was unclear.
+- Hard-disabled `AVNHDebugHUD::DrawHUD()` with an immediate return:
+  - no more C++ canvas round strip
+  - no more C++ canvas interaction panel
+  - no more C++ canvas debug buttons behind UMG
+- Kept the `AVNHDebugHUD` class alive only for compatibility with debug panel visibility / input mode.
+- Added controller-level `PollInteractionInput()`:
+  - Right Mouse target-lock is now polled every tick for local controller, not only through action binding or alien locomotion polling.
+  - `E`, `R`, and `F` also poll so action input still works when legacy/UMG input routing is flaky.
+  - Left Mouse accusation polling is disabled while the mouse cursor is visible to avoid accusing while clicking UMG buttons.
+- `DebugPossessShopperByIndex()` now forces the possessing controller role to Alien, so `Possess 0/1` no longer leaves the HUD saying Human.
+- `GetLocomotionStatusText()` now:
+  - reads the controlled pawn's alien locomotion when possessed
+  - falls back to the game state's possessed shopper locomotion if the controller is observing
+  - says `CONTROL: HUNTER VIEW // TARGET SHOPPERS WITH RMB` instead of `POSSESS TO TEST 11.3` when no alien locomotion is active
+- Reworked `/Game/UI/WBP_VNHDebugDeck`:
+  - round countdown panel anchored top-center
+  - label changed to `ROUND COUNTDOWN`
+  - bottom action prompt widened and wrapped
+  - default prompt changed to `AIM AT SHOPPER // RMB LOCKS ACTION TARGET`
+  - role/control placeholder copy cleaned up
+- `/Game/UI/WBP_VNHDebugDeck` compile log: 0 errors, 0 warnings.
+- `git diff --check` passed.

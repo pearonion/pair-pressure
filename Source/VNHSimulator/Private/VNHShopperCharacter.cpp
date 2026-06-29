@@ -13,6 +13,7 @@
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
 #include "VNHAlienLocomotionComponent.h"
+#include "VNHLog.h"
 #include "VNHShopperAIController.h"
 #include "VNHShopperWaypoint.h"
 #include "Net/UnrealNetwork.h"
@@ -54,6 +55,12 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 	FollowCamera->SetupAttachment(FollowCameraBoom, USpringArmComponent::SocketName);
 	FollowCamera->bUsePawnControlRotation = false;
+
+	FirstPersonCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FirstPersonCamera"));
+	FirstPersonCamera->SetupAttachment(RootComponent);
+	FirstPersonCamera->SetRelativeLocation(FVector(8.0f, 0.0f, 64.0f));
+	FirstPersonCamera->bUsePawnControlRotation = true;
+	FirstPersonCamera->SetAutoActivate(false);
 
 	DebugBodyMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DebugBodyMesh"));
 	DebugBodyMesh->SetupAttachment(RootComponent);
@@ -117,6 +124,52 @@ void AVNHShopperCharacter::PossessedBy(AController* NewController)
 			SetPossessedByAlien(true);
 		}
 	}
+}
+
+void AVNHShopperCharacter::UnPossessed()
+{
+	SetFirstPersonViewEnabled(false);
+	Super::UnPossessed();
+}
+
+void AVNHShopperCharacter::SetFirstPersonViewEnabled(bool bEnabled)
+{
+	if (bFirstPersonViewEnabled == bEnabled)
+	{
+		return;
+	}
+
+	bFirstPersonViewEnabled = bEnabled;
+	bUseControllerRotationYaw = bEnabled;
+
+	if (FollowCamera)
+	{
+		FollowCamera->SetActive(!bEnabled);
+	}
+
+	if (FirstPersonCamera)
+	{
+		FirstPersonCamera->SetActive(bEnabled);
+	}
+
+	if (USkeletalMeshComponent* MeshComponent = GetMesh())
+	{
+		MeshComponent->SetOwnerNoSee(bEnabled);
+	}
+
+	if (DebugBodyMesh)
+	{
+		DebugBodyMesh->SetOwnerNoSee(bEnabled);
+	}
+
+	UE_LOG(
+		LogVNH,
+		Display,
+		TEXT("CameraMode: Pawn=%s FirstPerson=%s FollowActive=%s FirstPersonActive=%s"),
+		*GetNameSafe(this),
+		bEnabled ? TEXT("true") : TEXT("false"),
+		FollowCamera && FollowCamera->IsActive() ? TEXT("true") : TEXT("false"),
+		FirstPersonCamera && FirstPersonCamera->IsActive() ? TEXT("true") : TEXT("false"));
 }
 
 void AVNHShopperCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -387,6 +440,26 @@ FString AVNHShopperCharacter::DescribeAnimationDebugState() const
 		Velocity.Size2D(),
 		MovementComponent ? MovementComponent->MaxWalkSpeed : 0.0f,
 		MovementComponent ? static_cast<int32>(MovementComponent->MovementMode) : -1);
+}
+
+void AVNHShopperCharacter::SetInteractionHighlighted(bool bHighlighted)
+{
+	SetInteractionHighlightStencil(bHighlighted ? 89 : 0);
+}
+
+void AVNHShopperCharacter::SetInteractionHighlightStencil(int32 StencilValue)
+{
+	if (USkeletalMeshComponent* MeshComponent = GetMesh())
+	{
+		MeshComponent->SetRenderCustomDepth(StencilValue > 0);
+		MeshComponent->SetCustomDepthStencilValue(FMath::Clamp(StencilValue, 0, 255));
+	}
+
+	if (DebugBodyMesh)
+	{
+		DebugBodyMesh->SetRenderCustomDepth(StencilValue > 0);
+		DebugBodyMesh->SetCustomDepthStencilValue(FMath::Clamp(StencilValue, 0, 255));
+	}
 }
 
 void AVNHShopperCharacter::ConfigureMannyVisuals()

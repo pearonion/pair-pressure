@@ -40,3 +40,7 @@ Plugins/*/Saved/
 
 # Local Codex/MCP connection config
 .codex/config.toml
+
+# Locally installed marketplace/source packs
+Content/ClothingStore/
+Content/HE_SmoothOutlines/

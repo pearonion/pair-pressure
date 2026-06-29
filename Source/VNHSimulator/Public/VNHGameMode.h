@@ -34,12 +34,14 @@ public:
 
 	void RequestPublicTest(AVNHPlayerController* RequestingPlayer, EVNHPublicTestType TestType);
 	bool RequestDirectQuestion(AVNHPlayerController* RequestingPlayer, AVNHShopperCharacter* QuestionedShopper, FString& OutResponseText);
+	bool RequestQuestion(AVNHPlayerController* RequestingPlayer, AVNHShopperCharacter* QuestionedShopper);
 	void RequestAccusation(AVNHPlayerController* RequestingPlayer, AVNHShopperCharacter* AccusedShopper);
 
 	void DebugStartRound();
 	void DebugForceRole(APlayerController* TargetController, EVNHPlayerRole NewRole);
 	void DebugTriggerPublicTest(EVNHPublicTestType TestType);
-	bool DebugPossessShopperByIndex(int32 ShopperIndex);
+	void DebugJumpToInvestigation();
+	bool DebugPossessShopperByIndex(int32 ShopperIndex, EVNHPlayerRole ForcedRole = EVNHPlayerRole::Alien);
 	bool DebugResolveAccusation(AVNHShopperCharacter* AccusedShopper);
 	bool DebugSetupVisibleTestArena();
 	bool DebugSpawnAndPossessTestShopper(const FVector& SpawnLocation);
@@ -51,6 +53,12 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Lobby")
 	bool bAutoStartRoundOnPlayerJoin = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Round")
+	int32 PublicTestsPerRound = 2;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Round")
+	int32 QuestionsPerRound = 3;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Round")
 	FVNHPhaseTiming PhaseTiming;
@@ -68,6 +76,7 @@ private:
 	bool IsHostController(const APlayerController* PlayerController) const;
 	APlayerController* FindControllerForRole(EVNHPlayerRole TargetRole) const;
 	AVNHShopperCharacter* SelectAlienShopper() const;
+	void ResetShopperPossessionState();
 	void PossessAlienShopper();
 	void StartShopperRoutines();
 	void ApplyPublicTestToShoppers(EVNHPublicTestType TestType);

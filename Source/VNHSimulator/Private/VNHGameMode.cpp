@@ -5,10 +5,10 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "GameFramework/HUD.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
-#include "VNHDebugHUD.h"
 #include "VNHGameInstance.h"
 #include "VNHGameState.h"
 #include "VNHLobbyPlayButton.h"
@@ -59,7 +59,7 @@ AVNHGameMode::AVNHGameMode()
 	GameStateClass = AVNHGameState::StaticClass();
 	PlayerControllerClass = AVNHPlayerController::StaticClass();
 	PlayerStateClass = AVNHPlayerState::StaticClass();
-	HUDClass = AVNHDebugHUD::StaticClass();
+	HUDClass = AHUD::StaticClass();
 	DefaultPawnClass = AVNHShopperCharacter::StaticClass();
 }
 
@@ -148,12 +148,13 @@ void AVNHGameMode::TryStartRound()
 	if (AVNHGameState* VNHGameState = GetVNHGameState())
 	{
 		VNHGameState->SetRoundNumber(VNHGameState->GetRoundNumber() + 1);
-		VNHGameState->SetTestsRemaining(2);
-		VNHGameState->SetDirectQuestionsRemaining(1);
+		VNHGameState->SetTestsRemaining(PublicTestsPerRound);
+		VNHGameState->SetDirectQuestionsRemaining(QuestionsPerRound);
 		VNHGameState->SetAccusationsRemaining(1);
 		VNHGameState->ClearRoundOutcome();
 	}
 
+	ResetShopperPossessionState();
 	StartShopperRoutines();
 	EnterPhase(EVNHRoundPhase::AssigningRoles, 3.0f);
 }
@@ -225,7 +226,14 @@ void AVNHGameMode::AdvanceRoundPhase()
 		EnterPhase(EVNHRoundPhase::Resetting, 3.0f);
 		break;
 	case EVNHRoundPhase::Resetting:
-		TryStartRound();
+		if (CountConnectedPlayers() >= RequiredPlayers)
+		{
+			TryStartRound();
+		}
+		else if (CountConnectedPlayers() > 0)
+		{
+			DebugStartRound();
+		}
 		break;
 	default:
 		break;
@@ -268,6 +276,12 @@ bool AVNHGameMode::RequestDirectQuestion(AVNHPlayerController* RequestingPlayer,
 	VNHGameState->SetDirectQuestionsRemaining(VNHGameState->GetDirectQuestionsRemaining() - 1);
 	OutResponseText = FString::Printf(TEXT("%s: %s"), *GetNameSafe(QuestionedShopper), *QuestionedShopper->BuildQuestionResponse());
 	return true;
+}
+
+bool AVNHGameMode::RequestQuestion(AVNHPlayerController* RequestingPlayer, AVNHShopperCharacter* QuestionedShopper)
+{
+	FString UnusedResponse;
+	return RequestDirectQuestion(RequestingPlayer, QuestionedShopper, UnusedResponse);
 }
 
 void AVNHGameMode::RequestAccusation(AVNHPlayerController* RequestingPlayer, AVNHShopperCharacter* AccusedShopper)
@@ -329,12 +343,13 @@ void AVNHGameMode::DebugStartRound()
 	if (AVNHGameState* VNHGameState = GetVNHGameState())
 	{
 		VNHGameState->SetRoundNumber(VNHGameState->GetRoundNumber() + 1);
-		VNHGameState->SetTestsRemaining(2);
-		VNHGameState->SetDirectQuestionsRemaining(1);
+		VNHGameState->SetTestsRemaining(PublicTestsPerRound);
+		VNHGameState->SetDirectQuestionsRemaining(QuestionsPerRound);
 		VNHGameState->SetAccusationsRemaining(1);
 		VNHGameState->ClearRoundOutcome();
 	}
 
+	ResetShopperPossessionState();
 	StartShopperRoutines();
 	EnterPhase(EVNHRoundPhase::AssigningRoles, 3.0f);
 	UE_LOG(LogVNH, Display, TEXT("vnh.StartRound: entered AssigningRoles."));
@@ -363,6 +378,7 @@ void AVNHGameMode::DebugTriggerPublicTest(EVNHPublicTestType TestType)
 {
 	if (AVNHGameState* VNHGameState = GetVNHGameState())
 	{
+		VNHGameState->SetTestsRemaining(FMath::Max(0, VNHGameState->GetTestsRemaining() - 1));
 		VNHGameState->SetActivePublicTest(TestType);
 	}
 
@@ -370,18 +386,56 @@ void AVNHGameMode::DebugTriggerPublicTest(EVNHPublicTestType TestType)
 	UE_LOG(LogVNH, Display, TEXT("vnh.TriggerTest: applied public test %d."), static_cast<int32>(TestType));
 }
 
-bool AVNHGameMode::DebugPossessShopperByIndex(int32 ShopperIndex)
+void AVNHGameMode::DebugJumpToInvestigation()
 {
-	APlayerController* AlienController = FindControllerForRole(EVNHPlayerRole::Alien);
-	if (!AlienController)
+	if (CountConnectedPlayers() <= 0)
 	{
-		AlienController = GetWorld()->GetFirstPlayerController();
+		UE_LOG(LogVNH, Warning, TEXT("vnh.JumpInvestigation failed: no connected players."));
+		return;
+	}
+
+	APlayerController* LocalController = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	if (AVNHPlayerState* VNHPlayerState = LocalController ? LocalController->GetPlayerState<AVNHPlayerState>() : nullptr)
+	{
+		VNHPlayerState->SetRole(EVNHPlayerRole::Alien);
+	}
+
+	if (AVNHGameState* VNHGameState = GetVNHGameState())
+	{
+		VNHGameState->SetRoundNumber(VNHGameState->GetRoundNumber() + 1);
+		VNHGameState->SetTestsRemaining(PublicTestsPerRound);
+		VNHGameState->SetQuestionsRemaining(QuestionsPerRound);
+		VNHGameState->SetAccusationsRemaining(1);
+		VNHGameState->ClearRoundOutcome();
+	}
+
+	ResetShopperPossessionState();
+	StartShopperRoutines();
+	if (!DebugPossessShopperByIndex(0))
+	{
+		PossessAlienShopper();
+	}
+	EnterPhase(EVNHRoundPhase::Investigation, PhaseTiming.InvestigationSeconds);
+	UE_LOG(LogVNH, Display, TEXT("vnh.JumpInvestigation: entered Investigation with two test charges."));
+}
+
+bool AVNHGameMode::DebugPossessShopperByIndex(int32 ShopperIndex, EVNHPlayerRole ForcedRole)
+{
+	APlayerController* AlienController = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	if (!AlienController && ForcedRole == EVNHPlayerRole::Alien)
+	{
+		AlienController = FindControllerForRole(EVNHPlayerRole::Alien);
 	}
 
 	if (!AlienController)
 	{
 		UE_LOG(LogVNH, Warning, TEXT("vnh.PossessHuman failed: no alien or local controller."));
 		return false;
+	}
+
+	if (AVNHPlayerState* VNHPlayerState = AlienController->GetPlayerState<AVNHPlayerState>())
+	{
+		VNHPlayerState->SetRole(ForcedRole);
 	}
 
 	TArray<AVNHShopperCharacter*> Shoppers;
@@ -397,15 +451,23 @@ bool AVNHGameMode::DebugPossessShopperByIndex(int32 ShopperIndex)
 	}
 
 	AVNHShopperCharacter* Shopper = Shoppers[ShopperIndex];
-	Shopper->SetPossessedByAlien(true);
+	for (AVNHShopperCharacter* ExistingShopper : Shoppers)
+	{
+		if (ExistingShopper && ExistingShopper != Shopper)
+		{
+			ExistingShopper->SetPossessedByAlien(false);
+		}
+	}
+
+	Shopper->SetPossessedByAlien(ForcedRole == EVNHPlayerRole::Alien);
 	AlienController->Possess(Shopper);
 
 	if (AVNHGameState* VNHGameState = GetVNHGameState())
 	{
-		VNHGameState->SetPossessedShopper(Shopper);
+		VNHGameState->SetPossessedShopper(ForcedRole == EVNHPlayerRole::Alien ? Shopper : nullptr);
 	}
 
-	UE_LOG(LogVNH, Display, TEXT("vnh.PossessHuman: controller possessed shopper index %d (%s)."), ShopperIndex, *GetNameSafe(Shopper));
+	UE_LOG(LogVNH, Display, TEXT("vnh.PossessHuman: controller possessed shopper index %d (%s) as role %d."), ShopperIndex, *GetNameSafe(Shopper), static_cast<int32>(ForcedRole));
 	return true;
 }
 
@@ -586,10 +648,10 @@ void AVNHGameMode::AssignRoles()
 	}
 
 	const int32 HunterIndex = FMath::RandRange(0, PlayerStates.Num() - 1);
-	int32 AlienIndex = FMath::RandRange(0, PlayerStates.Num() - 1);
-	while (AlienIndex == HunterIndex && PlayerStates.Num() > 1)
+	int32 AlienIndex = FMath::RandRange(0, PlayerStates.Num() - 2);
+	if (AlienIndex >= HunterIndex)
 	{
-		AlienIndex = FMath::RandRange(0, PlayerStates.Num() - 1);
+		++AlienIndex;
 	}
 
 	for (int32 Index = 0; Index < PlayerStates.Num(); ++Index)
@@ -607,6 +669,12 @@ void AVNHGameMode::AssignRoles()
 		PlayerStates[Index]->SetRole(AssignedRole);
 		PlayerStates[Index]->SetLightErrandText(AssignedRole == EVNHPlayerRole::Hunter ? FText::GetEmpty() : GetVNHLightErrand(Index));
 	}
+
+	UE_LOG(LogVNH, Display, TEXT("RoleAssign: %d players -> Hunter=%d Alien=%d Humans=%d."),
+		PlayerStates.Num(),
+		HunterIndex,
+		AlienIndex,
+		FMath::Max(0, PlayerStates.Num() - 2));
 }
 
 void AVNHGameMode::EnterPhase(EVNHRoundPhase NewPhase, float DurationSeconds)
@@ -686,6 +754,14 @@ AVNHShopperCharacter* AVNHGameMode::SelectAlienShopper() const
 	}
 
 	return EligibleShoppers[FMath::RandRange(0, EligibleShoppers.Num() - 1)];
+}
+
+void AVNHGameMode::ResetShopperPossessionState()
+{
+	for (TActorIterator<AVNHShopperCharacter> It(GetWorld()); It; ++It)
+	{
+		It->SetPossessedByAlien(false);
+	}
 }
 
 void AVNHGameMode::PossessAlienShopper()

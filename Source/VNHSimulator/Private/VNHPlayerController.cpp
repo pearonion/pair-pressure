@@ -5,10 +5,14 @@
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Camera/PlayerCameraManager.h"
+#include "Components/PostProcessComponent.h"
 #include "Components/TextBlock.h"
+#include "Components/Widget.h"
+#include "Engine/Scene.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "InputCoreTypes.h"
+#include "Materials/MaterialInterface.h"
 #include "EngineUtils.h"
 #include "VNHGameMode.h"
 #include "VNHGameState.h"
@@ -20,9 +24,62 @@
 #include "VNHPlayerState.h"
 #include "VNHShopperCharacter.h"
 
+namespace
+{
+const TCHAR* ToPhaseText(EVNHRoundPhase Phase)
+{
+	switch (Phase)
+	{
+	case EVNHRoundPhase::WaitingForPlayers:
+		return TEXT("Waiting");
+	case EVNHRoundPhase::AssigningRoles:
+		return TEXT("Assigning");
+	case EVNHRoundPhase::AlienSetup:
+		return TEXT("Alien Setup");
+	case EVNHRoundPhase::AlienHeadStart:
+		return TEXT("Head Start");
+	case EVNHRoundPhase::Investigation:
+		return TEXT("Investigation");
+	case EVNHRoundPhase::Accusation:
+		return TEXT("Accusation");
+	case EVNHRoundPhase::Reveal:
+		return TEXT("Reveal");
+	case EVNHRoundPhase::Resetting:
+		return TEXT("Resetting");
+	default:
+		return TEXT("Unknown");
+	}
+}
+
+const TCHAR* ToPublicTestText(EVNHPublicTestType TestType)
+{
+	switch (TestType)
+	{
+	case EVNHPublicTestType::Freeze:
+		return TEXT("Freeze");
+	case EVNHPublicTestType::LookToEntrance:
+		return TEXT("Look Here");
+	case EVNHPublicTestType::ClearAisle:
+		return TEXT("Clear Aisle");
+	case EVNHPublicTestType::CheckoutOpen:
+		return TEXT("Checkout Open");
+	default:
+		return TEXT("Unknown");
+	}
+}
+
+constexpr int32 HoveredShopperStencil = 89;
+constexpr int32 TargetedShopperStencil = 186;
+constexpr int32 MarkedShopperStencil = 200;
+}
+
 void AVNHPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
+
+	EnsureTargetOutlinePostProcess();
+	EnsureMarkedSuspectsWidget();
+	RegisterGameplayHardwareCursors();
 
 	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
 	if (IsLocalController() && MapName.Contains(TEXT("MainMenu")))
@@ -48,10 +105,71 @@ void AVNHPlayerController::BeginPlay()
 	ApplyDebugHudInputMode(true);
 }
 
+void AVNHPlayerController::EnsureTargetOutlinePostProcess()
+{
+	if (!IsLocalController() || TargetOutlinePostProcessComponent)
+	{
+		return;
+	}
+
+	UMaterialInterface* OutlineMaterial = TargetOutlinePostProcessMaterial;
+	if (!OutlineMaterial)
+	{
+		OutlineMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/TNG/Materials/TNG_PPM_TargetHoverLock.TNG_PPM_TargetHoverLock"));
+	}
+
+	if (!OutlineMaterial)
+	{
+		UE_LOG(LogVNH, Warning, TEXT("Target outline post-process material is missing."));
+		return;
+	}
+
+	TargetOutlinePostProcessComponent = NewObject<UPostProcessComponent>(this, TEXT("VNH_TargetOutlinePostProcess"));
+	if (!TargetOutlinePostProcessComponent)
+	{
+		return;
+	}
+
+	TargetOutlinePostProcessComponent->bUnbound = true;
+	TargetOutlinePostProcessComponent->bEnabled = true;
+	TargetOutlinePostProcessComponent->Priority = 1000.0f;
+	TargetOutlinePostProcessComponent->BlendWeight = 1.0f;
+	TargetOutlinePostProcessComponent->Settings.WeightedBlendables.Array.Add(FWeightedBlendable(1.0f, OutlineMaterial));
+	AddInstanceComponent(TargetOutlinePostProcessComponent);
+	TargetOutlinePostProcessComponent->RegisterComponent();
+}
+
+void AVNHPlayerController::EnsureMarkedSuspectsWidget()
+{
+	if (!IsLocalController() || MarkedSuspectsWidget.IsValid())
+	{
+		return;
+	}
+
+	UClass* MarkedWidgetClass = LoadClass<UUserWidget>(nullptr, TEXT("/Game/UI/WBP_VNHMarkedSuspects.WBP_VNHMarkedSuspects_C"));
+	if (!MarkedWidgetClass)
+	{
+		return;
+	}
+
+	UUserWidget* NewMarkedWidget = CreateWidget<UUserWidget>(this, MarkedWidgetClass);
+	if (!NewMarkedWidget)
+	{
+		return;
+	}
+
+	NewMarkedWidget->AddToViewport(6400);
+	MarkedSuspectsWidget = NewMarkedWidget;
+	TimeUntilMarkedWidgetLookup = 0.0f;
+	UpdateMarkedSuspectsWidgetRuntimeLabels(0.0f);
+}
+
 void AVNHPlayerController::AcknowledgePossession(APawn* PossessedPawn)
 {
 	Super::AcknowledgePossession(PossessedPawn);
 	UpdateAlienInputMapping();
+	UpdateRoleCameraMode();
+	RegisterGameplayHardwareCursors();
 	UE_LOG(LogVNH, Display, TEXT("AlienInput: acknowledged possession. Controller=%s Pawn=%s InputComponent=%s"),
 		*GetClass()->GetName(),
 		*GetNameSafe(PossessedPawn),
@@ -72,6 +190,7 @@ void AVNHPlayerController::SetupInputComponent()
 	InputComponent->BindAction(TEXT("VNH_AlienFastWalk"), IE_Pressed, this, &AVNHPlayerController::HandleAlienFastWalkStarted);
 	InputComponent->BindAction(TEXT("VNH_AlienFastWalk"), IE_Released, this, &AVNHPlayerController::HandleAlienFastWalkStopped);
 	InputComponent->BindAction(TEXT("VNH_AlienActNatural"), IE_Pressed, this, &AVNHPlayerController::RequestActNatural);
+	InputComponent->BindAction(TEXT("VNH_TargetFocus"), IE_Pressed, this, &AVNHPlayerController::HandleTargetFocusPressed);
 	InputComponent->BindAction(TEXT("VNH_Interact"), IE_Pressed, this, &AVNHPlayerController::HandleInteractPressed);
 	InputComponent->BindAction(TEXT("VNH_MarkSuspect"), IE_Pressed, this, &AVNHPlayerController::MarkFocusedShopper);
 	InputComponent->BindAction(TEXT("VNH_FakeAccuse"), IE_Pressed, this, &AVNHPlayerController::FakeAccuseFocusedShopper);
@@ -92,9 +211,22 @@ void AVNHPlayerController::SetupInputComponent()
 void AVNHPlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
+	if (!bHardwareCursorsRegistered)
+	{
+		HardwareCursorRegistrationRetrySeconds -= DeltaTime;
+		if (HardwareCursorRegistrationRetrySeconds <= 0.0f)
+		{
+			RegisterGameplayHardwareCursors();
+		}
+	}
+	UpdateMarkedSuspectsForRound();
+	UpdateRoleCameraMode();
 	UpdateFocusedShopper();
+	UpdateGameplayCursor();
 	PollAlienKeyboardInput();
+	PollInteractionInput();
 	UpdateDebugDeckRuntimeLabels(DeltaTime);
+	UpdateMarkedSuspectsWidgetRuntimeLabels(DeltaTime);
 }
 
 FString AVNHPlayerController::DescribeAlienInputDebugState() const
@@ -146,9 +278,9 @@ FString AVNHPlayerController::GetRoleStatusText() const
 	case EVNHPlayerRole::Alien:
 		return TEXT("ROLE: ALIEN  //  AWAITING POSSESSION");
 	case EVNHPlayerRole::Hunter:
-		return TEXT("ROLE: HUNTER  //  FIND THE ALIEN");
+		return TEXT("ROLE: HUNTER  //  WATCH. QUESTION. ACCUSE.");
 	default:
-		return TEXT("ROLE: UNASSIGNED  //  WAITING");
+		return TEXT("ROLE: UNASSIGNED  //  WAITING FOR ROUND");
 	}
 }
 
@@ -157,7 +289,14 @@ FString AVNHPlayerController::GetLocomotionStatusText() const
 	const UVNHAlienLocomotionComponent* AlienLocomotionComponent = GetAlienLocomotionComponent();
 	if (!AlienLocomotionComponent)
 	{
-		return TEXT("LOCO: HUMAN OBSERVER  //  POSSESS A SHOPPER TO TEST 11.3");
+		const AVNHGameState* VNHGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr;
+		const AVNHShopperCharacter* PossessedShopper = VNHGameState ? Cast<AVNHShopperCharacter>(VNHGameState->GetPossessedShopper()) : nullptr;
+		AlienLocomotionComponent = PossessedShopper ? PossessedShopper->GetAlienLocomotionComponent() : nullptr;
+	}
+
+	if (!AlienLocomotionComponent)
+	{
+		return TEXT("CONTROL: HUNTER VIEW  //  TARGET SHOPPERS WITH RMB");
 	}
 
 	const FVNHAlienLocomotionState State = AlienLocomotionComponent->GetLocomotionState();
@@ -171,19 +310,115 @@ FString AVNHPlayerController::GetLocomotionStatusText() const
 		State.Stability * 100.0f);
 }
 
+FString AVNHPlayerController::GetRoundStatusText() const
+{
+	const AVNHGameState* VNHGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr;
+	if (!VNHGameState)
+	{
+		return TEXT("Round 0 | Waiting | 0s | Tests 2");
+	}
+
+	const float PhaseEndsAt = VNHGameState->GetPhaseEndsAtServerTime();
+	const float RemainingSeconds = PhaseEndsAt > 0.0f ? FMath::Max(0.0f, PhaseEndsAt - VNHGameState->GetServerWorldTimeSeconds()) : 0.0f;
+
+	return FString::Printf(
+		TEXT("Round %d | %s | %.0fs | Tests %d | Questions %d"),
+		VNHGameState->GetRoundNumber(),
+		ToPhaseText(VNHGameState->GetRoundPhase()),
+		RemainingSeconds,
+		VNHGameState->GetTestsRemaining(),
+		VNHGameState->GetQuestionsRemaining());
+}
+
+FString AVNHPlayerController::GetDebugDeckInteractionText() const
+{
+	const AVNHGameState* VNHGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr;
+	if (VNHGameState && VNHGameState->GetRoundPhase() == EVNHRoundPhase::Reveal)
+	{
+		return TEXT("Reveal active // watch the result panel");
+	}
+
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	if (!LastInteractionText.IsEmpty() && Now - LastInteractionTimeSeconds <= 7.0f)
+	{
+		return LastInteractionText;
+	}
+
+	const AVNHShopperCharacter* Targeted = TargetedShopper.Get();
+	if (Targeted)
+	{
+		return FString::Printf(TEXT("LOCKED: %s  //  [E] ASK  [R] MARK  [F] FAKE  [X] ACCUSE  [LMB] CANCEL"), *GetNameSafe(Targeted));
+	}
+
+	const FString PromptText = GetInteractionPromptText();
+	if (!PromptText.IsEmpty())
+	{
+		return PromptText;
+	}
+
+	return TEXT("AIM AT SHOPPER  //  RMB LOCKS ACTION TARGET");
+}
+
+FString AVNHPlayerController::GetRevealStatusText() const
+{
+	const AVNHGameState* VNHGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr;
+	if (!VNHGameState || VNHGameState->GetRoundPhase() != EVNHRoundPhase::Reveal)
+	{
+		return FString();
+	}
+
+	const FVNHAccusationResult Result = VNHGameState->GetAccusationResult();
+	const AActor* ActualAlien = VNHGameState->GetPossessedShopper();
+	if (!Result.bResolved)
+	{
+		return FString::Printf(TEXT("REVEAL // ALIEN WINS BY TIME // Hidden Alien: %s"), *GetNameSafe(ActualAlien));
+	}
+
+	if (!Result.bCorrect)
+	{
+		return FString::Printf(
+			TEXT("REVEAL // WRONGFULLY ACCUSED // Spotlight %s // Alien %s"),
+			*GetNameSafe(Result.AccusedActor),
+			*GetNameSafe(ActualAlien));
+	}
+
+	return FString::Printf(
+		TEXT("REVEAL // HUNTER WINS // Caught %s // Alien %s"),
+		*GetNameSafe(Result.AccusedActor),
+		*GetNameSafe(ActualAlien));
+}
+
 void AVNHPlayerController::RequestPublicTest(EVNHPublicTestType TestType)
 {
+	if (!IsAssignedHunter())
+	{
+		LastInteractionText = TEXT("Only the Hunter can trigger public commands.");
+		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		return;
+	}
+
 	ServerRequestPublicTest(TestType);
+	LastInteractionText = FString::Printf(TEXT("Public test triggered: %s."), ToPublicTestText(TestType));
+	LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 }
 
 void AVNHPlayerController::RequestAccusation(AVNHShopperCharacter* AccusedShopper)
 {
+	if (!IsAssignedHunter())
+	{
+		LastInteractionText = TEXT("Only the Hunter can make the real accusation.");
+		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		return;
+	}
+
 	ServerRequestAccusation(AccusedShopper);
 }
 
 void AVNHPlayerController::RequestActNatural()
 {
 	ServerRequestActNatural();
+	LastInteractionText = TEXT("Act Natural requested.");
+	LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 }
 
 void AVNHPlayerController::RequestInteract()
@@ -202,10 +437,32 @@ void AVNHPlayerController::RequestInteract()
 		return;
 	}
 
-	AVNHShopperCharacter* Shopper = FocusedShopper.Get();
+	if (!IsAssignedHunter())
+	{
+		LastInteractionText = TEXT("Only the Hunter can use the direct question.");
+		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		return;
+	}
+
+	const AVNHGameState* VNHGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr;
+	if (!VNHGameState || VNHGameState->GetRoundPhase() != EVNHRoundPhase::Investigation)
+	{
+		LastInteractionText = TEXT("Question unavailable until Investigation.");
+		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		return;
+	}
+
+	if (VNHGameState->GetQuestionsRemaining() <= 0)
+	{
+		LastInteractionText = TEXT("Direct questions already used this round.");
+		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		return;
+	}
+
+	AVNHShopperCharacter* Shopper = GetInteractionShopper();
 	if (!Shopper)
 	{
-		LastInteractionText = TEXT("No shopper in focus.");
+		LastInteractionText = TEXT("No target. Aim at a shopper and right-click to lock.");
 		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 		UE_LOG(LogVNH, Display, TEXT("Interaction: %s"), *LastInteractionText);
 		return;
@@ -216,10 +473,17 @@ void AVNHPlayerController::RequestInteract()
 
 void AVNHPlayerController::MarkFocusedShopper()
 {
-	AVNHShopperCharacter* Shopper = FocusedShopper.Get();
+	if (!IsAssignedHunter())
+	{
+		LastInteractionText = TEXT("Only the Hunter can mark suspects.");
+		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		return;
+	}
+
+	AVNHShopperCharacter* Shopper = GetInteractionShopper();
 	if (!Shopper)
 	{
-		LastInteractionText = TEXT("No shopper in focus to mark.");
+		LastInteractionText = TEXT("No target to mark. Aim and right-click a shopper.");
 		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 		return;
 	}
@@ -250,16 +514,24 @@ void AVNHPlayerController::MarkFocusedShopper()
 	}
 
 	MarkedSuspects.Add(Shopper);
+	RefreshShopperOutline(Shopper, Shopper == FocusedShopper.Get());
 	LastInteractionText = FString::Printf(TEXT("Marked suspect %d: %s."), MarkedSuspects.Num(), *GetNameSafe(Shopper));
 	LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 }
 
 void AVNHPlayerController::FakeAccuseFocusedShopper()
 {
-	AVNHShopperCharacter* Shopper = FocusedShopper.Get();
+	if (!IsAssignedHunter())
+	{
+		LastInteractionText = TEXT("Only the Hunter can apply accusation pressure.");
+		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		return;
+	}
+
+	AVNHShopperCharacter* Shopper = GetInteractionShopper();
 	if (!Shopper)
 	{
-		LastInteractionText = TEXT("No shopper in focus to pressure.");
+		LastInteractionText = TEXT("No target to pressure. Aim and right-click a shopper.");
 		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 		return;
 	}
@@ -271,10 +543,17 @@ void AVNHPlayerController::FakeAccuseFocusedShopper()
 
 void AVNHPlayerController::DebugAccuseFocusedShopper()
 {
-	AVNHShopperCharacter* Shopper = FocusedShopper.Get();
+	if (!IsAssignedHunter())
+	{
+		LastInteractionText = TEXT("Only the Hunter can accuse.");
+		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		return;
+	}
+
+	AVNHShopperCharacter* Shopper = GetInteractionShopper();
 	if (!Shopper)
 	{
-		LastInteractionText = TEXT("No shopper in focus to accuse.");
+		LastInteractionText = TEXT("No target to accuse. Aim and right-click a shopper.");
 		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 		return;
 	}
@@ -287,6 +566,22 @@ void AVNHPlayerController::DebugAccuseFocusedShopper()
 	}
 }
 
+void AVNHPlayerController::CancelTargetSelection()
+{
+	if (!TargetedShopper.IsValid())
+	{
+		return;
+	}
+
+	ClearTargetedShopper();
+	if (FocusedShopper.IsValid())
+	{
+		RefreshShopperOutline(FocusedShopper.Get(), true);
+	}
+	LastInteractionText = TEXT("Target selection cancelled.");
+	LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+}
+
 void AVNHPlayerController::RequestQuickChat(EVNHQuickChatLine Line)
 {
 	ServerRequestQuickChat(Line);
@@ -297,11 +592,24 @@ void AVNHPlayerController::RequestStartRoundFromLobby()
 	ServerRequestStartRoundFromLobby();
 }
 
+void AVNHPlayerController::RequestDebugPossessShopper(int32 ShopperIndex, EVNHPlayerRole ForcedRole)
+{
+	ServerDebugPossessShopper(ShopperIndex, ForcedRole);
+}
+
 void AVNHPlayerController::ServerRequestPublicTest_Implementation(EVNHPublicTestType TestType)
 {
 	if (AVNHGameMode* VNHGameMode = GetWorld()->GetAuthGameMode<AVNHGameMode>())
 	{
 		VNHGameMode->RequestPublicTest(this, TestType);
+	}
+}
+
+void AVNHPlayerController::ServerRequestQuestion_Implementation(AVNHShopperCharacter* QuestionedShopper)
+{
+	if (AVNHGameMode* VNHGameMode = GetWorld()->GetAuthGameMode<AVNHGameMode>())
+	{
+		VNHGameMode->RequestQuestion(this, QuestionedShopper);
 	}
 }
 
@@ -348,11 +656,21 @@ void AVNHPlayerController::ServerRequestStartRoundFromLobby_Implementation()
 	}
 }
 
+void AVNHPlayerController::ServerDebugPossessShopper_Implementation(int32 ShopperIndex, EVNHPlayerRole ForcedRole)
+{
+	if (AVNHGameMode* VNHGameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AVNHGameMode>() : nullptr)
+	{
+		VNHGameMode->DebugPossessShopperByIndex(ShopperIndex, ForcedRole);
+	}
+}
+
 void AVNHPlayerController::ServerRequestActNatural_Implementation()
 {
 	if (AVNHShopperCharacter* Shopper = Cast<AVNHShopperCharacter>(GetPawn()))
 	{
-		Shopper->UseActNatural();
+		const bool bUsed = Shopper->UseActNatural();
+		LastInteractionText = bUsed ? TEXT("Act Natural used.") : TEXT("Act Natural unavailable.");
+		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 	}
 }
 
@@ -371,7 +689,7 @@ void AVNHPlayerController::ClientShowLobbyMenu_Implementation()
 UVNHAlienLocomotionComponent* AVNHPlayerController::GetAlienLocomotionComponent() const
 {
 	const AVNHShopperCharacter* Shopper = Cast<AVNHShopperCharacter>(GetPawn());
-	if (!Shopper || !Shopper->IsPossessedByAlien())
+	if (!Shopper)
 	{
 		return nullptr;
 	}
@@ -491,7 +809,7 @@ void AVNHPlayerController::HandleAlienMoveRightAxis(float Value)
 
 void AVNHPlayerController::HandleTurnAxis(float Value)
 {
-	if (FMath::IsNearlyZero(Value) || !GetAlienLocomotionComponent())
+	if (FMath::IsNearlyZero(Value))
 	{
 		return;
 	}
@@ -501,12 +819,30 @@ void AVNHPlayerController::HandleTurnAxis(float Value)
 
 void AVNHPlayerController::HandleLookUpAxis(float Value)
 {
-	if (FMath::IsNearlyZero(Value) || !GetAlienLocomotionComponent())
+	if (FMath::IsNearlyZero(Value))
 	{
 		return;
 	}
 
 	AddPitchInput(Value);
+}
+
+void AVNHPlayerController::HandleTargetFocusPressed()
+{
+	UpdateFocusedShopper();
+
+	AVNHShopperCharacter* Shopper = FocusedShopper.Get();
+	if (!Shopper)
+	{
+		ClearTargetedShopper();
+		LastInteractionText = TEXT("No shopper under cursor to target.");
+		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		return;
+	}
+
+	SetTargetedShopper(Shopper);
+	LastInteractionText = FString::Printf(TEXT("Target locked: %s // E Ask | R Mark | F Fake | X Accuse | LMB Cancel"), *GetNameSafe(Shopper));
+	LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 }
 
 void AVNHPlayerController::HandleInteractPressed()
@@ -553,21 +889,16 @@ void AVNHPlayerController::ToggleDebugHud()
 
 void AVNHPlayerController::ApplyDebugHudInputMode(bool bDebugHudVisible)
 {
-	bShowMouseCursor = bDebugHudVisible;
-	bEnableClickEvents = bDebugHudVisible;
-	bEnableMouseOverEvents = bDebugHudVisible;
+	bShowMouseCursor = true;
+	bEnableClickEvents = true;
+	bEnableMouseOverEvents = true;
+	DefaultMouseCursor = EMouseCursor::Default;
+	UpdateGameplayCursor();
 
-	if (bDebugHudVisible)
-	{
-		FInputModeGameAndUI InputMode;
-		InputMode.SetHideCursorDuringCapture(false);
-		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-		SetInputMode(InputMode);
-	}
-	else
-	{
-		SetInputMode(FInputModeGameOnly());
-	}
+	FInputModeGameAndUI InputMode;
+	InputMode.SetHideCursorDuringCapture(false);
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	SetInputMode(InputMode);
 }
 
 void AVNHPlayerController::ShowLobbyMenu()
@@ -600,10 +931,15 @@ void AVNHPlayerController::ShowLobbyMenu()
 	NewLobbyMenu->SetVisibility(ESlateVisibility::HitTestInvisible);
 	LobbyMenuWidget = NewLobbyMenu;
 
-	bShowMouseCursor = false;
-	bEnableClickEvents = false;
-	bEnableMouseOverEvents = false;
-	SetInputMode(FInputModeGameOnly());
+	bShowMouseCursor = true;
+	bEnableClickEvents = true;
+	bEnableMouseOverEvents = true;
+	DefaultMouseCursor = EMouseCursor::Default;
+	UpdateGameplayCursor();
+	FInputModeGameAndUI InputMode;
+	InputMode.SetHideCursorDuringCapture(false);
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	SetInputMode(InputMode);
 
 	UE_LOG(LogVNH, Display, TEXT("LobbyMenu: shown as non-blocking overlay."));
 }
@@ -616,7 +952,14 @@ void AVNHPlayerController::UpdateDebugDeckRuntimeLabels(float DeltaTime)
 	}
 
 	TimeUntilDebugDeckLabelLookup -= DeltaTime;
-	if ((!RoleStatusTextBlock.IsValid() || !LocomotionStatusTextBlock.IsValid()) && TimeUntilDebugDeckLabelLookup <= 0.0f)
+	if ((!RoundStatusTextBlock.IsValid()
+		|| !InteractionTextBlock.IsValid()
+		|| !RoleStatusTextBlock.IsValid()
+		|| !LocomotionStatusTextBlock.IsValid()
+		|| !RevealStatusTextBlock.IsValid()
+		|| !RevealStatusBoxWidget.IsValid()
+		|| !RevealStatusShadowWidget.IsValid()
+		|| !RevealRailWidget.IsValid()) && TimeUntilDebugDeckLabelLookup <= 0.0f)
 	{
 		TimeUntilDebugDeckLabelLookup = 0.5f;
 
@@ -629,6 +972,16 @@ void AVNHPlayerController::UpdateDebugDeckRuntimeLabels(float DeltaTime)
 				continue;
 			}
 
+			if (!RoundStatusTextBlock.IsValid())
+			{
+				RoundStatusTextBlock = Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("RoundStatusText")));
+			}
+
+			if (!InteractionTextBlock.IsValid())
+			{
+				InteractionTextBlock = Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("InteractionText")));
+			}
+
 			if (!RoleStatusTextBlock.IsValid())
 			{
 				RoleStatusTextBlock = Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("RoleStatusText")));
@@ -638,7 +991,37 @@ void AVNHPlayerController::UpdateDebugDeckRuntimeLabels(float DeltaTime)
 			{
 				LocomotionStatusTextBlock = Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("LocomotionStatusText")));
 			}
+
+			if (!RevealStatusTextBlock.IsValid())
+			{
+				RevealStatusTextBlock = Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("RevealStatusText")));
+			}
+
+			if (!RevealStatusBoxWidget.IsValid())
+			{
+				RevealStatusBoxWidget = Widget->GetWidgetFromName(TEXT("RevealStatusBox"));
+			}
+
+			if (!RevealStatusShadowWidget.IsValid())
+			{
+				RevealStatusShadowWidget = Widget->GetWidgetFromName(TEXT("RevealStatusShadow"));
+			}
+
+			if (!RevealRailWidget.IsValid())
+			{
+				RevealRailWidget = Widget->GetWidgetFromName(TEXT("RevealRail"));
+			}
 		}
+	}
+
+	if (UTextBlock* RoundText = RoundStatusTextBlock.Get())
+	{
+		RoundText->SetText(FText::FromString(GetRoundStatusText()));
+	}
+
+	if (UTextBlock* InteractionText = InteractionTextBlock.Get())
+	{
+		InteractionText->SetText(FText::FromString(GetDebugDeckInteractionText()));
 	}
 
 	if (UTextBlock* RoleText = RoleStatusTextBlock.Get())
@@ -649,6 +1032,94 @@ void AVNHPlayerController::UpdateDebugDeckRuntimeLabels(float DeltaTime)
 	if (UTextBlock* LocomotionText = LocomotionStatusTextBlock.Get())
 	{
 		LocomotionText->SetText(FText::FromString(GetLocomotionStatusText()));
+	}
+
+	const FString RevealStatusText = GetRevealStatusText();
+	const bool bShowReveal = !RevealStatusText.IsEmpty();
+	if (UTextBlock* RevealText = RevealStatusTextBlock.Get())
+	{
+		RevealText->SetText(FText::FromString(RevealStatusText));
+		RevealText->SetVisibility(bShowReveal ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		RevealText->SetRenderOpacity(bShowReveal ? 1.0f : 0.0f);
+	}
+
+	if (UWidget* RevealBox = RevealStatusBoxWidget.Get())
+	{
+		RevealBox->SetVisibility(bShowReveal ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		RevealBox->SetRenderOpacity(bShowReveal ? 1.0f : 0.0f);
+	}
+
+	if (UWidget* RevealShadow = RevealStatusShadowWidget.Get())
+	{
+		RevealShadow->SetVisibility(bShowReveal ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		RevealShadow->SetRenderOpacity(bShowReveal ? 1.0f : 0.0f);
+	}
+
+	if (UWidget* RevealRail = RevealRailWidget.Get())
+	{
+		RevealRail->SetVisibility(bShowReveal ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		RevealRail->SetRenderOpacity(bShowReveal ? 1.0f : 0.0f);
+	}
+}
+
+void AVNHPlayerController::UpdateMarkedSuspectsWidgetRuntimeLabels(float DeltaTime)
+{
+	if (!IsLocalController() || !GetWorld())
+	{
+		return;
+	}
+
+	EnsureMarkedSuspectsWidget();
+	if (!MarkedSuspectsWidget.IsValid())
+	{
+		return;
+	}
+
+	TimeUntilMarkedWidgetLookup -= DeltaTime;
+	if ((!MarkedSuspectsListTextBlock.IsValid() || !MarkedSuspectsPanelWidget.IsValid()) && TimeUntilMarkedWidgetLookup <= 0.0f)
+	{
+		TimeUntilMarkedWidgetLookup = 0.5f;
+		UUserWidget* Widget = MarkedSuspectsWidget.Get();
+		MarkedSuspectsListTextBlock = Widget ? Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("MarkedSuspectsListText"))) : nullptr;
+		MarkedSuspectsPanelWidget = Widget ? Widget->GetWidgetFromName(TEXT("MarkedSuspectsPanel")) : nullptr;
+	}
+
+	const FString PanelText = GetMarkedSuspectsPanelText();
+	const bool bShowPanel = IsAssignedHunter() && !PanelText.IsEmpty();
+	if (UTextBlock* ListText = MarkedSuspectsListTextBlock.Get())
+	{
+		ListText->SetText(FText::FromString(PanelText));
+	}
+
+	if (UWidget* Panel = MarkedSuspectsPanelWidget.Get())
+	{
+		Panel->SetVisibility(bShowPanel ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		Panel->SetRenderOpacity(bShowPanel ? 1.0f : 0.0f);
+	}
+}
+
+void AVNHPlayerController::UpdateMarkedSuspectsForRound()
+{
+	const AVNHGameState* VNHGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr;
+	if (!VNHGameState)
+	{
+		return;
+	}
+
+	const int32 CurrentRoundNumber = VNHGameState->GetRoundNumber();
+	if (LastMarkedRoundNumber == INDEX_NONE)
+	{
+		LastMarkedRoundNumber = CurrentRoundNumber;
+	}
+	else if (LastMarkedRoundNumber != CurrentRoundNumber)
+	{
+		ClearMarkedSuspectsForNewRound();
+		LastMarkedRoundNumber = CurrentRoundNumber;
+	}
+
+	if (!IsAssignedHunter() && !MarkedSuspects.IsEmpty())
+	{
+		ClearMarkedSuspectsForNewRound();
 	}
 }
 
@@ -686,6 +1157,8 @@ void AVNHPlayerController::PollAlienKeyboardInput()
 		LastPolledAlienMoveInput = FVector2D::ZeroVector;
 		bLastPolledFastWalkRequested = false;
 		bWasPolledActNaturalDown = false;
+		bWasPolledTargetFocusDown = false;
+		bWasPolledCancelTargetDown = false;
 		return;
 	}
 
@@ -730,6 +1203,129 @@ void AVNHPlayerController::PollAlienKeyboardInput()
 	bWasPolledInteractDown = bInteractDown;
 }
 
+void AVNHPlayerController::PollInteractionInput()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	const bool bTargetFocusDown = IsInputKeyDown(EKeys::RightMouseButton);
+	const bool bInteractDown = IsInputKeyDown(EKeys::E);
+	const bool bMarkDown = IsInputKeyDown(EKeys::R);
+	const bool bFakeAccuseDown = IsInputKeyDown(EKeys::F);
+	const bool bAccuseDown = IsInputKeyDown(EKeys::X);
+	const bool bCancelTargetDown = IsInputKeyDown(EKeys::LeftMouseButton);
+
+	if (bTargetFocusDown && !bWasPolledTargetFocusDown)
+	{
+		HandleTargetFocusPressed();
+	}
+
+	if (bInteractDown && !bWasPolledInteractDown)
+	{
+		RequestInteract();
+	}
+
+	if (bMarkDown && !bWasPolledMarkDown)
+	{
+		MarkFocusedShopper();
+	}
+
+	if (bFakeAccuseDown && !bWasPolledFakeAccuseDown)
+	{
+		FakeAccuseFocusedShopper();
+	}
+
+	if (bAccuseDown && !bWasPolledAccuseDown)
+	{
+		DebugAccuseFocusedShopper();
+	}
+
+	if (bCancelTargetDown && !bWasPolledCancelTargetDown)
+	{
+		CancelTargetSelection();
+	}
+
+	bWasPolledTargetFocusDown = bTargetFocusDown;
+	bWasPolledInteractDown = bInteractDown;
+	bWasPolledMarkDown = bMarkDown;
+	bWasPolledFakeAccuseDown = bFakeAccuseDown;
+	bWasPolledAccuseDown = bAccuseDown;
+	bWasPolledCancelTargetDown = bCancelTargetDown;
+}
+
+void AVNHPlayerController::UpdateGameplayCursor()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	EMouseCursor::Type DesiredCursor = EMouseCursor::Default;
+	if (IsAssignedHunter() && FocusedShopper.IsValid())
+	{
+		DesiredCursor = EMouseCursor::Crosshairs;
+	}
+	else if (FocusedShopper.IsValid() || FocusedLobbyPlayButton.IsValid())
+	{
+		DesiredCursor = EMouseCursor::Hand;
+	}
+
+	CurrentMouseCursor = DesiredCursor;
+}
+
+void AVNHPlayerController::RegisterGameplayHardwareCursors()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	const bool bNormalRegistered = UWidgetBlueprintLibrary::SetHardwareCursor(
+		this,
+		EMouseCursor::Default,
+		TEXT("UI/Cursors/T_NormalCursor"),
+		FVector2D::ZeroVector);
+	const bool bRegularRegistered = UWidgetBlueprintLibrary::SetHardwareCursor(
+		this,
+		EMouseCursor::Hand,
+		TEXT("UI/Cursors/T_RegularInteract"),
+		FVector2D::ZeroVector);
+	const bool bHunterRegistered = UWidgetBlueprintLibrary::SetHardwareCursor(
+		this,
+		EMouseCursor::Crosshairs,
+		TEXT("UI/Cursors/T_HunterInteract"),
+		FVector2D::ZeroVector);
+
+	bHardwareCursorsRegistered = bNormalRegistered && bRegularRegistered && bHunterRegistered;
+	HardwareCursorRegistrationRetrySeconds = bHardwareCursorsRegistered ? 0.0f : 1.0f;
+
+	UE_LOG(
+		LogVNH,
+		bHardwareCursorsRegistered ? Display : Warning,
+		TEXT("HardwareCursors: Normal=%s Regular=%s Hunter=%s"),
+		bNormalRegistered ? TEXT("true") : TEXT("false"),
+		bRegularRegistered ? TEXT("true") : TEXT("false"),
+		bHunterRegistered ? TEXT("true") : TEXT("false"));
+
+	DefaultMouseCursor = EMouseCursor::Default;
+	UpdateGameplayCursor();
+}
+
+void AVNHPlayerController::UpdateRoleCameraMode()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (AVNHShopperCharacter* Shopper = Cast<AVNHShopperCharacter>(GetPawn()))
+	{
+		Shopper->SetFirstPersonViewEnabled(IsAssignedHunter());
+	}
+}
+
 FString AVNHPlayerController::GetInteractionPromptText() const
 {
 	if (FocusedLobbyPlayButton.IsValid())
@@ -737,8 +1333,18 @@ FString AVNHPlayerController::GetInteractionPromptText() const
 		return TEXT("E: Start round");
 	}
 
+	if (const AVNHShopperCharacter* Shopper = TargetedShopper.Get())
+	{
+		return FString::Printf(TEXT("LOCKED: %s  //  E ASK  R MARK  F FAKE  X ACCUSE  LMB CANCEL"), *GetNameSafe(Shopper));
+	}
+
+	if (!IsAssignedHunter())
+	{
+		return FString();
+	}
+
 	const AVNHShopperCharacter* Shopper = FocusedShopper.Get();
-	return Shopper ? FString::Printf(TEXT("E: Question %s"), *GetNameSafe(Shopper)) : FString();
+	return Shopper ? FString::Printf(TEXT("RMB LOCK: %s"), *GetNameSafe(Shopper)) : FString();
 }
 
 FString AVNHPlayerController::GetMarkedSuspectsText() const
@@ -770,76 +1376,222 @@ FString AVNHPlayerController::GetMarkedSuspectsText() const
 	return VisibleIndex > 0 ? Result : FString();
 }
 
+FString AVNHPlayerController::GetMarkedSuspectsPanelText() const
+{
+	FString Result;
+	int32 VisibleIndex = 0;
+	for (const TWeakObjectPtr<AVNHShopperCharacter>& MarkedSuspect : MarkedSuspects)
+	{
+		const AVNHShopperCharacter* Shopper = MarkedSuspect.Get();
+		if (!Shopper)
+		{
+			continue;
+		}
+
+		++VisibleIndex;
+		if (!Result.IsEmpty())
+		{
+			Result += LINE_TERMINATOR;
+		}
+
+		Result += FString::Printf(TEXT("%d  %s"), VisibleIndex, *GetNameSafe(Shopper));
+	}
+
+	return Result;
+}
+
+bool AVNHPlayerController::IsShopperMarked(const AVNHShopperCharacter* Shopper) const
+{
+	if (!Shopper)
+	{
+		return false;
+	}
+
+	for (const TWeakObjectPtr<AVNHShopperCharacter>& MarkedSuspect : MarkedSuspects)
+	{
+		if (MarkedSuspect.Get() == Shopper)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void AVNHPlayerController::RefreshShopperOutline(AVNHShopperCharacter* Shopper, bool bHovered) const
+{
+	if (!Shopper)
+	{
+		return;
+	}
+
+	int32 StencilValue = 0;
+	if (Shopper == TargetedShopper.Get())
+	{
+		StencilValue = TargetedShopperStencil;
+	}
+	else if (IsShopperMarked(Shopper))
+	{
+		StencilValue = MarkedShopperStencil;
+	}
+	else if (bHovered)
+	{
+		StencilValue = HoveredShopperStencil;
+	}
+
+	Shopper->SetInteractionHighlightStencil(StencilValue);
+}
+
+void AVNHPlayerController::ClearMarkedSuspectsForNewRound()
+{
+	TArray<TWeakObjectPtr<AVNHShopperCharacter>> PreviousMarks = MarkedSuspects;
+	MarkedSuspects.Reset();
+
+	for (const TWeakObjectPtr<AVNHShopperCharacter>& PreviousMark : PreviousMarks)
+	{
+		if (AVNHShopperCharacter* Shopper = PreviousMark.Get())
+		{
+			RefreshShopperOutline(Shopper, Shopper == FocusedShopper.Get());
+		}
+	}
+}
+
 void AVNHPlayerController::UpdateFocusedShopper()
 {
+	AVNHShopperCharacter* PreviousFocusedShopper = FocusedShopper.Get();
 	FocusedShopper.Reset();
 	FocusedLobbyPlayButton.Reset();
 
 	if (!PlayerCameraManager || !GetWorld())
 	{
+		if (PreviousFocusedShopper)
+		{
+			RefreshShopperOutline(PreviousFocusedShopper, false);
+		}
 		return;
 	}
 
-	const FVector Start = PlayerCameraManager->GetCameraLocation();
-	const FVector End = Start + PlayerCameraManager->GetCameraRotation().Vector() * 900.0f;
+	FVector MouseWorldLocation = FVector::ZeroVector;
+	FVector MouseWorldDirection = FVector::ForwardVector;
+	if (!DeprojectMousePositionToWorld(MouseWorldLocation, MouseWorldDirection))
+	{
+		if (PreviousFocusedShopper)
+		{
+			RefreshShopperOutline(PreviousFocusedShopper, false);
+		}
+		return;
+	}
 
-	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(VNHInteractionTrace), false);
+	const FVector MouseTraceEnd = MouseWorldLocation + MouseWorldDirection * 2500.0f;
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(VNHInteractionCursorTrace), false);
 	if (APawn* ControlledPawn = GetPawn())
 	{
 		QueryParams.AddIgnoredActor(ControlledPawn);
 	}
 
 	FHitResult Hit;
-	if (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, QueryParams))
+	if (GetWorld()->LineTraceSingleByChannel(Hit, MouseWorldLocation, MouseTraceEnd, ECC_Visibility, QueryParams))
 	{
 		if (AVNHLobbyPlayButton* LobbyPlayButton = Cast<AVNHLobbyPlayButton>(Hit.GetActor()))
 		{
 			FocusedLobbyPlayButton = LobbyPlayButton;
+			if (PreviousFocusedShopper)
+			{
+				RefreshShopperOutline(PreviousFocusedShopper, false);
+			}
 			return;
 		}
 	}
 
-	if (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Pawn, QueryParams))
+	const bool bIsHunter = IsAssignedHunter();
+	if (!bIsHunter)
+	{
+		ClearTargetedShopper();
+	}
+
+	if (GetWorld()->LineTraceSingleByChannel(Hit, MouseWorldLocation, MouseTraceEnd, ECC_Pawn, QueryParams))
 	{
 		if (AVNHShopperCharacter* Shopper = Cast<AVNHShopperCharacter>(Hit.GetActor()))
 		{
 			FocusedShopper = Shopper;
+			if (!bIsHunter)
+			{
+				if (PreviousFocusedShopper)
+				{
+					RefreshShopperOutline(PreviousFocusedShopper, false);
+				}
+				return;
+			}
+
+			if (Shopper == TargetedShopper.Get())
+			{
+				RefreshShopperOutline(Shopper, true);
+				return;
+			}
+
+			if (Shopper != PreviousFocusedShopper)
+			{
+				if (PreviousFocusedShopper)
+				{
+					RefreshShopperOutline(PreviousFocusedShopper, false);
+				}
+
+				RefreshShopperOutline(Shopper, true);
+			}
 			return;
 		}
 	}
 
-	const FVector ViewDirection = PlayerCameraManager->GetCameraRotation().Vector();
-	AVNHShopperCharacter* BestShopper = nullptr;
-	float BestScore = -1.0f;
-
-	for (TActorIterator<AVNHShopperCharacter> It(GetWorld()); It; ++It)
+	if (PreviousFocusedShopper)
 	{
-		AVNHShopperCharacter* Shopper = *It;
-		if (!IsValid(Shopper) || Shopper == GetPawn())
-		{
-			continue;
-		}
-
-		const FVector ToShopper = Shopper->GetActorLocation() - Start;
-		const float Distance = ToShopper.Size();
-		if (Distance > 1100.0f || Distance < KINDA_SMALL_NUMBER)
-		{
-			continue;
-		}
-
-		const float FacingDot = FVector::DotProduct(ViewDirection, ToShopper / Distance);
-		if (FacingDot < 0.55f)
-		{
-			continue;
-		}
-
-		const float Score = FacingDot * 2.0f - Distance / 1100.0f;
-		if (Score > BestScore)
-		{
-			BestScore = Score;
-			BestShopper = Shopper;
-		}
+		RefreshShopperOutline(PreviousFocusedShopper, false);
 	}
 
-	FocusedShopper = BestShopper;
+	if (AVNHShopperCharacter* Target = TargetedShopper.Get())
+	{
+		RefreshShopperOutline(Target, false);
+	}
+}
+
+AVNHShopperCharacter* AVNHPlayerController::GetInteractionShopper() const
+{
+	if (AVNHShopperCharacter* Shopper = TargetedShopper.Get())
+	{
+		return Shopper;
+	}
+
+	return FocusedShopper.Get();
+}
+
+bool AVNHPlayerController::IsAssignedHunter() const
+{
+	const AVNHPlayerState* VNHPlayerState = GetPlayerState<AVNHPlayerState>();
+	return VNHPlayerState && VNHPlayerState->IsHunter();
+}
+
+void AVNHPlayerController::SetTargetedShopper(AVNHShopperCharacter* NewTarget)
+{
+	if (TargetedShopper.Get() == NewTarget)
+	{
+		return;
+	}
+
+	ClearTargetedShopper();
+	TargetedShopper = NewTarget;
+	if (NewTarget)
+	{
+		RefreshShopperOutline(NewTarget, NewTarget == FocusedShopper.Get());
+	}
+}
+
+void AVNHPlayerController::ClearTargetedShopper()
+{
+	if (AVNHShopperCharacter* PreviousTarget = TargetedShopper.Get())
+	{
+		TargetedShopper.Reset();
+		RefreshShopperOutline(PreviousTarget, PreviousTarget == FocusedShopper.Get());
+		return;
+	}
+
+	TargetedShopper.Reset();
 }

@@ -7,8 +7,11 @@
 
 class UInputAction;
 class UInputMappingContext;
+class UMaterialInterface;
+class UPostProcessComponent;
 class UTextBlock;
 class UUserWidget;
+class UWidget;
 class UVNHAlienLocomotionComponent;
 class AVNHLobbyPlayButton;
 class AVNHShopperCharacter;
@@ -32,8 +35,20 @@ public:
 	UFUNCTION(BlueprintPure, Category = "VNH|Debug")
 	FString GetLocomotionStatusText() const;
 
+	UFUNCTION(BlueprintPure, Category = "VNH|Debug")
+	FString GetRoundStatusText() const;
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Debug")
+	FString GetDebugDeckInteractionText() const;
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Debug")
+	FString GetRevealStatusText() const;
+
 	UFUNCTION(BlueprintPure, Category = "VNH|Interaction")
 	AVNHShopperCharacter* GetFocusedShopper() const { return FocusedShopper.Get(); }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Interaction")
+	AVNHShopperCharacter* GetTargetedShopper() const { return TargetedShopper.Get(); }
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Interaction")
 	FString GetInteractionPromptText() const;
@@ -43,6 +58,14 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Interaction")
 	FString GetMarkedSuspectsText() const;
+
+	FString GetMarkedSuspectsPanelText() const;
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Interaction")
+	bool IsAssignedHunter() const;
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Interaction")
+	void CancelTargetSelection();
 
 	UFUNCTION(BlueprintCallable, Category = "VNH|Hunter")
 	void RequestPublicTest(EVNHPublicTestType TestType);
@@ -71,8 +94,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Lobby")
 	void RequestStartRoundFromLobby();
 
+	UFUNCTION(BlueprintCallable, Category = "VNH|Debug")
+	void RequestDebugPossessShopper(int32 ShopperIndex, EVNHPlayerRole ForcedRole);
+
 	UFUNCTION(Server, Reliable)
 	void ServerRequestPublicTest(EVNHPublicTestType TestType);
+
+	UFUNCTION(Server, Reliable)
+	void ServerRequestQuestion(AVNHShopperCharacter* QuestionedShopper);
 
 	UFUNCTION(Server, Reliable)
 	void ServerRequestAccusation(AVNHShopperCharacter* AccusedShopper);
@@ -85,6 +114,9 @@ public:
 
 	UFUNCTION(Server, Reliable)
 	void ServerRequestStartRoundFromLobby();
+
+	UFUNCTION(Server, Reliable)
+	void ServerDebugPossessShopper(int32 ShopperIndex, EVNHPlayerRole ForcedRole);
 
 	UFUNCTION(Server, Reliable)
 	void ServerRequestActNatural();
@@ -127,6 +159,7 @@ private:
 	void HandleAlienMoveRightAxis(float Value);
 	void HandleTurnAxis(float Value);
 	void HandleLookUpAxis(float Value);
+	void HandleTargetFocusPressed();
 	void HandleInteractPressed();
 	void HandleQuickChatPressed();
 	void HandleQuickChatLookingForShirtPressed();
@@ -136,10 +169,24 @@ private:
 	void ToggleDebugHud();
 	void ApplyDebugHudInputMode(bool bDebugHudVisible);
 	void ShowLobbyMenu();
+	void EnsureTargetOutlinePostProcess();
+	void EnsureMarkedSuspectsWidget();
 	void UpdateDebugDeckRuntimeLabels(float DeltaTime);
+	void UpdateMarkedSuspectsWidgetRuntimeLabels(float DeltaTime);
+	void UpdateMarkedSuspectsForRound();
+	void RegisterGameplayHardwareCursors();
+	void UpdateGameplayCursor();
+	void UpdateRoleCameraMode();
 	void PushLegacyAlienMoveInput();
 	void PollAlienKeyboardInput();
+	void PollInteractionInput();
 	void UpdateFocusedShopper();
+	AVNHShopperCharacter* GetInteractionShopper() const;
+	void SetTargetedShopper(AVNHShopperCharacter* NewTarget);
+	void ClearTargetedShopper();
+	bool IsShopperMarked(const AVNHShopperCharacter* Shopper) const;
+	void RefreshShopperOutline(AVNHShopperCharacter* Shopper, bool bHovered) const;
+	void ClearMarkedSuspectsForNewRound();
 
 	bool bAlienInputMappingApplied = false;
 	FVector2D LegacyAlienMoveInput = FVector2D::ZeroVector;
@@ -158,13 +205,38 @@ private:
 	bool bLastPolledFastWalkRequested = false;
 	bool bWasPolledActNaturalDown = false;
 	bool bWasPolledInteractDown = false;
+	bool bWasPolledTargetFocusDown = false;
+	bool bWasPolledAccuseDown = false;
+	bool bWasPolledCancelTargetDown = false;
+	bool bWasPolledMarkDown = false;
+	bool bWasPolledFakeAccuseDown = false;
+	bool bHardwareCursorsRegistered = false;
+	float HardwareCursorRegistrationRetrySeconds = 0.0f;
+	UPROPERTY(Transient)
+	TObjectPtr<UPostProcessComponent> TargetOutlinePostProcessComponent;
+
+	UPROPERTY(EditDefaultsOnly, Category = "VNH|Interaction")
+	TObjectPtr<UMaterialInterface> TargetOutlinePostProcessMaterial;
+
 	TWeakObjectPtr<AVNHShopperCharacter> FocusedShopper;
 	TWeakObjectPtr<AVNHLobbyPlayButton> FocusedLobbyPlayButton;
+	TWeakObjectPtr<AVNHShopperCharacter> TargetedShopper;
+	TWeakObjectPtr<UTextBlock> RoundStatusTextBlock;
+	TWeakObjectPtr<UTextBlock> InteractionTextBlock;
 	TWeakObjectPtr<UTextBlock> RoleStatusTextBlock;
 	TWeakObjectPtr<UTextBlock> LocomotionStatusTextBlock;
+	TWeakObjectPtr<UTextBlock> RevealStatusTextBlock;
+	TWeakObjectPtr<UWidget> RevealStatusBoxWidget;
+	TWeakObjectPtr<UWidget> RevealStatusShadowWidget;
+	TWeakObjectPtr<UWidget> RevealRailWidget;
 	TArray<TWeakObjectPtr<AVNHShopperCharacter>> MarkedSuspects;
+	TWeakObjectPtr<UUserWidget> MarkedSuspectsWidget;
+	TWeakObjectPtr<UTextBlock> MarkedSuspectsListTextBlock;
+	TWeakObjectPtr<UWidget> MarkedSuspectsPanelWidget;
 	FString LastInteractionText;
 	float LastInteractionTimeSeconds = -100.0f;
 	float TimeUntilDebugDeckLabelLookup = 0.0f;
+	float TimeUntilMarkedWidgetLookup = 0.0f;
+	int32 LastMarkedRoundNumber = INDEX_NONE;
 	TWeakObjectPtr<UUserWidget> LobbyMenuWidget;
 };

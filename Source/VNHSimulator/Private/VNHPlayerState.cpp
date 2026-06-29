@@ -17,7 +17,7 @@ void AVNHPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 
 void AVNHPlayerState::SetRole(EVNHPlayerRole NewRole)
 {
-	if (HasAuthority() && AssignedRole != NewRole)
+	if (AssignedRole != NewRole)
 	{
 		AssignedRole = NewRole;
 		OnRep_AssignedRole();
@@ -67,11 +67,11 @@ FText AVNHPlayerState::GetRoleGoalText() const
 	switch (AssignedRole)
 	{
 	case EVNHPlayerRole::Human:
-		return NSLOCTEXT("VNH", "RoleGoalHuman", "Blend in. Finish your errand. Avoid false accusation.");
+		return NSLOCTEXT("VNH", "RoleGoalHuman", "Be a real civilian. Finish your errand, act natural, and survive suspicion.");
 	case EVNHPlayerRole::Alien:
-		return NSLOCTEXT("VNH", "RoleGoalAlien", "Blend in as Human. Survive the Hunter's accusation.");
+		return NSLOCTEXT("VNH", "RoleGoalAlien", "You are pretending. Do not get accused. Use the same public controls as Human.");
 	case EVNHPlayerRole::Hunter:
-		return NSLOCTEXT("VNH", "RoleGoalHunter", "Use commands, one question, and one accusation to find the Alien.");
+		return NSLOCTEXT("VNH", "RoleGoalHunter", "Use commands, three questions, and one accusation to find the Alien.");
 	default:
 		return NSLOCTEXT("VNH", "RoleGoalUnassigned", "Wait for the host to start the round.");
 	}
