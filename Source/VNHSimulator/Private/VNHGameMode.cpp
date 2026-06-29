@@ -7,6 +7,8 @@
 #include "EngineUtils.h"
 #include "GameFramework/HUD.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerStart.h"
+#include "GameFramework/PlayerState.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 #include "VNHGameInstance.h"
@@ -56,6 +58,11 @@ bool HasDebugArena(UWorld* World)
 
 AVNHGameMode::AVNHGameMode()
 {
+	ConfigureRuntimeClasses();
+}
+
+void AVNHGameMode::ConfigureRuntimeClasses()
+{
 	GameStateClass = AVNHGameState::StaticClass();
 	PlayerControllerClass = AVNHPlayerController::StaticClass();
 	PlayerStateClass = AVNHPlayerState::StaticClass();
@@ -66,6 +73,21 @@ AVNHGameMode::AVNHGameMode()
 void AVNHGameMode::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
 {
 	Super::InitGame(MapName, Options, ErrorMessage);
+
+	if (MapName.Contains(TEXT("MainMenu")))
+	{
+		GameStateClass = AVNHGameState::StaticClass();
+		PlayerControllerClass = APlayerController::StaticClass();
+		PlayerStateClass = APlayerState::StaticClass();
+		HUDClass = AHUD::StaticClass();
+		DefaultPawnClass = nullptr;
+		UE_LOG(LogVNH, Display, TEXT("MainMenu: using menu-only runtime classes; no gameplay pawn/controller."));
+	}
+	else
+	{
+		ConfigureRuntimeClasses();
+	}
+
 	bStartRoundWhenPlayersReady = UGameplayStatics::HasOption(Options, TEXT("StartRound"));
 }
 
@@ -76,16 +98,16 @@ void AVNHGameMode::BeginPlay()
 	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
 	if (MapName.Contains(TEXT("MainMenu")))
 	{
-		if (UVNHGameInstance* VNHGameInstance = GetGameInstance<UVNHGameInstance>())
-		{
-			VNHGameInstance->ShowMainMenu();
-		}
 		return;
 	}
 
 	if (MapName.Contains(TEXT("Lobby")))
 	{
 		EnsureLobbyRuntimeActors();
+	}
+	else
+	{
+		EnsureMvpInteractionProps();
 	}
 
 	if (bAutoStartRoundOnPlayerJoin)
@@ -156,7 +178,7 @@ void AVNHGameMode::TryStartRound()
 
 	ResetShopperPossessionState();
 	StartShopperRoutines();
-	EnterPhase(EVNHRoundPhase::AssigningRoles, 3.0f);
+	EnterPhase(EVNHRoundPhase::AssigningRoles, PhaseTiming.PreRoundCustomizationSeconds);
 }
 
 bool AVNHGameMode::StartRoundFromLobby(APlayerController* RequestingPlayer)
@@ -351,7 +373,7 @@ void AVNHGameMode::DebugStartRound()
 
 	ResetShopperPossessionState();
 	StartShopperRoutines();
-	EnterPhase(EVNHRoundPhase::AssigningRoles, 3.0f);
+	EnterPhase(EVNHRoundPhase::AssigningRoles, PhaseTiming.PreRoundCustomizationSeconds);
 	UE_LOG(LogVNH, Display, TEXT("vnh.StartRound: entered AssigningRoles."));
 }
 
@@ -629,6 +651,80 @@ void AVNHGameMode::EnsureLobbyRuntimeActors()
 #endif
 
 	UE_LOG(LogVNH, Display, TEXT("LobbyStart: runtime play button %s."), PlayButton ? TEXT("spawned") : TEXT("failed to spawn"));
+}
+
+void AVNHGameMode::EnsureMvpInteractionProps()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->ActorHasTag(TEXT("VNH.MVPProp")))
+		{
+			return;
+		}
+	}
+
+	AActor* AnchorActor = UGameplayStatics::GetActorOfClass(World, APlayerStart::StaticClass());
+	if (!AnchorActor)
+	{
+		AnchorActor = UGameplayStatics::GetActorOfClass(World, AVNHShopperCharacter::StaticClass());
+	}
+	const FVector AnchorLocation = AnchorActor ? AnchorActor->GetActorLocation() : FVector::ZeroVector;
+
+	struct FPropSpawnDefinition
+	{
+		const TCHAR* ClassPath;
+		const TCHAR* Label;
+		FVector Offset;
+		bool bSuspicious;
+	};
+
+	const FPropSpawnDefinition Definitions[] = {
+		{TEXT("/Game/Interactions/BP_VNHProp_Box.BP_VNHProp_Box_C"), TEXT("MVP_Prop_Box"), FVector(180.0f, -140.0f, 45.0f), false},
+		{TEXT("/Game/Interactions/BP_VNHProp_Bag.BP_VNHProp_Bag_C"), TEXT("MVP_Prop_Bag"), FVector(180.0f, -70.0f, 45.0f), false},
+		{TEXT("/Game/Interactions/BP_VNHProp_Cup.BP_VNHProp_Cup_C"), TEXT("MVP_Prop_Cup"), FVector(180.0f, 0.0f, 45.0f), false},
+		{TEXT("/Game/Interactions/BP_VNHProp_Tool.BP_VNHProp_Tool_C"), TEXT("MVP_Prop_Tool"), FVector(180.0f, 70.0f, 45.0f), false},
+		{TEXT("/Game/Interactions/BP_VNHProp_Suspicious.BP_VNHProp_Suspicious_C"), TEXT("MVP_Prop_Suspicious"), FVector(180.0f, 140.0f, 45.0f), true},
+	};
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	int32 SpawnedCount = 0;
+	for (const FPropSpawnDefinition& Definition : Definitions)
+	{
+		UClass* PropClass = LoadClass<AActor>(nullptr, Definition.ClassPath);
+		if (!PropClass)
+		{
+			UE_LOG(LogVNH, Warning, TEXT("MVPProps: missing %s."), Definition.ClassPath);
+			continue;
+		}
+
+		AActor* Prop = World->SpawnActor<AActor>(PropClass, AnchorLocation + Definition.Offset, FRotator::ZeroRotator, SpawnParameters);
+		if (!Prop)
+		{
+			continue;
+		}
+
+		Prop->Tags.AddUnique(TEXT("VNH.MVPProp"));
+		Prop->Tags.AddUnique(TEXT("VNH.Interactable"));
+		if (Definition.bSuspicious)
+		{
+			Prop->Tags.AddUnique(TEXT("VNH.Suspicious"));
+		}
+		Prop->SetReplicates(true);
+		Prop->SetReplicateMovement(true);
+#if WITH_EDITOR
+		Prop->SetActorLabel(Definition.Label);
+#endif
+		++SpawnedCount;
+	}
+
+	UE_LOG(LogVNH, Display, TEXT("MVPProps: spawned %d reusable interaction props."), SpawnedCount);
 }
 
 void AVNHGameMode::AssignRoles()

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/SkeletalMesh.h"
 #include "VNHGameplayTypes.generated.h"
 
 class APlayerState;
@@ -46,10 +47,59 @@ enum class EVNHQuickChatLine : uint8
 	FoundWrongSize
 };
 
+UENUM(BlueprintType)
+enum class EVNHComposureState : uint8
+{
+	Calm,
+	Stable,
+	Nervous,
+	Cracking,
+	Panic
+};
+
+UENUM(BlueprintType)
+enum class EVNHUniversalAction : uint8
+{
+	None,
+	Inspect,
+	Point,
+	Wave,
+	PickUp,
+	Drop
+};
+
+UENUM(BlueprintType)
+enum class EVNHCustomizationSlot : uint8
+{
+	Body,
+	Hair,
+	Face,
+	Hat,
+	Mustache,
+	Outfit,
+	Outwear,
+	Pants,
+	Shoes,
+	Accessory
+};
+
+UENUM(BlueprintType)
+enum class EVNHPropType : uint8
+{
+	Box,
+	Bag,
+	Cup,
+	Tool,
+	SuspiciousObject
+};
+
 USTRUCT(BlueprintType)
 struct FVNHPhaseTiming
 {
 	GENERATED_BODY()
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Round")
+	float PreRoundCustomizationSeconds = 30.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Round")
 	float AlienSetupSeconds = 7.0f;
@@ -98,4 +148,58 @@ struct FVNHQuickChatMessage
 
 	UPROPERTY(BlueprintReadOnly, Category = "Quick Chat")
 	int32 Serial = 0;
+};
+
+USTRUCT(BlueprintType)
+struct FVNHCharacterCustomization
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Customization")
+	int32 PresetIndex = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Customization")
+	TSoftObjectPtr<USkeletalMesh> BodyMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Customization")
+	TSoftObjectPtr<USkeletalMesh> HairMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Customization")
+	TSoftObjectPtr<USkeletalMesh> FaceMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Customization")
+	TSoftObjectPtr<USkeletalMesh> HatMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Customization")
+	TSoftObjectPtr<USkeletalMesh> MustacheMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Customization")
+	TSoftObjectPtr<USkeletalMesh> OutfitMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Customization")
+	TSoftObjectPtr<USkeletalMesh> OutwearMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Customization")
+	TSoftObjectPtr<USkeletalMesh> PantsMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Customization")
+	TSoftObjectPtr<USkeletalMesh> ShoesMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Customization")
+	TSoftObjectPtr<USkeletalMesh> AccessoryMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Customization")
+	FLinearColor BodyColor = FLinearColor(0.95f, 0.58f, 0.36f, 1.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Customization")
+	FLinearColor HairColor = FLinearColor(0.12f, 0.07f, 0.04f, 1.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Customization")
+	FLinearColor OutfitColor = FLinearColor(0.05f, 0.58f, 0.82f, 1.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Customization")
+	bool bNoFace = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Customization")
+	FName Nickname = TEXT("Greg Adjacent");
 };

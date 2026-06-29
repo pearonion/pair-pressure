@@ -2,30 +2,50 @@
 
 #include "Camera/CameraComponent.h"
 #include "Animation/AnimInstance.h"
+#include "Animation/AnimationAsset.h"
+#include "Components/AudioComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "DrawDebugHelpers.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
+#include "EngineUtils.h"
 #include "Animation/AnimTypes.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundAttenuation.h"
+#include "Sound/SoundBase.h"
+#include "Sound/SoundWaveProcedural.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "VNHAlienLocomotionComponent.h"
 #include "VNHLog.h"
+#include "VNHPlayerState.h"
 #include "VNHShopperAIController.h"
 #include "VNHShopperWaypoint.h"
 #include "Net/UnrealNetwork.h"
 
 namespace
 {
-const TCHAR* MannyMeshPath = TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple");
-const TCHAR* MannyAnimClassPath = TEXT("/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed.ABP_Unarmed_C");
+const TCHAR* DefaultBodyMeshPath = TEXT("/Game/TNG/Characters/BaseBodies/SK_TNG_Body_009.SK_TNG_Body_009");
+const TCHAR* CreativeAnimClassPath = TEXT("/Game/Creative_Characters/Animations/ABP_CreativeCharacter.ABP_CreativeCharacter_C");
+const TCHAR* CreativeIdleAnimPath = TEXT("/Game/TNG/Characters/Animations/ANIM_TNG_Idle_Breathing.ANIM_TNG_Idle_Breathing");
+constexpr float CalmFartVolume = 1.4f;
+constexpr float PanicFartVolume = 2.6f;
+constexpr float CalmFartInnerRadius = 275.0f;
+constexpr float PanicFartInnerRadius = 700.0f;
+constexpr float CalmFartFalloffDistance = 325.0f;
+constexpr float PanicFartFalloffDistance = 1100.0f;
 }
 
 AVNHShopperCharacter::AVNHShopperCharacter()
 {
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.TickInterval = 0.25f;
 	bReplicates = true;
 	AIControllerClass = AVNHShopperAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
@@ -69,18 +89,38 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 	DebugBodyMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	DebugBodyMesh->SetHiddenInGame(false);
 
-	static ConstructorHelpers::FObjectFinder<USkeletalMesh> MannyMeshFinder(TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
-	if (MannyMeshFinder.Succeeded())
+	auto CreateCosmeticMesh = [this](const TCHAR* ComponentName)
 	{
-		GetMesh()->SetSkeletalMesh(MannyMeshFinder.Object);
+		USkeletalMeshComponent* NewComponent = CreateDefaultSubobject<USkeletalMeshComponent>(ComponentName);
+		NewComponent->SetupAttachment(GetMesh());
+		NewComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		NewComponent->SetGenerateOverlapEvents(false);
+		NewComponent->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+		NewComponent->bEnableUpdateRateOptimizations = false;
+		return NewComponent;
+	};
 
-		static ConstructorHelpers::FClassFinder<UAnimInstance> MannyAnimFinder(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed"));
-		if (MannyAnimFinder.Succeeded())
-		{
-			GetMesh()->SetAnimInstanceClass(MannyAnimFinder.Class);
-		}
+	HairMeshComponent = CreateCosmeticMesh(TEXT("HairMesh"));
+	FaceMeshComponent = CreateCosmeticMesh(TEXT("FaceMesh"));
+	HatMeshComponent = CreateCosmeticMesh(TEXT("HatMesh"));
+	MustacheMeshComponent = CreateCosmeticMesh(TEXT("MustacheMesh"));
+	OutfitMeshComponent = CreateCosmeticMesh(TEXT("OutfitMesh"));
+	OutwearMeshComponent = CreateCosmeticMesh(TEXT("OutwearMesh"));
+	PantsMeshComponent = CreateCosmeticMesh(TEXT("PantsMesh"));
+	ShoesMeshComponent = CreateCosmeticMesh(TEXT("ShoesMesh"));
+	AccessoryMeshComponent = CreateCosmeticMesh(TEXT("AccessoryMesh"));
 
-		ConfigureMannyVisuals();
+	CharacterCustomization.BodyMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(DefaultBodyMeshPath));
+	CharacterCustomization.HairMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(TEXT("/Game/TNG/Characters/Cosmetics/Hair/SK_TNG_Hair_Male_003.SK_TNG_Hair_Male_003")));
+	CharacterCustomization.FaceMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(TEXT("/Game/TNG/Characters/Cosmetics/Faces/SK_TNG_Face_Happy_001.SK_TNG_Face_Happy_001")));
+	CharacterCustomization.HatMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(TEXT("/Game/TNG/Characters/Cosmetics/Hats/SK_TNG_Hat_003.SK_TNG_Hat_003")));
+	CharacterCustomization.MustacheMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(TEXT("/Game/TNG/Characters/Cosmetics/Mustaches/SK_TNG_Mustache_001.SK_TNG_Mustache_001")));
+	CharacterCustomization.OutfitMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(TEXT("/Game/TNG/Characters/Cosmetics/Outfits/SK_TNG_Outfit_001.SK_TNG_Outfit_001")));
+
+	if (USkeletalMesh* DefaultBodyMesh = LoadObject<USkeletalMesh>(nullptr, DefaultBodyMeshPath))
+	{
+		GetMesh()->SetSkeletalMesh(DefaultBodyMesh);
+		ConfigureCreativeCharacterVisuals();
 	}
 	else
 	{
@@ -90,13 +130,23 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 			DebugBodyMesh->SetStaticMesh(DebugBodyMeshFinder.Object);
 		}
 	}
+
+	static ConstructorHelpers::FObjectFinder<USoundBase> FartSoundFinder(TEXT("/Game/UI/Sounds/fartsound.fartsound"));
+	if (FartSoundFinder.Succeeded())
+	{
+		FartSound = FartSoundFinder.Object;
+	}
 }
 
 void AVNHShopperCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	ConfigureMannyVisuals();
+	ConfigureCreativeCharacterVisuals();
+	ApplyCharacterCustomization();
+	LastMeaningfulLocation = GetActorLocation();
+	LastMeaningfulControlRotation = GetControlRotation();
+	UpdateComposureState();
 
 	if (HasAuthority() && !bPossessedByAlien && RoutineComponent && RoutineComponent->GetCurrentWaypoint())
 	{
@@ -107,6 +157,16 @@ void AVNHShopperCharacter::BeginPlay()
 
 		FTimerHandle RoutineStartupTimerHandle;
 		GetWorldTimerManager().SetTimer(RoutineStartupTimerHandle, this, &AVNHShopperCharacter::StartRoutineMovement, 2.0f, false);
+	}
+}
+
+void AVNHShopperCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	if (HasAuthority() && IsPlayerControlled())
+	{
+		UpdateComposureSystem(DeltaSeconds);
 	}
 }
 
@@ -179,6 +239,14 @@ void AVNHShopperCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 	DOREPLIFETIME(AVNHShopperCharacter, bPossessedByAlien);
 	DOREPLIFETIME(AVNHShopperCharacter, bActNaturalAvailable);
 	DOREPLIFETIME(AVNHShopperCharacter, bFrozenByPublicTest);
+	DOREPLIFETIME(AVNHShopperCharacter, Composure);
+	DOREPLIFETIME(AVNHShopperCharacter, ComposureState);
+	DOREPLIFETIME(AVNHShopperCharacter, InactivitySeconds);
+	DOREPLIFETIME(AVNHShopperCharacter, CurrentFartThreshold);
+	DOREPLIFETIME(AVNHShopperCharacter, FartCooldownRemaining);
+	DOREPLIFETIME(AVNHShopperCharacter, LastUniversalAction);
+	DOREPLIFETIME(AVNHShopperCharacter, HeldProp);
+	DOREPLIFETIME(AVNHShopperCharacter, CharacterCustomization);
 }
 
 void AVNHShopperCharacter::SetPossessedByAlien(bool bNewPossessedByAlien)
@@ -214,8 +282,408 @@ bool AVNHShopperCharacter::UseActNatural()
 	}
 
 	bActNaturalAvailable = false;
+	RegisterMeaningfulAction(EVNHUniversalAction::None, nullptr);
 	OnActNaturalUsed.Broadcast(RoutineComponent->ChooseActNaturalRecovery());
 	return true;
+}
+
+FText AVNHShopperCharacter::GetComposureStateText() const
+{
+	switch (ComposureState)
+	{
+	case EVNHComposureState::Calm:
+		return NSLOCTEXT("VNH", "ComposureCalm", "CALM");
+	case EVNHComposureState::Stable:
+		return NSLOCTEXT("VNH", "ComposureStable", "STABLE");
+	case EVNHComposureState::Nervous:
+		return NSLOCTEXT("VNH", "ComposureNervous", "NERVOUS");
+	case EVNHComposureState::Cracking:
+		return NSLOCTEXT("VNH", "ComposureCracking", "CRACKING");
+	case EVNHComposureState::Panic:
+	default:
+		return NSLOCTEXT("VNH", "ComposurePanic", "PANIC");
+	}
+}
+
+void AVNHShopperCharacter::ApplyComposureDelta(float Delta, FName Reason)
+{
+	if (!HasAuthority() || FMath::IsNearlyZero(Delta))
+	{
+		return;
+	}
+
+	const float PreviousComposure = Composure;
+	Composure = FMath::Clamp(Composure + Delta, 0.0f, 100.0f);
+	if (Delta < 0.0f)
+	{
+		LastSuspiciousEventTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	}
+
+	UpdateComposureState();
+	UE_LOG(LogVNH, Display, TEXT("Composure: %s %.1f -> %.1f (%s)"), *GetNameSafe(this), PreviousComposure, Composure, *Reason.ToString());
+}
+
+void AVNHShopperCharacter::RegisterMeaningfulAction(EVNHUniversalAction Action, AActor* Target)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	const bool bRepeatedSpam = Action != EVNHUniversalAction::None
+		&& Action == LastUniversalAction
+		&& Now - LastUniversalActionTime < 2.0f;
+	if (!bRepeatedSpam)
+	{
+		ResetInactivity();
+	}
+
+	if (Action == EVNHUniversalAction::Inspect)
+	{
+		if (Target && Target == LastInspectedActor.Get() && Now - LastInspectTime < 6.0f)
+		{
+			ApplyComposureDelta(-5.0f, TEXT("RepeatedInspect"));
+		}
+
+		LastInspectedActor = Target;
+		LastInspectTime = Now;
+	}
+
+	LastUniversalAction = Action;
+	LastUniversalActionTime = Now;
+}
+
+void AVNHShopperCharacter::SetHeldProp(AActor* NewHeldProp)
+{
+	if (HasAuthority())
+	{
+		HeldProp = NewHeldProp;
+	}
+}
+
+bool AVNHShopperCharacter::WasActionRepeatedRecently(EVNHUniversalAction Action, float WithinSeconds) const
+{
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	return Action != EVNHUniversalAction::None
+		&& LastUniversalAction == Action
+		&& Now - LastUniversalActionTime <= WithinSeconds;
+}
+
+void AVNHShopperCharacter::UpdateComposureSystem(float DeltaSeconds)
+{
+	const FVector CurrentLocation = GetActorLocation();
+	const FRotator CurrentControlRotation = GetControlRotation();
+	const float MeaningfulMoveDistance = FVector::Dist2D(CurrentLocation, LastMeaningfulLocation);
+	const float MeaningfulTurnDegrees = FMath::Abs(FMath::FindDeltaAngleDegrees(
+		LastMeaningfulControlRotation.Yaw,
+		CurrentControlRotation.Yaw))
+		+ FMath::Abs(FMath::FindDeltaAngleDegrees(
+			LastMeaningfulControlRotation.Pitch,
+			CurrentControlRotation.Pitch));
+
+	if (MeaningfulMoveDistance >= 45.0f || MeaningfulTurnDegrees >= 18.0f)
+	{
+		ResetInactivity();
+	}
+	else
+	{
+		InactivitySeconds += DeltaSeconds;
+	}
+
+	FartCooldownRemaining = FMath::Max(0.0f, FartCooldownRemaining - DeltaSeconds);
+
+	bool bHunterVeryClose = false;
+	const bool bWatchedByHunter = IsWatchedByHunter(bHunterVeryClose);
+	bWasWatchedByHunter = bWatchedByHunter;
+	TimeSinceHunterWatch = bWatchedByHunter ? 0.0f : TimeSinceHunterWatch + DeltaSeconds;
+
+	if (bWatchedByHunter)
+	{
+		ApplyComposureDelta(-4.0f * DeltaSeconds, TEXT("HunterStare"));
+	}
+	if (bHunterVeryClose)
+	{
+		ApplyComposureDelta(-2.0f * DeltaSeconds, TEXT("HunterProximity"));
+	}
+	if (IsNearSuspiciousObject())
+	{
+		ApplyComposureDelta(-3.0f * DeltaSeconds, TEXT("SuspiciousObjectProximity"));
+	}
+
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	if (!bWatchedByHunter && !bHunterVeryClose && GetVelocity().Size2D() > 15.0f && Now - LastSuspiciousEventTime > 3.0f)
+	{
+		ApplyComposureDelta(1.0f * DeltaSeconds, TEXT("ActiveRecovery"));
+	}
+
+	if (!bStandingStillPenaltyApplied && InactivitySeconds >= 8.0f)
+	{
+		bStandingStillPenaltyApplied = true;
+		ApplyComposureDelta(-5.0f, TEXT("StandingStill"));
+	}
+
+	if (InactivitySeconds >= CurrentFartThreshold && FartCooldownRemaining <= 0.0f)
+	{
+		TriggerFart();
+	}
+}
+
+void AVNHShopperCharacter::UpdateComposureState()
+{
+	EVNHComposureState NewState = EVNHComposureState::Panic;
+	float NewFartThreshold = 6.5f;
+	if (Composure >= 76.0f)
+	{
+		NewState = EVNHComposureState::Calm;
+		NewFartThreshold = 13.0f;
+	}
+	else if (Composure >= 51.0f)
+	{
+		NewState = EVNHComposureState::Stable;
+		NewFartThreshold = 11.0f;
+	}
+	else if (Composure >= 26.0f)
+	{
+		NewState = EVNHComposureState::Nervous;
+		NewFartThreshold = 9.0f;
+	}
+	else if (Composure >= 1.0f)
+	{
+		NewState = EVNHComposureState::Cracking;
+		NewFartThreshold = 7.5f;
+	}
+
+	const bool bStateChanged = ComposureState != NewState;
+	ComposureState = NewState;
+	CurrentFartThreshold = NewFartThreshold;
+	if (bStateChanged)
+	{
+		ApplyComposureVisualState();
+	}
+}
+
+void AVNHShopperCharacter::ResetInactivity()
+{
+	InactivitySeconds = 0.0f;
+	bStandingStillPenaltyApplied = false;
+	LastMeaningfulLocation = GetActorLocation();
+	LastMeaningfulControlRotation = GetControlRotation();
+}
+
+void AVNHShopperCharacter::TriggerFart()
+{
+	if (!HasAuthority() || FartCooldownRemaining > 0.0f)
+	{
+		return;
+	}
+
+	MulticastTriggerFart();
+	ApplyComposureDelta(-20.0f, TEXT("PublicFart"));
+	FartCooldownRemaining = 30.0f;
+	ResetInactivity();
+
+	for (TActorIterator<AVNHShopperCharacter> It(GetWorld()); It; ++It)
+	{
+		AVNHShopperCharacter* NearbyShopper = *It;
+		if (NearbyShopper && NearbyShopper != this && NearbyShopper->IsPlayerControlled()
+			&& FVector::DistSquared(NearbyShopper->GetActorLocation(), GetActorLocation()) <= FMath::Square(700.0f))
+		{
+			NearbyShopper->ApplyComposureDelta(-3.0f, TEXT("NearbyFart"));
+		}
+	}
+
+}
+
+bool AVNHShopperCharacter::IsWatchedByHunter(bool& bOutHunterVeryClose) const
+{
+	bOutHunterVeryClose = false;
+	if (!GetWorld())
+	{
+		return false;
+	}
+
+	bool bWatched = false;
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		const APlayerController* PlayerController = It->Get();
+		const AVNHPlayerState* HunterPlayerState = PlayerController ? PlayerController->GetPlayerState<AVNHPlayerState>() : nullptr;
+		if (!PlayerController || !HunterPlayerState || !HunterPlayerState->IsHunter() || PlayerController->GetPawn() == this)
+		{
+			continue;
+		}
+
+		FVector ViewLocation;
+		FRotator ViewRotation;
+		PlayerController->GetPlayerViewPoint(ViewLocation, ViewRotation);
+		const FVector TargetLocation = GetActorLocation() + FVector(0.0f, 0.0f, 55.0f);
+		const FVector ToTarget = TargetLocation - ViewLocation;
+		const float Distance = ToTarget.Size();
+		bOutHunterVeryClose |= Distance <= 250.0f;
+		if (Distance <= KINDA_SMALL_NUMBER || Distance > 2000.0f || FVector::DotProduct(ViewRotation.Vector(), ToTarget / Distance) < 0.965f)
+		{
+			continue;
+		}
+
+		FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(VNHHunterComposureTrace), false);
+		QueryParams.AddIgnoredActor(PlayerController->GetPawn());
+		FHitResult Hit;
+		const bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, ViewLocation, TargetLocation, ECC_Visibility, QueryParams);
+		if (!bHit || Hit.GetActor() == this)
+		{
+			bWatched = true;
+		}
+	}
+
+	return bWatched;
+}
+
+bool AVNHShopperCharacter::IsNearSuspiciousObject() const
+{
+	if (!GetWorld())
+	{
+		return false;
+	}
+
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		const AActor* Actor = *It;
+		if (Actor && Actor != HeldProp
+			&& (Actor->ActorHasTag(TEXT("VNH.Suspicious")) || Actor->GetClass()->GetName().Contains(TEXT("Suspicious")))
+			&& FVector::DistSquared(Actor->GetActorLocation(), GetActorLocation()) <= FMath::Square(180.0f))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void AVNHShopperCharacter::ApplyComposureVisualState()
+{
+	if (bFrozenByPublicTest)
+	{
+		return;
+	}
+
+	if (USkeletalMeshComponent* MeshComponent = GetMesh())
+	{
+		switch (ComposureState)
+		{
+		case EVNHComposureState::Calm:
+			MeshComponent->GlobalAnimRateScale = 1.0f;
+			break;
+		case EVNHComposureState::Stable:
+			MeshComponent->GlobalAnimRateScale = 1.03f;
+			break;
+		case EVNHComposureState::Nervous:
+			MeshComponent->GlobalAnimRateScale = 1.08f;
+			break;
+		case EVNHComposureState::Cracking:
+			MeshComponent->GlobalAnimRateScale = 1.14f;
+			break;
+		case EVNHComposureState::Panic:
+			MeshComponent->GlobalAnimRateScale = 1.22f;
+			break;
+		}
+	}
+}
+
+void AVNHShopperCharacter::MulticastTriggerFart_Implementation()
+{
+	const float SourceComposure = Composure;
+	const float PressureAlpha = 1.0f - FMath::Clamp(SourceComposure / 100.0f, 0.0f, 1.0f);
+	const float VolumeMultiplier = FMath::Lerp(CalmFartVolume, PanicFartVolume, PressureAlpha);
+	const float InnerRadius = FMath::Lerp(CalmFartInnerRadius, PanicFartInnerRadius, PressureAlpha);
+	const float FalloffDistance = FMath::Lerp(CalmFartFalloffDistance, PanicFartFalloffDistance, PressureAlpha);
+
+	USoundAttenuation* DynamicAttenuation = NewObject<USoundAttenuation>(this);
+	DynamicAttenuation->Attenuation.bAttenuate = true;
+	DynamicAttenuation->Attenuation.bSpatialize = true;
+	DynamicAttenuation->Attenuation.DistanceAlgorithm = EAttenuationDistanceModel::Logarithmic;
+	DynamicAttenuation->Attenuation.AttenuationShape = EAttenuationShape::Sphere;
+	DynamicAttenuation->Attenuation.AttenuationShapeExtents = FVector(InnerRadius, 0.0f, 0.0f);
+	DynamicAttenuation->Attenuation.FalloffDistance = FalloffDistance;
+
+	if (FartSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(
+			this,
+			FartSound,
+			GetActorLocation(),
+			FRotator::ZeroRotator,
+			VolumeMultiplier,
+			1.0f,
+			0.0f,
+			DynamicAttenuation,
+			nullptr,
+			this);
+	}
+	else
+	{
+		constexpr int32 SampleRate = 22050;
+		constexpr float DurationSeconds = 0.85f;
+		const int32 SampleCount = FMath::RoundToInt(SampleRate * DurationSeconds);
+		TArray<int16> Samples;
+		Samples.SetNumUninitialized(SampleCount);
+		FRandomStream RandomStream(GetUniqueID() + FMath::RoundToInt(GetWorld() ? GetWorld()->GetTimeSeconds() * 100.0f : 0.0f));
+		for (int32 Index = 0; Index < SampleCount; ++Index)
+		{
+			const float Time = static_cast<float>(Index) / SampleRate;
+			const float Alpha = static_cast<float>(Index) / SampleCount;
+			const float Envelope = FMath::Sin(PI * FMath::Clamp(Alpha, 0.0f, 1.0f)) * FMath::Square(1.0f - Alpha);
+			const float Frequency = FMath::Lerp(88.0f, 42.0f, Alpha);
+			const float Body = FMath::Sin(2.0f * PI * Frequency * Time + 0.7f * FMath::Sin(2.0f * PI * 7.0f * Time));
+			const float Noise = RandomStream.FRandRange(-1.0f, 1.0f) * 0.22f * (1.0f - Alpha);
+			Samples[Index] = static_cast<int16>(FMath::Clamp((Body * 0.78f + Noise) * Envelope, -1.0f, 1.0f) * 24000.0f);
+		}
+
+		USoundWaveProcedural* ProceduralFart = NewObject<USoundWaveProcedural>(this);
+		ProceduralFart->SetSampleRate(SampleRate);
+		ProceduralFart->NumChannels = 1;
+		ProceduralFart->Duration = DurationSeconds;
+		ProceduralFart->SoundGroup = SOUNDGROUP_Effects;
+		ProceduralFart->QueueAudio(reinterpret_cast<const uint8*>(Samples.GetData()), Samples.Num() * sizeof(int16));
+		UGameplayStatics::SpawnSoundAtLocation(
+			this,
+			ProceduralFart,
+			GetActorLocation(),
+			FRotator::ZeroRotator,
+			VolumeMultiplier,
+			1.0f,
+			0.0f,
+			DynamicAttenuation);
+	}
+
+	const FVector CloudCenter = GetActorLocation() + FVector(0.0f, 0.0f, 35.0f);
+	DrawDebugSphere(GetWorld(), CloudCenter + FVector(0.0f, -18.0f, 0.0f), 18.0f, 10, FColor(125, 180, 70), false, 2.0f, 0, 2.0f);
+	DrawDebugSphere(GetWorld(), CloudCenter + FVector(0.0f, 8.0f, 10.0f), 24.0f, 10, FColor(155, 195, 85), false, 2.0f, 0, 2.0f);
+	DrawDebugSphere(GetWorld(), CloudCenter + FVector(0.0f, 28.0f, 22.0f), 14.0f, 10, FColor(180, 205, 95), false, 2.0f, 0, 2.0f);
+	UE_LOG(LogVNH, Display, TEXT("FartEvent: %s broke composure in public. SourceComposure=%.1f Volume=%.2f InnerRadius=%.0f MaxDistance=%.0f"),
+		*GetNameSafe(this),
+		SourceComposure,
+		VolumeMultiplier,
+		InnerRadius,
+		InnerRadius + FalloffDistance);
+}
+
+void AVNHShopperCharacter::OnRep_Composure()
+{
+	ApplyComposureVisualState();
+}
+
+void AVNHShopperCharacter::OnRep_CharacterCustomization()
+{
+	ApplyCharacterCustomization();
+}
+
+void AVNHShopperCharacter::SetCharacterCustomization(const FVNHCharacterCustomization& NewCustomization)
+{
+	if (HasAuthority())
+	{
+		CharacterCustomization = NewCustomization;
+		ApplyCharacterCustomization();
+	}
 }
 
 void AVNHShopperCharacter::ApplyPublicTest(EVNHPublicTestType TestType)
@@ -462,7 +930,7 @@ void AVNHShopperCharacter::SetInteractionHighlightStencil(int32 StencilValue)
 	}
 }
 
-void AVNHShopperCharacter::ConfigureMannyVisuals()
+void AVNHShopperCharacter::ConfigureCreativeCharacterVisuals()
 {
 	USkeletalMeshComponent* MeshComponent = GetMesh();
 	if (!MeshComponent)
@@ -472,30 +940,102 @@ void AVNHShopperCharacter::ConfigureMannyVisuals()
 
 	if (!MeshComponent->GetSkeletalMeshAsset())
 	{
-		if (USkeletalMesh* MannyMesh = LoadObject<USkeletalMesh>(nullptr, MannyMeshPath))
+		if (USkeletalMesh* DefaultBodyMesh = LoadObject<USkeletalMesh>(nullptr, DefaultBodyMeshPath))
 		{
-			MeshComponent->SetSkeletalMesh(MannyMesh);
+			MeshComponent->SetSkeletalMesh(DefaultBodyMesh);
 		}
 	}
 
 	MeshComponent->SetRelativeLocation(FVector(0.0f, 0.0f, -88.0f));
 	MeshComponent->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
-	MeshComponent->SetAnimationMode(EAnimationMode::AnimationBlueprint);
 	MeshComponent->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 	MeshComponent->bEnableUpdateRateOptimizations = false;
 	MeshComponent->bPauseAnims = false;
 	MeshComponent->GlobalAnimRateScale = 1.0f;
 
-	if (!MeshComponent->GetAnimClass())
+	if (UClass* CreativeAnimClass = LoadClass<UAnimInstance>(nullptr, CreativeAnimClassPath))
 	{
-		if (UClass* MannyAnimClass = LoadClass<UAnimInstance>(nullptr, MannyAnimClassPath))
+		MeshComponent->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+		MeshComponent->SetAnimInstanceClass(CreativeAnimClass);
+	}
+	else if (!MeshComponent->GetAnimClass())
+	{
+		if (UAnimationAsset* IdleAnimation = LoadObject<UAnimationAsset>(nullptr, CreativeIdleAnimPath))
 		{
-			MeshComponent->SetAnimInstanceClass(MannyAnimClass);
+			MeshComponent->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+			MeshComponent->SetAnimation(IdleAnimation);
+			MeshComponent->Play(true);
 		}
 	}
 
 	if (DebugBodyMesh && MeshComponent->GetSkeletalMeshAsset())
 	{
 		DebugBodyMesh->SetHiddenInGame(true);
+	}
+}
+
+void AVNHShopperCharacter::ApplyCharacterCustomization()
+{
+	ConfigureCreativeCharacterVisuals();
+
+	USkeletalMeshComponent* BodyComponent = GetMesh();
+	if (!BodyComponent)
+	{
+		return;
+	}
+
+	ApplySlotMesh(BodyComponent, CharacterCustomization.BodyMesh);
+	ApplySlotMesh(HairMeshComponent, CharacterCustomization.HairMesh);
+	ApplySlotMesh(FaceMeshComponent, CharacterCustomization.FaceMesh, CharacterCustomization.bNoFace);
+	ApplySlotMesh(HatMeshComponent, CharacterCustomization.HatMesh);
+	ApplySlotMesh(MustacheMeshComponent, CharacterCustomization.MustacheMesh);
+	ApplySlotMesh(OutfitMeshComponent, CharacterCustomization.OutfitMesh);
+	ApplySlotMesh(OutwearMeshComponent, CharacterCustomization.OutwearMesh);
+	ApplySlotMesh(PantsMeshComponent, CharacterCustomization.PantsMesh);
+	ApplySlotMesh(ShoesMeshComponent, CharacterCustomization.ShoesMesh);
+	ApplySlotMesh(AccessoryMeshComponent, CharacterCustomization.AccessoryMesh);
+
+	ApplyColorToMesh(BodyComponent, CharacterCustomization.BodyColor);
+	ApplyColorToMesh(HairMeshComponent, CharacterCustomization.HairColor);
+	ApplyColorToMesh(OutfitMeshComponent, CharacterCustomization.OutfitColor);
+	ApplyColorToMesh(OutwearMeshComponent, CharacterCustomization.OutfitColor);
+}
+
+void AVNHShopperCharacter::ApplySlotMesh(USkeletalMeshComponent* SlotComponent, const TSoftObjectPtr<USkeletalMesh>& MeshAsset, bool bHideSlot)
+{
+	if (!SlotComponent)
+	{
+		return;
+	}
+
+	USkeletalMesh* LoadedMesh = MeshAsset.IsNull() ? nullptr : MeshAsset.LoadSynchronous();
+	SlotComponent->SetSkeletalMesh(LoadedMesh);
+	SlotComponent->SetHiddenInGame(bHideSlot || LoadedMesh == nullptr);
+	SlotComponent->SetVisibility(!bHideSlot && LoadedMesh != nullptr, true);
+	if (LoadedMesh && SlotComponent != GetMesh())
+	{
+		SlotComponent->SetLeaderPoseComponent(GetMesh());
+	}
+}
+
+void AVNHShopperCharacter::ApplyColorToMesh(USkeletalMeshComponent* MeshComponent, const FLinearColor& Color)
+{
+	if (!MeshComponent || !MeshComponent->GetSkeletalMeshAsset())
+	{
+		return;
+	}
+
+	const int32 MaterialCount = MeshComponent->GetNumMaterials();
+	for (int32 MaterialIndex = 0; MaterialIndex < MaterialCount; ++MaterialIndex)
+	{
+		UMaterialInstanceDynamic* DynamicMaterial = MeshComponent->CreateAndSetMaterialInstanceDynamic(MaterialIndex);
+		if (!DynamicMaterial)
+		{
+			continue;
+		}
+
+		DynamicMaterial->SetVectorParameterValue(TEXT("Color"), Color);
+		DynamicMaterial->SetVectorParameterValue(TEXT("BaseColor"), Color);
+		DynamicMaterial->SetVectorParameterValue(TEXT("Tint"), Color);
 	}
 }

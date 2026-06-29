@@ -67,8 +67,10 @@ private:
 	FTimerHandle PhaseTimerHandle;
 	bool bStartRoundWhenPlayersReady = false;
 
+	void ConfigureRuntimeClasses();
 	AVNHGameState* GetVNHGameState() const;
 	void EnsureLobbyRuntimeActors();
+	void EnsureMvpInteractionProps();
 	void AssignRoles();
 	void EnterPhase(EVNHRoundPhase NewPhase, float DurationSeconds);
 	int32 CountConnectedPlayers() const;

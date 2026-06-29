@@ -8,8 +8,10 @@
 
 class UVNHAlienLocomotionComponent;
 class UCameraComponent;
+class USoundBase;
 class USpringArmComponent;
 class UStaticMeshComponent;
+class USkeletalMeshComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FVNHActNaturalUsed, EVNHActNaturalRecovery, Recovery);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FVNHPublicTestReceived, EVNHPublicTestType, TestType);
@@ -23,6 +25,7 @@ public:
 	AVNHShopperCharacter();
 
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaSeconds) override;
 	virtual void PossessedBy(AController* NewController) override;
 	virtual void UnPossessed() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
@@ -72,8 +75,53 @@ public:
 	UFUNCTION(BlueprintPure, Category = "VNH|Shopper|Interaction")
 	FString BuildQuestionResponse() const;
 
+	UFUNCTION(BlueprintPure, Category = "VNH|Composure")
+	float GetComposure() const { return Composure; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Composure")
+	EVNHComposureState GetComposureState() const { return ComposureState; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Composure")
+	FText GetComposureStateText() const;
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Composure")
+	float GetInactivitySeconds() const { return InactivitySeconds; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Composure")
+	float GetCurrentFartThreshold() const { return CurrentFartThreshold; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Composure")
+	float GetFartCooldownRemaining() const { return FartCooldownRemaining; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Interaction")
+	EVNHUniversalAction GetLastUniversalAction() const { return LastUniversalAction; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Interaction")
+	AActor* GetHeldProp() const { return HeldProp; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Composure")
+	bool IsBeingWatchedByHunter() const { return bWasWatchedByHunter; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Interaction")
+	bool WasActionRepeatedRecently(EVNHUniversalAction Action, float WithinSeconds = 2.0f) const;
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Composure")
+	void ApplyComposureDelta(float Delta, FName Reason);
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Interaction")
+	void RegisterMeaningfulAction(EVNHUniversalAction Action, AActor* Target);
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Interaction")
+	void SetHeldProp(AActor* NewHeldProp);
+
 	UFUNCTION(BlueprintPure, Category = "VNH|Shopper|Debug")
 	FString DescribeAnimationDebugState() const;
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Customization")
+	void SetCharacterCustomization(const FVNHCharacterCustomization& NewCustomization);
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Customization")
+	FVNHCharacterCustomization GetCharacterCustomization() const { return CharacterCustomization; }
 
 	UFUNCTION(BlueprintCallable, Category = "VNH|Shopper|Interaction")
 	void SetInteractionHighlighted(bool bHighlighted);
@@ -106,6 +154,33 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Shopper", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UStaticMeshComponent> DebugBodyMesh;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Customization", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USkeletalMeshComponent> HairMeshComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Customization", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USkeletalMeshComponent> FaceMeshComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Customization", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USkeletalMeshComponent> HatMeshComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Customization", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USkeletalMeshComponent> MustacheMeshComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Customization", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USkeletalMeshComponent> OutfitMeshComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Customization", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USkeletalMeshComponent> OutwearMeshComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Customization", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USkeletalMeshComponent> PantsMeshComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Customization", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USkeletalMeshComponent> ShoesMeshComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Customization", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USkeletalMeshComponent> AccessoryMeshComponent;
+
 	UPROPERTY(ReplicatedUsing = OnRep_PossessedByAlien, BlueprintReadOnly, Category = "VNH|Shopper", meta = (AllowPrivateAccess = "true"))
 	bool bPossessedByAlien = false;
 
@@ -115,15 +190,51 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Shopper|Public Tests", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
 	float FreezeTestHoldSeconds = 4.0f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Composure", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USoundBase> FartSound;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Shopper|AI", meta = (AllowPrivateAccess = "true", AllowedClasses = "/Script/StateTreeModule.StateTree"))
 	TSoftObjectPtr<UObject> ShopperStateTree = TSoftObjectPtr<UObject>(FSoftObjectPath(TEXT("/Game/AI/ST_Shoppers.ST_Shoppers")));
 
 	UPROPERTY(ReplicatedUsing = OnRep_FrozenByPublicTest, BlueprintReadOnly, Category = "VNH|Shopper|Public Tests", meta = (AllowPrivateAccess = "true"))
 	bool bFrozenByPublicTest = false;
 
+	UPROPERTY(ReplicatedUsing = OnRep_Composure, BlueprintReadOnly, Category = "VNH|Composure", meta = (AllowPrivateAccess = "true"))
+	float Composure = 100.0f;
+
+	UPROPERTY(ReplicatedUsing = OnRep_Composure, BlueprintReadOnly, Category = "VNH|Composure", meta = (AllowPrivateAccess = "true"))
+	EVNHComposureState ComposureState = EVNHComposureState::Calm;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Composure", meta = (AllowPrivateAccess = "true"))
+	float InactivitySeconds = 0.0f;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Composure", meta = (AllowPrivateAccess = "true"))
+	float CurrentFartThreshold = 13.0f;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Composure", meta = (AllowPrivateAccess = "true"))
+	float FartCooldownRemaining = 0.0f;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Interaction", meta = (AllowPrivateAccess = "true"))
+	EVNHUniversalAction LastUniversalAction = EVNHUniversalAction::None;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Interaction", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<AActor> HeldProp = nullptr;
+
+	UPROPERTY(ReplicatedUsing = OnRep_CharacterCustomization, BlueprintReadOnly, Category = "VNH|Customization", meta = (AllowPrivateAccess = "true"))
+	FVNHCharacterCustomization CharacterCustomization;
+
 	FTimerHandle FreezeTestTimerHandle;
 	FTimerHandle PublicTestReactionTimerHandle;
 	bool bFirstPersonViewEnabled = false;
+	bool bStandingStillPenaltyApplied = false;
+	bool bWasWatchedByHunter = false;
+	float TimeSinceHunterWatch = 0.0f;
+	float LastSuspiciousEventTime = -100.0f;
+	float LastUniversalActionTime = -100.0f;
+	float LastInspectTime = -100.0f;
+	FVector LastMeaningfulLocation = FVector::ZeroVector;
+	FRotator LastMeaningfulControlRotation = FRotator::ZeroRotator;
+	TWeakObjectPtr<AActor> LastInspectedActor;
 
 	UFUNCTION()
 	void OnRep_PossessedByAlien();
@@ -131,11 +242,30 @@ private:
 	UFUNCTION()
 	void OnRep_FrozenByPublicTest();
 
+	UFUNCTION()
+	void OnRep_Composure();
+
+	UFUNCTION()
+	void OnRep_CharacterCustomization();
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastTriggerFart();
+
 	void SetFrozenByPublicTest(bool bNewFrozen);
+	void UpdateComposureSystem(float DeltaSeconds);
+	void UpdateComposureState();
+	void ResetInactivity();
+	void TriggerFart();
+	bool IsWatchedByHunter(bool& bOutHunterVeryClose) const;
+	bool IsNearSuspiciousObject() const;
+	void ApplyComposureVisualState();
 	void ClearPublicTestFreeze();
 	void ApplyFrozenVisualState();
 	void ApplyLookToEntranceReaction();
 	void ApplyClearAisleReaction();
 	void ResumeRoutineMovement();
-	void ConfigureMannyVisuals();
+	void ConfigureCreativeCharacterVisuals();
+	void ApplyCharacterCustomization();
+	void ApplySlotMesh(USkeletalMeshComponent* SlotComponent, const TSoftObjectPtr<USkeletalMesh>& MeshAsset, bool bHideSlot = false);
+	void ApplyColorToMesh(USkeletalMeshComponent* MeshComponent, const FLinearColor& Color);
 };

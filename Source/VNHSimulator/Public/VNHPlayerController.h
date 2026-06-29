@@ -9,6 +9,7 @@ class UInputAction;
 class UInputMappingContext;
 class UMaterialInterface;
 class UPostProcessComponent;
+class UProgressBar;
 class UTextBlock;
 class UUserWidget;
 class UWidget;
@@ -67,6 +68,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Interaction")
 	void CancelTargetSelection();
 
+	UFUNCTION(BlueprintCallable, Category = "VNH|Interaction")
+	void RequestUniversalAction(EVNHUniversalAction Action);
+
 	UFUNCTION(BlueprintCallable, Category = "VNH|Hunter")
 	void RequestPublicTest(EVNHPublicTestType TestType);
 
@@ -94,6 +98,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Lobby")
 	void RequestStartRoundFromLobby();
 
+	UFUNCTION(BlueprintCallable, Category = "VNH|Customization")
+	void ApplySavedCharacterCustomization();
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Customization")
+	void OpenCharacterCustomizerFromMainMenu();
+
 	UFUNCTION(BlueprintCallable, Category = "VNH|Debug")
 	void RequestDebugPossessShopper(int32 ShopperIndex, EVNHPlayerRole ForcedRole);
 
@@ -116,16 +126,25 @@ public:
 	void ServerRequestStartRoundFromLobby();
 
 	UFUNCTION(Server, Reliable)
+	void ServerSetCharacterCustomization(const FVNHCharacterCustomization& Customization);
+
+	UFUNCTION(Server, Reliable)
 	void ServerDebugPossessShopper(int32 ShopperIndex, EVNHPlayerRole ForcedRole);
 
 	UFUNCTION(Server, Reliable)
 	void ServerRequestActNatural();
+
+	UFUNCTION(Server, Reliable)
+	void ServerPerformUniversalAction(EVNHUniversalAction Action, AActor* Target);
 
 	UFUNCTION(Client, Reliable)
 	void ClientReceiveInteractionText(const FString& InteractionText);
 
 	UFUNCTION(Client, Reliable)
 	void ClientShowLobbyMenu();
+
+	UFUNCTION()
+	void HandleLobbyCustomizeClicked();
 
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Input|Alien")
@@ -160,6 +179,11 @@ private:
 	void HandleTurnAxis(float Value);
 	void HandleLookUpAxis(float Value);
 	void HandleTargetFocusPressed();
+	void HandleInspectPressed();
+	void HandlePointPressed();
+	void HandleWavePressed();
+	void HandlePickUpPressed();
+	void HandleDropPressed();
 	void HandleInteractPressed();
 	void HandleQuickChatPressed();
 	void HandleQuickChatLookingForShirtPressed();
@@ -171,8 +195,10 @@ private:
 	void ShowLobbyMenu();
 	void EnsureTargetOutlinePostProcess();
 	void EnsureMarkedSuspectsWidget();
+	void EnsureComposureWidget();
 	void UpdateDebugDeckRuntimeLabels(float DeltaTime);
 	void UpdateMarkedSuspectsWidgetRuntimeLabels(float DeltaTime);
+	void UpdateComposureWidgetRuntimeLabels(float DeltaTime);
 	void UpdateMarkedSuspectsForRound();
 	void RegisterGameplayHardwareCursors();
 	void UpdateGameplayCursor();
@@ -187,6 +213,10 @@ private:
 	bool IsShopperMarked(const AVNHShopperCharacter* Shopper) const;
 	void RefreshShopperOutline(AVNHShopperCharacter* Shopper, bool bHovered) const;
 	void ClearMarkedSuspectsForNewRound();
+	AActor* GetUniversalActionTarget(EVNHUniversalAction Action) const;
+	void SetInteractableOutline(AActor* Actor, bool bEnabled) const;
+	void PerformPickUp(AVNHShopperCharacter* Shopper, AActor* Prop);
+	void PerformDrop(AVNHShopperCharacter* Shopper);
 
 	bool bAlienInputMappingApplied = false;
 	FVector2D LegacyAlienMoveInput = FVector2D::ZeroVector;
@@ -220,6 +250,7 @@ private:
 
 	TWeakObjectPtr<AVNHShopperCharacter> FocusedShopper;
 	TWeakObjectPtr<AVNHLobbyPlayButton> FocusedLobbyPlayButton;
+	TWeakObjectPtr<AActor> FocusedInteractable;
 	TWeakObjectPtr<AVNHShopperCharacter> TargetedShopper;
 	TWeakObjectPtr<UTextBlock> RoundStatusTextBlock;
 	TWeakObjectPtr<UTextBlock> InteractionTextBlock;
@@ -233,10 +264,18 @@ private:
 	TWeakObjectPtr<UUserWidget> MarkedSuspectsWidget;
 	TWeakObjectPtr<UTextBlock> MarkedSuspectsListTextBlock;
 	TWeakObjectPtr<UWidget> MarkedSuspectsPanelWidget;
+	TWeakObjectPtr<UUserWidget> ComposureWidget;
+	TWeakObjectPtr<UWidget> ComposurePanelWidget;
+	TWeakObjectPtr<UTextBlock> ComposureStateTextBlock;
+	TWeakObjectPtr<UTextBlock> ComposureValueTextBlock;
+	TWeakObjectPtr<UTextBlock> FartRiskTextBlock;
+	TWeakObjectPtr<UTextBlock> UniversalActionTextBlock;
+	TWeakObjectPtr<UProgressBar> ComposureProgressBar;
 	FString LastInteractionText;
 	float LastInteractionTimeSeconds = -100.0f;
 	float TimeUntilDebugDeckLabelLookup = 0.0f;
 	float TimeUntilMarkedWidgetLookup = 0.0f;
+	float TimeUntilComposureWidgetLookup = 0.0f;
 	int32 LastMarkedRoundNumber = INDEX_NONE;
 	TWeakObjectPtr<UUserWidget> LobbyMenuWidget;
 };

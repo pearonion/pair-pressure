@@ -3,7 +3,9 @@
 #include "Components/Button.h"
 #include "Components/EditableTextBox.h"
 #include "Components/TextBlock.h"
+#include "GameFramework/PlayerController.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "VNHLog.h"
 #include "VNHGameInstance.h"
 
 void UVNHMainMenuWidget::NativeConstruct()
@@ -28,6 +30,28 @@ void UVNHMainMenuWidget::NativeConstruct()
 	if (QuitButton)
 	{
 		QuitButton->OnClicked.AddUniqueDynamic(this, &UVNHMainMenuWidget::HandleQuitClicked);
+	}
+
+	if (CharacterCustomizerButton)
+	{
+		CharacterCustomizerButton->OnClicked.AddUniqueDynamic(this, &UVNHMainMenuWidget::HandleCharacterCustomizerClicked);
+		UE_LOG(LogVNH, Display, TEXT("MainMenu: CharacterCustomizerButton native bind ready."));
+	}
+	else
+	{
+		UE_LOG(LogVNH, Warning, TEXT("MainMenu: CharacterCustomizerButton was not found for native bind."));
+	}
+
+	if (APlayerController* PlayerController = GetOwningPlayer())
+	{
+		PlayerController->bShowMouseCursor = true;
+		PlayerController->bEnableClickEvents = true;
+		PlayerController->bEnableMouseOverEvents = true;
+
+		FInputModeUIOnly InputMode;
+		InputMode.SetWidgetToFocus(TakeWidget());
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		PlayerController->SetInputMode(InputMode);
 	}
 
 	RefreshStatusText();
@@ -75,6 +99,19 @@ void UVNHMainMenuWidget::HandleJoinClicked()
 void UVNHMainMenuWidget::HandleQuitClicked()
 {
 	UKismetSystemLibrary::QuitGame(this, GetOwningPlayer(), EQuitPreference::Quit, false);
+}
+
+void UVNHMainMenuWidget::HandleCharacterCustomizerClicked()
+{
+	UE_LOG(LogVNH, Display, TEXT("MainMenu: CharacterCustomizerButton clicked."));
+	if (UVNHGameInstance* VNHGameInstance = GetVNHGameInstance())
+	{
+		VNHGameInstance->ShowCharacterCustomizer(false);
+	}
+	else
+	{
+		UE_LOG(LogVNH, Warning, TEXT("MainMenu: cannot open customizer because VNHGameInstance is missing."));
+	}
 }
 
 UVNHGameInstance* UVNHMainMenuWidget::GetVNHGameInstance() const

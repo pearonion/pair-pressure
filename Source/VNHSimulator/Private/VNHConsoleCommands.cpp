@@ -5,6 +5,7 @@
 #include "GameFramework/PlayerController.h"
 #include "HAL/IConsoleManager.h"
 #include "VNHAlienLocomotionComponent.h"
+#include "VNHGameInstance.h"
 #include "VNHGameplayTypes.h"
 #include "VNHLog.h"
 #include "VNHPlayerController.h"
@@ -137,6 +138,22 @@ FAutoConsoleCommandWithWorld VNHSkipPhaseCommand(
 		else
 		{
 			UE_LOG(LogVNH, Warning, TEXT("vnh.SkipPhase failed: no VNH auth game mode in current world."));
+		}
+	}));
+
+FAutoConsoleCommandWithWorld VNHOpenCustomizerCommand(
+	TEXT("vnh.OpenCustomizer"),
+	TEXT("Debug: open the character customizer over the current screen."),
+	FConsoleCommandWithWorldDelegate::CreateStatic([](UWorld* World)
+	{
+		if (UVNHGameInstance* GameInstance = World ? World->GetGameInstance<UVNHGameInstance>() : nullptr)
+		{
+			GameInstance->ShowCharacterCustomizer(false);
+			UE_LOG(LogVNH, Display, TEXT("vnh.OpenCustomizer: opened character customizer."));
+		}
+		else
+		{
+			UE_LOG(LogVNH, Warning, TEXT("vnh.OpenCustomizer failed: no VNH game instance."));
 		}
 	}));
 

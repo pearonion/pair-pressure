@@ -34,6 +34,9 @@ protected:
 	TObjectPtr<UButton> QuitButton;
 
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
+	TObjectPtr<UButton> CharacterCustomizerButton;
+
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
 	TObjectPtr<UEditableTextBox> JoinAddressTextBox;
 
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
@@ -51,6 +54,9 @@ private:
 
 	UFUNCTION()
 	void HandleQuitClicked();
+
+	UFUNCTION()
+	void HandleCharacterCustomizerClicked();
 
 	UVNHGameInstance* GetVNHGameInstance() const;
 	void SetStatus(const FText& StatusText);
