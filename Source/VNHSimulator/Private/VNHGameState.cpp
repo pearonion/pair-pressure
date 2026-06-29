@@ -86,6 +86,14 @@ void AVNHGameState::SetAccusationsRemaining(int32 NewAccusationsRemaining)
 	}
 }
 
+void AVNHGameState::SetQuestionsRemaining(int32 NewQuestionsRemaining)
+{
+	if (HasAuthority())
+	{
+		DirectQuestionsRemaining = FMath::Max(0, NewQuestionsRemaining);
+	}
+}
+
 void AVNHGameState::SetActivePublicTest(EVNHPublicTestType NewActivePublicTest)
 {
 	if (HasAuthority())
@@ -129,23 +137,24 @@ FText AVNHGameState::GetRevealSummaryText() const
 {
 	if (!AccusationResult.bResolved)
 	{
-		return NSLOCTEXT("VNH", "RevealPending", "No accusation resolved yet.");
+		const FString AlienName = GetNameSafe(PossessedShopper);
+		return FText::FromString(FString::Printf(TEXT("Alien wins by staying normal. The hidden Alien was %s."), *AlienName));
 	}
 
 	const FString AccusedName = GetNameSafe(AccusationResult.AccusedActor);
 	const FString AlienName = GetNameSafe(PossessedShopper);
 	if (AccusationResult.bCorrect)
 	{
-		return FText::FromString(FString::Printf(TEXT("Correct accusation. %s was the Alien."), *AccusedName));
+		return FText::FromString(FString::Printf(TEXT("Hunter wins. %s was the Alien and got caught acting human."), *AccusedName));
 	}
 
-	return FText::FromString(FString::Printf(TEXT("Wrong accusation. %s was accused, but the Alien was %s."), *AccusedName, *AlienName));
+	return FText::FromString(FString::Printf(TEXT("Alien wins. Wrongfully accused: %s. The actual Alien was %s."), *AccusedName, *AlienName));
 }
 
 FText AVNHGameState::GetHunterToolsText() const
 {
 	return FText::FromString(FString::Printf(
-		TEXT("Commands %d/2  |  Question %d/1  |  Accuse %d/1"),
+		TEXT("Commands %d/2  |  Questions %d/3  |  Accuse %d/1"),
 		TestsRemaining,
 		DirectQuestionsRemaining,
 		AccusationsRemaining));

@@ -67,10 +67,14 @@ void UVNHGameInstance::HideMainMenu()
 
 	if (APlayerController* PlayerController = GetFirstLocalPlayerController())
 	{
-		PlayerController->bShowMouseCursor = false;
-		PlayerController->bEnableClickEvents = false;
-		PlayerController->bEnableMouseOverEvents = false;
-		PlayerController->SetInputMode(FInputModeGameOnly());
+		PlayerController->bShowMouseCursor = true;
+		PlayerController->bEnableClickEvents = true;
+		PlayerController->bEnableMouseOverEvents = true;
+
+		FInputModeGameAndUI InputMode;
+		InputMode.SetHideCursorDuringCapture(false);
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		PlayerController->SetInputMode(InputMode);
 	}
 }
 

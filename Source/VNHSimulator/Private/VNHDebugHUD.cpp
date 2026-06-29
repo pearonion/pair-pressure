@@ -11,6 +11,7 @@
 #include "VNHGameState.h"
 #include "VNHPlayerController.h"
 #include "VNHPlayerState.h"
+#include "VNHShopperCharacter.h"
 
 AVNHDebugHUD::AVNHDebugHUD()
 {
@@ -43,7 +44,10 @@ void AVNHDebugHUD::DrawHUD()
 	}
 
 	DrawRolePhaseOverlay();
+	DrawTargetActionRadial();
 
+	// The polished UMG deck owns all runtime HUD now. Keep this HUD class only
+	// for input-mode/toggle compatibility and old console-button hitbox plumbing.
 	if (!bDrawLegacyCanvasHud)
 	{
 		return;
@@ -175,8 +179,8 @@ TArray<AVNHDebugHUD::FDebugButton> AVNHDebugHUD::BuildButtons() const
 	return {
 		{TEXT("StartRound"), TEXT("Start Round"), TEXT("vnh.StartRound")},
 		{TEXT("StartRoutines"), TEXT("Kick NPC Routines"), TEXT("vnh.StartRoutines")},
-		{TEXT("Possess0"), TEXT("Possess 0"), TEXT("vnh.PossessHuman 0")},
-		{TEXT("Possess1"), TEXT("Possess 1"), TEXT("vnh.PossessHuman 1")},
+		{TEXT("PossessAlien0"), TEXT("Alien 0"), TEXT("vnh.PossessHuman 0 Alien")},
+		{TEXT("PossessHunter1"), TEXT("Hunter Test"), TEXT("vnh.PossessHuman 1 Hunter")},
 		{TEXT("Freeze"), TEXT("Freeze Test"), TEXT("vnh.TriggerTest Freeze")},
 		{TEXT("LookEntrance"), TEXT("Look Here"), TEXT("vnh.TriggerTest LookHere")},
 		{TEXT("ClearAisle"), TEXT("Clear Aisle"), TEXT("vnh.TriggerTest ClearAisle")},
@@ -313,6 +317,76 @@ void AVNHDebugHUD::DrawPolishedButton(const FDebugButton& Button, const FVector2
 	DrawDebugText(Button.Label, TextColor, DrawPosition.X + 14.0f + PressAmount * 2.0f, DrawPosition.Y + 4.0f + PressAmount * 2.0f, 1.22f + HoverAmount * 0.08f);
 }
 
+void AVNHDebugHUD::DrawTargetActionRadial()
+{
+	AVNHPlayerController* VNHPlayerController = Cast<AVNHPlayerController>(GetOwningPlayerController());
+	const AVNHShopperCharacter* Target = VNHPlayerController ? VNHPlayerController->GetTargetedShopper() : nullptr;
+	if (!Canvas || !VNHPlayerController || !VNHPlayerController->IsAssignedHunter())
+	{
+		return;
+	}
+
+	if (!Target)
+	{
+		return;
+	}
+
+	FVector2D TargetScreenPosition;
+	if (!VNHPlayerController->ProjectWorldLocationToScreen(Target->GetActorLocation() + FVector(0.0f, 0.0f, 72.0f), TargetScreenPosition))
+	{
+		return;
+	}
+
+	const FVector2D Center(
+		FMath::Clamp(TargetScreenPosition.X + 210.0f, 170.0f, Canvas->ClipX - 170.0f),
+		FMath::Clamp(TargetScreenPosition.Y, 150.0f, Canvas->ClipY - 150.0f));
+
+	struct FActionBubble
+	{
+		const TCHAR* Key;
+		const TCHAR* Label;
+		const TCHAR* SubLabel;
+		FVector2D Offset;
+		FLinearColor Accent;
+	};
+
+	const FActionBubble Actions[] = {
+		{TEXT("E"), TEXT("Ask"), TEXT("Direct Question"), FVector2D(0.0f, -86.0f), FLinearColor(0.0f, 0.78f, 1.0f, 1.0f)},
+		{TEXT("R"), TEXT("Mark"), TEXT("Suspect"), FVector2D(98.0f, -8.0f), FLinearColor(1.0f, 0.82f, 0.05f, 1.0f)},
+		{TEXT("F"), TEXT("Fake"), TEXT("Pressure"), FVector2D(0.0f, 78.0f), FLinearColor(0.78f, 0.42f, 1.0f, 1.0f)},
+		{TEXT("X"), TEXT("Accuse"), TEXT("Commit"), FVector2D(-112.0f, -8.0f), FLinearColor(1.0f, 0.32f, 0.16f, 1.0f)}
+	};
+
+	DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.38f), Center.X - 56.0f, Center.Y - 56.0f, 112.0f, 112.0f);
+	DrawRect(FLinearColor(0.02f, 0.03f, 0.045f, 0.88f), Center.X - 48.0f, Center.Y - 48.0f, 96.0f, 96.0f);
+	DrawRect(FLinearColor(1.0f, 1.0f, 1.0f, 0.08f), Center.X - 38.0f, Center.Y - 1.0f, 76.0f, 2.0f);
+	DrawRect(FLinearColor(1.0f, 1.0f, 1.0f, 0.08f), Center.X - 1.0f, Center.Y - 38.0f, 2.0f, 76.0f);
+	DrawDebugText(TEXT("TARGET"), FLinearColor::White, Center.X - 34.0f, Center.Y - 13.0f, 0.78f);
+
+	for (const FActionBubble& Action : Actions)
+	{
+		const FVector2D BubbleCenter = Center + Action.Offset;
+		constexpr float KeySize = 52.0f;
+		constexpr float LabelW = 146.0f;
+		constexpr float LabelH = 42.0f;
+
+		DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.5f), BubbleCenter.X - KeySize * 0.5f + 4.0f, BubbleCenter.Y - KeySize * 0.5f + 5.0f, KeySize, KeySize);
+		DrawRect(FLinearColor(0.94f, 0.96f, 0.98f, 0.98f), BubbleCenter.X - KeySize * 0.5f, BubbleCenter.Y - KeySize * 0.5f, KeySize, KeySize);
+		DrawRect(Action.Accent, BubbleCenter.X - KeySize * 0.5f, BubbleCenter.Y - KeySize * 0.5f, 6.0f, KeySize);
+		DrawDebugText(Action.Key, FLinearColor(0.02f, 0.025f, 0.035f, 1.0f), BubbleCenter.X - 11.0f, BubbleCenter.Y - 18.0f, 1.5f);
+
+		const float LabelX = BubbleCenter.X + 34.0f;
+		const float LabelY = BubbleCenter.Y - LabelH * 0.5f;
+		DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.42f), LabelX + 4.0f, LabelY + 5.0f, LabelW, LabelH);
+		DrawRect(FLinearColor(0.02f, 0.03f, 0.045f, 0.92f), LabelX, LabelY, LabelW, LabelH);
+		DrawRect(Action.Accent, LabelX, LabelY, 5.0f, LabelH);
+		DrawDebugText(Action.Label, FLinearColor::White, LabelX + 12.0f, LabelY + 2.0f, 1.16f);
+		DrawDebugText(Action.SubLabel, FLinearColor(0.78f, 0.88f, 1.0f, 1.0f), LabelX + 12.0f, LabelY + 23.0f, 0.72f);
+	}
+
+	DrawDebugText(TEXT("LMB Cancel"), FLinearColor(0.86f, 0.92f, 1.0f, 1.0f), Center.X - 42.0f, Center.Y + 58.0f, 0.82f);
+}
+
 void AVNHDebugHUD::DrawSection15Panel(float X, float Y, float W, float H, const FLinearColor& AccentColor, float Alpha)
 {
 	DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.56f), X + 7.0f, Y + 8.0f, W, H);
@@ -331,7 +405,6 @@ void AVNHDebugHUD::DrawInteractionPanel()
 	}
 
 	const FString PromptText = VNHPlayerController->GetInteractionPromptText();
-	const FString MarkedText = VNHPlayerController->GetMarkedSuspectsText();
 	if (!PromptText.IsEmpty())
 	{
 		const float PromptW = 420.0f;
@@ -342,18 +415,6 @@ void AVNHDebugHUD::DrawInteractionPanel()
 		DrawRect(FLinearColor(0.05f, 0.09f, 0.15f, 0.92f), PromptX, PromptY, PromptW, PromptH);
 		DrawRect(FLinearColor(1.0f, 0.82f, 0.05f, 1.0f), PromptX, PromptY, 6.0f, PromptH);
 		DrawDebugText(PromptText, FLinearColor::White, PromptX + 14.0f, PromptY + 7.0f, 1.32f);
-	}
-
-	if (!MarkedText.IsEmpty())
-	{
-		const float MarkedW = FMath::Min(520.0f, Canvas->ClipX - 32.0f);
-		const float MarkedH = 34.0f;
-		const float MarkedX = (Canvas->ClipX - MarkedW) * 0.5f;
-		const float MarkedY = Canvas->ClipY - 138.0f;
-		DrawRect(FLinearColor(0.005f, 0.008f, 0.015f, 0.58f), MarkedX + 5.0f, MarkedY + 5.0f, MarkedW, MarkedH);
-		DrawRect(FLinearColor(0.025f, 0.045f, 0.075f, 0.86f), MarkedX, MarkedY, MarkedW, MarkedH);
-		DrawRect(FLinearColor(0.0f, 0.78f, 1.0f, 1.0f), MarkedX, MarkedY, 6.0f, MarkedH);
-		DrawDebugText(MarkedText, FLinearColor(0.8f, 0.92f, 1.0f, 1.0f), MarkedX + 14.0f, MarkedY + 6.0f, 1.17f);
 	}
 
 	const FString InteractionText = VNHPlayerController->GetLastInteractionText();
@@ -480,7 +541,7 @@ void AVNHDebugHUD::DrawRoleGameplayHUD(const AVNHGameState* VNHGameState, const 
 
 	if (VNHPlayerState && VNHPlayerState->IsHunter())
 	{
-		DrawDebugText(VNHGameState ? VNHGameState->GetHunterToolsText().ToString() : TEXT("Commands 0/2 | Question 0/1 | Accuse 0/1"), Accent, PanelX + 18.0f, PanelY + 82.0f, 1.05f);
+		DrawDebugText(VNHGameState ? VNHGameState->GetHunterToolsText().ToString() : TEXT("Commands 0/2 | Questions 0/3 | Accuse 0/1"), Accent, PanelX + 18.0f, PanelY + 82.0f, 1.05f);
 		DrawDebugText(TEXT("Mark suspects, then confirm one accusation."), FLinearColor::White, PanelX + 18.0f, PanelY + 108.0f, 0.92f);
 		return;
 	}
@@ -526,10 +587,21 @@ void AVNHDebugHUD::DrawRevealScreen(const AVNHGameState* VNHGameState)
 	DrawSection15Panel(OverlayX, OverlayY, OverlayW, OverlayH, FLinearColor(1.0f, 0.82f, 0.05f, 1.0f));
 
 	const FString Summary = VNHGameState ? VNHGameState->GetRevealSummaryText().ToString() : TEXT("No reveal data.");
+	const FVNHAccusationResult Result = VNHGameState ? VNHGameState->GetAccusationResult() : FVNHAccusationResult();
+	const FString AwardsText = !Result.bResolved
+		? TEXT("Awards: Most Normal Alien  |  Hunter Ran Out Of Clock")
+		: Result.bCorrect
+			? TEXT("Awards: Hunter Was Cooking  |  Least Normal Human")
+			: TEXT("Awards: Wrongfully Accused Spotlight  |  Most Normal Alien");
+	const FString FooterText = !Result.bResolved
+		? TEXT("No accusation landed. The Alien wins by social camouflage.")
+		: Result.bCorrect
+			? TEXT("Clean read. The Hunter found the hidden Alien.")
+			: TEXT("Celebrate the false positive, then reset. Public play should not reward sabotage.");
 	DrawDebugText(TEXT("ROUND REVEAL"), FLinearColor::White, OverlayX + 28.0f, OverlayY + 24.0f, 2.0f);
 	DrawDebugText(Summary, FLinearColor(0.88f, 0.95f, 1.0f, 1.0f), OverlayX + 28.0f, OverlayY + 88.0f, 1.25f);
-	DrawDebugText(TEXT("Awards: Most Normal Human  |  Wrongfully Accused  |  Hunter Was Cooking"), FLinearColor(1.0f, 0.82f, 0.05f, 1.0f), OverlayX + 28.0f, OverlayY + 140.0f, 1.05f);
-	DrawDebugText(TEXT("Rematch countdown / button placeholder for MVP flow."), FLinearColor::White, OverlayX + 28.0f, OverlayY + 180.0f, 0.95f);
+	DrawDebugText(AwardsText, FLinearColor(1.0f, 0.82f, 0.05f, 1.0f), OverlayX + 28.0f, OverlayY + 140.0f, 1.05f);
+	DrawDebugText(FooterText, FLinearColor::White, OverlayX + 28.0f, OverlayY + 180.0f, 0.95f);
 }
 
 void AVNHDebugHUD::PlayUISound(USoundBase* Sound, float VolumeMultiplier) const

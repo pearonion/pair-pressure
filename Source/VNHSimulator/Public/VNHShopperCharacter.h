@@ -24,6 +24,7 @@ public:
 
 	virtual void BeginPlay() override;
 	virtual void PossessedBy(AController* NewController) override;
+	virtual void UnPossessed() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Shopper")
@@ -37,6 +38,12 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Shopper")
 	UCameraComponent* GetFollowCamera() const { return FollowCamera; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Shopper")
+	UCameraComponent* GetFirstPersonCamera() const { return FirstPersonCamera; }
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Shopper|Camera")
+	void SetFirstPersonViewEnabled(bool bEnabled);
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Shopper")
 	bool IsPossessedByAlien() const { return bPossessedByAlien; }
@@ -68,6 +75,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "VNH|Shopper|Debug")
 	FString DescribeAnimationDebugState() const;
 
+	UFUNCTION(BlueprintCallable, Category = "VNH|Shopper|Interaction")
+	void SetInteractionHighlighted(bool bHighlighted);
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Shopper|Interaction")
+	void SetInteractionHighlightStencil(int32 StencilValue);
+
 	UPROPERTY(BlueprintAssignable, Category = "VNH|Shopper")
 	FVNHActNaturalUsed OnActNaturalUsed;
 
@@ -86,6 +99,9 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Shopper", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UCameraComponent> FollowCamera;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Shopper", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UCameraComponent> FirstPersonCamera;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Shopper", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UStaticMeshComponent> DebugBodyMesh;
@@ -107,6 +123,7 @@ private:
 
 	FTimerHandle FreezeTestTimerHandle;
 	FTimerHandle PublicTestReactionTimerHandle;
+	bool bFirstPersonViewEnabled = false;
 
 	UFUNCTION()
 	void OnRep_PossessedByAlien();

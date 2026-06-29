@@ -186,19 +186,68 @@ FAutoConsoleCommandWithWorldAndArgs VNHQuickChatCommand(
 		}
 	}));
 
+FAutoConsoleCommandWithWorld VNHJumpInvestigationCommand(
+	TEXT("vnh.JumpInvestigation"),
+	TEXT("Debug: start a single-player test round and jump directly to Investigation."),
+	FConsoleCommandWithWorldDelegate::CreateStatic([](UWorld* World)
+	{
+		if (AVNHGameMode* GameMode = GetVNHGameMode(World))
+		{
+			GameMode->DebugJumpToInvestigation();
+		}
+		else
+		{
+			UE_LOG(LogVNH, Warning, TEXT("vnh.JumpInvestigation failed: no VNH auth game mode in current world."));
+		}
+	}));
+
 FAutoConsoleCommandWithWorldAndArgs VNHPossessHumanCommand(
 	TEXT("vnh.PossessHuman"),
-	TEXT("Debug: possess a shopper by zero-based index. Usage: vnh.PossessHuman 0"),
+	TEXT("Debug: possess a shopper by zero-based index and optional role. Usage: vnh.PossessHuman 0 Alien|Hunter|Human"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
 	{
 		if (AVNHGameMode* GameMode = GetVNHGameMode(World))
 		{
 			const int32 ShopperIndex = Args.IsValidIndex(0) ? FCString::Atoi(*Args[0]) : 0;
-			GameMode->DebugPossessShopperByIndex(ShopperIndex);
+			const EVNHPlayerRole DefaultRole = ShopperIndex == 1 ? EVNHPlayerRole::Hunter : EVNHPlayerRole::Alien;
+			const EVNHPlayerRole ForcedRole = Args.IsValidIndex(1) ? ParseRole(Args[1]) : DefaultRole;
+			GameMode->DebugPossessShopperByIndex(ShopperIndex, ForcedRole == EVNHPlayerRole::Unassigned ? EVNHPlayerRole::Alien : ForcedRole);
 		}
 		else
 		{
 			UE_LOG(LogVNH, Warning, TEXT("vnh.PossessHuman failed: no VNH auth game mode in current world."));
+		}
+	}));
+
+FAutoConsoleCommandWithWorldAndArgs VNHPossessHunterCommand(
+	TEXT("vnh.PossessHunter"),
+	TEXT("Debug: possess a shopper as Hunter. Usage: vnh.PossessHunter 1"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
+	{
+		if (AVNHGameMode* GameMode = GetVNHGameMode(World))
+		{
+			const int32 ShopperIndex = Args.IsValidIndex(0) ? FCString::Atoi(*Args[0]) : 1;
+			GameMode->DebugPossessShopperByIndex(ShopperIndex, EVNHPlayerRole::Hunter);
+		}
+		else
+		{
+			UE_LOG(LogVNH, Warning, TEXT("vnh.PossessHunter failed: no VNH auth game mode in current world."));
+		}
+	}));
+
+FAutoConsoleCommandWithWorldAndArgs VNHPossessAlienCommand(
+	TEXT("vnh.PossessAlien"),
+	TEXT("Debug: possess a shopper as Alien. Usage: vnh.PossessAlien 0"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
+	{
+		if (AVNHGameMode* GameMode = GetVNHGameMode(World))
+		{
+			const int32 ShopperIndex = Args.IsValidIndex(0) ? FCString::Atoi(*Args[0]) : 0;
+			GameMode->DebugPossessShopperByIndex(ShopperIndex, EVNHPlayerRole::Alien);
+		}
+		else
+		{
+			UE_LOG(LogVNH, Warning, TEXT("vnh.PossessAlien failed: no VNH auth game mode in current world."));
 		}
 	}));
 

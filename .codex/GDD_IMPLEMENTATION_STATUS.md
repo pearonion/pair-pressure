@@ -525,3 +525,125 @@ Do not close, kill, restart, or force-stop the running Unreal Editor unless expl
 - Click `Host Private`; expected: listen-server Lobby opens.
 - With 3 clients connected, aim at the lobby start pad/button and press `E`; expected: host travels everyone to `/Game/Maps/MVP_ClothingStore`.
 - Expected after store travel: once all 3 players reconnect, one Hunter, one Alien, and remaining Human roles are assigned and the round enters role reveal.
+
+## 2026-06-26 MVP Test Loop Sprint
+
+### MVP GDD Alignment
+
+- Current work remains aligned with the MVP GDD's scope rule: everything added supports Observe, Imitate, Test, or Accuse.
+- Implemented/testable pillars:
+  - one compact clothing-store map
+  - 8 shopper NPCs
+  - one possessed shopper
+  - Hunter public tests
+  - accusation path into Reveal
+  - natural skill-based Alien movement
+  - placeholder Manny crowd with shared AnimBP/IK path
+  - immediate single-player debug loop for iteration
+- Still incomplete for full MVP:
+  - polished final reveal screen with side-by-side characters
+  - true listen-server two-player validation
+  - automatic role swap/rematch reset
+  - role-specific player HUDs rather than a debug test deck
+  - data-driven quirks and activity definitions
+
+### Changed
+
+- Added live UMG deck helpers in `AVNHPlayerController`:
+  - real round phase/countdown/tests text
+  - interaction prompt/result text
+  - reveal result text
+- Extended the runtime UMG updater to drive:
+  - `RoundStatusText`
+  - `InteractionText`
+  - `RevealStatusText`
+  - `RevealStatusBox`
+  - `RevealStatusShadow`
+  - `RevealRail`
+- Added hidden-by-default reveal result widgets to `/Game/UI/WBP_VNHDebugDeck`.
+- Added `12 Jump Investigation` button to the UMG deck.
+- Added `vnh.JumpInvestigation`.
+- Added `AVNHGameMode::DebugJumpToInvestigation()` for a one-click single-player MVP loop.
+- Repeated round starts now reset old shopper possession state before assigning/possessing again.
+- Debug public-test commands now decrement visible test charges.
+
+### Verification
+
+- `/Game/UI/WBP_VNHDebugDeck` compile log: 0 errors, 0 warnings.
+- Widget preview shows the new `Jump Investigation` button and hidden reveal panel.
+- `git diff --check` passed.
+- Full external UBT remains blocked as a verifier by the NeoStack Lua plugin warning-as-error when attempting a unique editor build environment. Use Live Coding/restart for the immediate test.
+
+### Immediate Test
+
+- Live Code/restart editor.
+- PIE test flow:
+  - click `12 Jump Investigation`
+  - confirm `RoundStatusText` shows Investigation, countdown, and `Tests 2`
+  - move with WASD/Shift and watch `CONTROL STATUS`
+  - click Freeze/Look/Clear and confirm test charges decrement
+  - question, mark, fake accuse, then accuse a shopper
+  - confirm reveal panel appears with winner, accused shopper, and actual alien
+
+## 2026-06-26 Target-Lock Interaction Pass
+
+### MVP Decision
+
+- Do the usable targeting layer now.
+- Do not spend this sprint on a full radial wheel yet.
+- The current MVP interaction flow is:
+  - aim at shopper
+  - right-click to lock target
+  - use direct actions from the UMG prompt
+
+### Changed
+
+- Added `VNH_TargetFocus` input mapping:
+  - Right Mouse Button
+  - Gamepad Right Shoulder
+- `AVNHPlayerController` now tracks a locked `TargetedShopper`.
+- `E`, `R`, `F`, and Left Mouse now act on the locked target first, then fall back to the shopper currently under the crosshair.
+- UMG interaction prompt now clearly shows:
+  - when a shopper can be targeted
+  - who is locked
+  - what buttons are available
+- `AVNHShopperCharacter` now exposes `SetInteractionHighlighted()` and enables Custom Depth/stencil on the selected shopper.
+- Mouse/gamepad look now works without requiring the alien locomotion component, which fixes camera rotation for non-alien test/hunter control paths.
+
+### Verification
+
+- `git diff --check` passed.
+- Needs Live Coding/restart verification in PIE.
+- If the target does not visibly outline, the code-side Custom Depth hook is present; next step is adding/confirming an outline post-process material in the level.
+
+## 2026-06-26 HUD Cleanup / Interaction Hardening
+
+### Changed
+
+- Hard-disabled legacy C++ Canvas HUD drawing so the old panels no longer render behind UMG.
+- Moved the UMG round countdown panel to a stable top-center anchor.
+- Widened the bottom UMG interaction prompt and changed copy to clearly teach the MVP input:
+  - `AIM AT SHOPPER // RMB LOCKS ACTION TARGET`
+  - locked target shows direct action buttons
+- Added controller-level polling for interaction inputs so right-click target lock works even if action binding is missed by UI input mode.
+- `Possess 0/1` now forces the local/debug controller to Alien role.
+- Control status text no longer says `POSSESS TO TEST 11.3`; it reports alien locomotion when available or hunter targeting mode when not.
+
+### Verification
+
+- `/Game/UI/WBP_VNHDebugDeck` compile log: 0 errors, 0 warnings.
+- `git diff --check` passed.
+- Requires Live Coding/restart before PIE verification.
+
+### Immediate Test
+
+- Live Code/restart.
+- PIE:
+  - verify no small C++ round strip is visible behind UMG
+  - verify round countdown is top-center
+  - click `Possess 0`
+  - verify role says Alien
+  - move/Shift and verify `CONTROL` numbers change
+  - aim at shopper and right-click
+  - verify bottom prompt says `LOCKED`
+  - use `E`, `R`, `F`, and accusation path

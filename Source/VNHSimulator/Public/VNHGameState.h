@@ -34,6 +34,9 @@ public:
 	int32 GetAccusationsRemaining() const { return AccusationsRemaining; }
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Round")
+	int32 GetQuestionsRemaining() const { return DirectQuestionsRemaining; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Round")
 	EVNHPublicTestType GetActivePublicTest() const { return ActivePublicTest; }
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Round")
@@ -56,6 +59,7 @@ public:
 	void SetTestsRemaining(int32 NewTestsRemaining);
 	void SetDirectQuestionsRemaining(int32 NewDirectQuestionsRemaining);
 	void SetAccusationsRemaining(int32 NewAccusationsRemaining);
+	void SetQuestionsRemaining(int32 NewQuestionsRemaining);
 	void SetActivePublicTest(EVNHPublicTestType NewActivePublicTest);
 	void SetAccusationResult(const FVNHAccusationResult& NewAccusationResult);
 	void SetPossessedShopper(AActor* NewPossessedShopper);
@@ -76,7 +80,7 @@ private:
 	int32 TestsRemaining = 2;
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Round", meta = (AllowPrivateAccess = "true"))
-	int32 DirectQuestionsRemaining = 1;
+	int32 DirectQuestionsRemaining = 3;
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Round", meta = (AllowPrivateAccess = "true"))
 	int32 AccusationsRemaining = 1;
