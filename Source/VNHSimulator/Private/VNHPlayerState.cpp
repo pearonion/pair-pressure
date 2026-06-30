@@ -13,6 +13,7 @@ void AVNHPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 
 	DOREPLIFETIME(AVNHPlayerState, AssignedRole);
 	DOREPLIFETIME(AVNHPlayerState, LightErrandText);
+	DOREPLIFETIME(AVNHPlayerState, bPreRoundReady);
 }
 
 void AVNHPlayerState::SetRole(EVNHPlayerRole NewRole)
@@ -29,6 +30,14 @@ void AVNHPlayerState::SetLightErrandText(const FText& NewLightErrandText)
 	if (HasAuthority())
 	{
 		LightErrandText = NewLightErrandText;
+	}
+}
+
+void AVNHPlayerState::SetPreRoundReady(bool bNewPreRoundReady)
+{
+	if (HasAuthority())
+	{
+		bPreRoundReady = bNewPreRoundReady;
 	}
 }
 

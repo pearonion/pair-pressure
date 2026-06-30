@@ -176,6 +176,14 @@ void AVNHGameMode::TryStartRound()
 		VNHGameState->ClearRoundOutcome();
 	}
 
+	for (APlayerState* PlayerState : GameState->PlayerArray)
+	{
+		if (AVNHPlayerState* VNHPlayerState = Cast<AVNHPlayerState>(PlayerState))
+		{
+			VNHPlayerState->SetPreRoundReady(false);
+		}
+	}
+
 	ResetShopperPossessionState();
 	StartShopperRoutines();
 	EnterPhase(EVNHRoundPhase::AssigningRoles, PhaseTiming.PreRoundCustomizationSeconds);
@@ -371,6 +379,14 @@ void AVNHGameMode::DebugStartRound()
 		VNHGameState->ClearRoundOutcome();
 	}
 
+	for (APlayerState* PlayerState : GameState->PlayerArray)
+	{
+		if (AVNHPlayerState* VNHPlayerState = Cast<AVNHPlayerState>(PlayerState))
+		{
+			VNHPlayerState->SetPreRoundReady(false);
+		}
+	}
+
 	ResetShopperPossessionState();
 	StartShopperRoutines();
 	EnterPhase(EVNHRoundPhase::AssigningRoles, PhaseTiming.PreRoundCustomizationSeconds);
@@ -393,6 +409,30 @@ void AVNHGameMode::DebugForceRole(APlayerController* TargetController, EVNHPlaye
 	else
 	{
 		UE_LOG(LogVNH, Warning, TEXT("vnh.ForceRole failed: target controller has no VNH player state."));
+	}
+}
+
+void AVNHGameMode::RequestPreRoundReady(AVNHPlayerController* RequestingPlayer)
+{
+	AVNHGameState* VNHGameState = GetVNHGameState();
+	if (!VNHGameState || VNHGameState->GetRoundPhase() != EVNHRoundPhase::AssigningRoles)
+	{
+		return;
+	}
+
+	AVNHPlayerState* VNHPlayerState = RequestingPlayer ? RequestingPlayer->GetPlayerState<AVNHPlayerState>() : nullptr;
+	if (!VNHPlayerState)
+	{
+		return;
+	}
+
+	VNHPlayerState->SetPreRoundReady(true);
+	UE_LOG(LogVNH, Display, TEXT("PreroundCustomization: %s is ready."), *GetNameSafe(RequestingPlayer));
+
+	if (AreAllConnectedPlayersPreRoundReady())
+	{
+		UE_LOG(LogVNH, Display, TEXT("PreroundCustomization: all players ready, advancing early."));
+		AdvanceRoundPhase();
 	}
 }
 
@@ -831,6 +871,25 @@ APlayerController* AVNHGameMode::FindControllerForRole(EVNHPlayerRole TargetRole
 	}
 
 	return nullptr;
+}
+
+bool AVNHGameMode::AreAllConnectedPlayersPreRoundReady() const
+{
+	if (!GameState || GameState->PlayerArray.IsEmpty())
+	{
+		return false;
+	}
+
+	for (APlayerState* PlayerState : GameState->PlayerArray)
+	{
+		const AVNHPlayerState* VNHPlayerState = Cast<AVNHPlayerState>(PlayerState);
+		if (!VNHPlayerState || !VNHPlayerState->IsPreRoundReady())
+		{
+			return false;
+		}
+	}
+
+	return true;
 }
 
 AVNHShopperCharacter* AVNHGameMode::SelectAlienShopper() const

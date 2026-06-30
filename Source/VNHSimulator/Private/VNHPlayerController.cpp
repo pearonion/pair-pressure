@@ -328,6 +328,7 @@ void AVNHPlayerController::PlayerTick(float DeltaTime)
 		}
 	}
 	UpdateMarkedSuspectsForRound();
+	UpdatePreRoundCustomizationFlow();
 	UpdateRoleCameraMode();
 	UpdateFocusedShopper();
 	UpdateGameplayCursor();
@@ -709,6 +710,13 @@ void AVNHPlayerController::RequestStartRoundFromLobby()
 	ServerRequestStartRoundFromLobby();
 }
 
+void AVNHPlayerController::RequestPreRoundCustomizationReady()
+{
+	ServerSetPreRoundCustomizationReady();
+	LastInteractionText = TEXT("READY // fit locked. You are now responsible for this outfit.");
+	LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+}
+
 void AVNHPlayerController::RequestDebugPossessShopper(int32 ShopperIndex, EVNHPlayerRole ForcedRole)
 {
 	ServerDebugPossessShopper(ShopperIndex, ForcedRole);
@@ -967,6 +975,14 @@ void AVNHPlayerController::ServerSetCharacterCustomization_Implementation(const 
 	}
 }
 
+void AVNHPlayerController::ServerSetPreRoundCustomizationReady_Implementation()
+{
+	if (AVNHGameMode* VNHGameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AVNHGameMode>() : nullptr)
+	{
+		VNHGameMode->RequestPreRoundReady(this);
+	}
+}
+
 UVNHAlienLocomotionComponent* AVNHPlayerController::GetAlienLocomotionComponent() const
 {
 	const AVNHShopperCharacter* Shopper = Cast<AVNHShopperCharacter>(GetPawn());
@@ -1211,6 +1227,71 @@ void AVNHPlayerController::ApplyDebugHudInputMode(bool bDebugHudVisible)
 	InputMode.SetHideCursorDuringCapture(false);
 	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	SetInputMode(InputMode);
+}
+
+void AVNHPlayerController::RestoreGameplayInputMode()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	bShowMouseCursor = true;
+	bEnableClickEvents = true;
+	bEnableMouseOverEvents = true;
+	DefaultMouseCursor = EMouseCursor::Default;
+	UpdateGameplayCursor();
+
+	FInputModeGameAndUI InputMode;
+	InputMode.SetHideCursorDuringCapture(false);
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	SetInputMode(InputMode);
+}
+
+void AVNHPlayerController::UpdatePreRoundCustomizationFlow()
+{
+	if (!IsLocalController() || !GetWorld() || IsMainMenuWorld(GetWorld()))
+	{
+		return;
+	}
+
+	const AVNHGameState* VNHGameState = GetWorld()->GetGameState<AVNHGameState>();
+	if (!VNHGameState)
+	{
+		return;
+	}
+
+	const EVNHRoundPhase CurrentPhase = VNHGameState->GetRoundPhase();
+	const int32 CurrentRound = VNHGameState->GetRoundNumber();
+	const bool bPhaseChanged = !bObservedRoundPhaseInitialized || LastObservedRoundPhase != CurrentPhase;
+	bObservedRoundPhaseInitialized = true;
+
+	if (CurrentPhase == EVNHRoundPhase::AssigningRoles)
+	{
+		if (LastPreRoundCustomizerRound != CurrentRound)
+		{
+			LastPreRoundCustomizerRound = CurrentRound;
+			if (UVNHGameInstance* VNHGameInstance = GetGameInstance<UVNHGameInstance>())
+			{
+				VNHGameInstance->ShowCharacterCustomizer(true);
+			}
+
+			LastInteractionText = TEXT("30-second drip check started. READY locks your look; the round timer still wins.");
+			LastInteractionTimeSeconds = GetWorld()->GetTimeSeconds();
+			UE_LOG(LogVNH, Display, TEXT("PreroundCustomization: opened lobby-mode customizer for round %d."), CurrentRound);
+		}
+	}
+	else if (bPhaseChanged && LastObservedRoundPhase == EVNHRoundPhase::AssigningRoles)
+	{
+		if (UVNHGameInstance* VNHGameInstance = GetGameInstance<UVNHGameInstance>())
+		{
+			VNHGameInstance->HideCharacterCustomizer();
+		}
+		RestoreGameplayInputMode();
+		UE_LOG(LogVNH, Display, TEXT("PreroundCustomization: closed customizer as phase advanced to %s."), ToPhaseText(CurrentPhase));
+	}
+
+	LastObservedRoundPhase = CurrentPhase;
 }
 
 void AVNHPlayerController::ShowLobbyMenu()

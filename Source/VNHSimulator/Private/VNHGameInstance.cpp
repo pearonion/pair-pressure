@@ -358,6 +358,18 @@ void UVNHGameInstance::HideCharacterCustomizer()
 	}
 	SaveCharacterProfile();
 	PreviewActiveCustomizationOnLocalPawn();
+
+	if (APlayerController* PlayerController = GetFirstLocalPlayerController())
+	{
+		PlayerController->bShowMouseCursor = true;
+		PlayerController->bEnableClickEvents = true;
+		PlayerController->bEnableMouseOverEvents = true;
+
+		FInputModeGameAndUI InputMode;
+		InputMode.SetHideCursorDuringCapture(false);
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		PlayerController->SetInputMode(InputMode);
+	}
 }
 
 void UVNHGameInstance::SelectCharacterPreset(int32 PresetIndex)

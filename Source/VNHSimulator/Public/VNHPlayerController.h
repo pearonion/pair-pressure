@@ -104,6 +104,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Customization")
 	void OpenCharacterCustomizerFromMainMenu();
 
+	UFUNCTION(BlueprintCallable, Category = "VNH|Customization")
+	void RequestPreRoundCustomizationReady();
+
 	UFUNCTION(BlueprintCallable, Category = "VNH|Debug")
 	void RequestDebugPossessShopper(int32 ShopperIndex, EVNHPlayerRole ForcedRole);
 
@@ -127,6 +130,9 @@ public:
 
 	UFUNCTION(Server, Reliable)
 	void ServerSetCharacterCustomization(const FVNHCharacterCustomization& Customization);
+
+	UFUNCTION(Server, Reliable)
+	void ServerSetPreRoundCustomizationReady();
 
 	UFUNCTION(Server, Reliable)
 	void ServerDebugPossessShopper(int32 ShopperIndex, EVNHPlayerRole ForcedRole);
@@ -199,6 +205,8 @@ private:
 	void UpdateDebugDeckRuntimeLabels(float DeltaTime);
 	void UpdateMarkedSuspectsWidgetRuntimeLabels(float DeltaTime);
 	void UpdateComposureWidgetRuntimeLabels(float DeltaTime);
+	void UpdatePreRoundCustomizationFlow();
+	void RestoreGameplayInputMode();
 	void UpdateMarkedSuspectsForRound();
 	void RegisterGameplayHardwareCursors();
 	void UpdateGameplayCursor();
@@ -277,5 +285,8 @@ private:
 	float TimeUntilMarkedWidgetLookup = 0.0f;
 	float TimeUntilComposureWidgetLookup = 0.0f;
 	int32 LastMarkedRoundNumber = INDEX_NONE;
+	int32 LastPreRoundCustomizerRound = INDEX_NONE;
+	EVNHRoundPhase LastObservedRoundPhase = EVNHRoundPhase::WaitingForPlayers;
+	bool bObservedRoundPhaseInitialized = false;
 	TWeakObjectPtr<UUserWidget> LobbyMenuWidget;
 };

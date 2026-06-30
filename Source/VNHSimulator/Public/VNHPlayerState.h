@@ -39,8 +39,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "VNH|Player")
 	FText GetLightErrandText() const { return LightErrandText; }
 
+	UFUNCTION(BlueprintPure, Category = "VNH|Player")
+	bool IsPreRoundReady() const { return bPreRoundReady; }
+
 	void SetRole(EVNHPlayerRole NewRole);
 	void SetLightErrandText(const FText& NewLightErrandText);
+	void SetPreRoundReady(bool bNewPreRoundReady);
 
 private:
 	UPROPERTY(ReplicatedUsing = OnRep_AssignedRole, BlueprintReadOnly, Category = "VNH|Player", meta = (AllowPrivateAccess = "true"))
@@ -48,6 +52,9 @@ private:
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Player", meta = (AllowPrivateAccess = "true"))
 	FText LightErrandText;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Player", meta = (AllowPrivateAccess = "true"))
+	bool bPreRoundReady = false;
 
 	UFUNCTION()
 	void OnRep_AssignedRole();

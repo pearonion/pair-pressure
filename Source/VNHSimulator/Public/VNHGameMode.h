@@ -32,6 +32,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Round")
 	void AdvanceRoundPhase();
 
+	void RequestPreRoundReady(AVNHPlayerController* RequestingPlayer);
+
 	void RequestPublicTest(AVNHPlayerController* RequestingPlayer, EVNHPublicTestType TestType);
 	bool RequestDirectQuestion(AVNHPlayerController* RequestingPlayer, AVNHShopperCharacter* QuestionedShopper, FString& OutResponseText);
 	bool RequestQuestion(AVNHPlayerController* RequestingPlayer, AVNHShopperCharacter* QuestionedShopper);
@@ -77,6 +79,7 @@ private:
 	bool IsHunterController(const APlayerController* PlayerController) const;
 	bool IsHostController(const APlayerController* PlayerController) const;
 	APlayerController* FindControllerForRole(EVNHPlayerRole TargetRole) const;
+	bool AreAllConnectedPlayersPreRoundReady() const;
 	AVNHShopperCharacter* SelectAlienShopper() const;
 	void ResetShopperPossessionState();
 	void PossessAlienShopper();

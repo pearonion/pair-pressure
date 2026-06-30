@@ -21,6 +21,7 @@ public:
 
 protected:
 	virtual void NativeConstruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
 	void Rebuild();
@@ -28,6 +29,7 @@ private:
 	void AddPresetButton(UVerticalBox* Parent, int32 PresetIndex);
 	void AddOptionButton(UUniformGridPanel* Parent, const FText& Label, int32 Direction, int32 Column, int32 Row);
 	void RefreshLabels();
+	void RefreshLobbyCountdown();
 	void ApplyAndPreview(int32 Direction = 1);
 	UVNHGameInstance* GetVNHGameInstance() const;
 

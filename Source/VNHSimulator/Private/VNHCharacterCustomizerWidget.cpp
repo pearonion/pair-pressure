@@ -12,9 +12,11 @@
 #include "Components/UniformGridSlot.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "VNHGameState.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "VNHGameInstance.h"
 #include "VNHPlayerController.h"
+#include "VNHPlayerState.h"
 
 namespace
 {
@@ -69,6 +71,16 @@ void UVNHCharacterCustomizerWidget::NativeConstruct()
 	Rebuild();
 }
 
+void UVNHCharacterCustomizerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	if (bLobbyMode)
+	{
+		RefreshLobbyCountdown();
+	}
+}
+
 void UVNHCharacterCustomizerWidget::Rebuild()
 {
 	if (!WidgetTree)
@@ -103,7 +115,7 @@ void UVNHCharacterCustomizerWidget::Rebuild()
 
 	TitleText = MakeLabel(
 		WidgetTree,
-		bLobbyMode ? NSLOCTEXT("VNH", "LobbyCustomizerTitle", "30S DRIP CHECK") : NSLOCTEXT("VNH", "MainCustomizerTitle", "CHARACTER CUSTOMIZER"),
+		bLobbyMode ? NSLOCTEXT("VNH", "LobbyCustomizerTitle", "DRIP CHECK") : NSLOCTEXT("VNH", "MainCustomizerTitle", "CHARACTER CUSTOMIZER"),
 		30,
 		FLinearColor::White);
 	LeftPanel->AddChild(TitleText);
@@ -142,7 +154,7 @@ void UVNHCharacterCustomizerWidget::Rebuild()
 	StatusText = MakeLabel(
 		WidgetTree,
 		bLobbyMode
-			? NSLOCTEXT("VNH", "LobbyCustomizerStatus", "READY locks your look. Timer does not care about your fashion crisis.")
+			? NSLOCTEXT("VNH", "LobbyCustomizerStatus", "READY locks your look. The timer does not care about your fashion crisis.")
 			: NSLOCTEXT("VNH", "MainCustomizerStatus", "Saved instantly. Your lobby pawn previews changes when one exists."),
 		18,
 		FLinearColor(1.0f, 0.95f, 0.18f, 1.0f));
@@ -179,6 +191,7 @@ void UVNHCharacterCustomizerWidget::Rebuild()
 	});
 
 	RefreshLabels();
+	RefreshLobbyCountdown();
 }
 
 void UVNHCharacterCustomizerWidget::AddCategoryButton(UVerticalBox* Parent, EVNHCustomizationSlot CustomizationSlot, const FText& Label)
@@ -279,6 +292,47 @@ void UVNHCharacterCustomizerWidget::RefreshLabels()
 	}
 }
 
+void UVNHCharacterCustomizerWidget::RefreshLobbyCountdown()
+{
+	if (!bLobbyMode)
+	{
+		return;
+	}
+
+	const AVNHGameState* VNHGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr;
+	const float PhaseEndsAt = VNHGameState ? VNHGameState->GetPhaseEndsAtServerTime() : 0.0f;
+	const float RemainingSeconds = PhaseEndsAt > 0.0f
+		? FMath::Max(0.0f, PhaseEndsAt - VNHGameState->GetServerWorldTimeSeconds())
+		: 0.0f;
+	const int32 DisplaySeconds = FMath::CeilToInt(RemainingSeconds);
+	int32 ReadyPlayers = 0;
+	int32 TotalPlayers = 0;
+	if (VNHGameState)
+	{
+		for (APlayerState* PlayerState : VNHGameState->PlayerArray)
+		{
+			if (const AVNHPlayerState* VNHPlayerState = Cast<AVNHPlayerState>(PlayerState))
+			{
+				++TotalPlayers;
+				ReadyPlayers += VNHPlayerState->IsPreRoundReady() ? 1 : 0;
+			}
+		}
+	}
+
+	if (TitleText)
+	{
+		TitleText->SetText(FText::FromString(FString::Printf(TEXT("DRIP CHECK // %02d // READY %d/%d"), DisplaySeconds, ReadyPlayers, TotalPlayers)));
+	}
+
+	if (StatusText)
+	{
+		const FText Status = DisplaySeconds <= 5
+			? NSLOCTEXT("VNH", "LobbyCustomizerPanicStatus", "FINAL FIT PANIC. READY or get launched as-is.")
+			: NSLOCTEXT("VNH", "LobbyCustomizerReadyStatus", "READY locks your look. The round starts when the timer hits zero.");
+		StatusText->SetText(Status);
+	}
+}
+
 void UVNHCharacterCustomizerWidget::ApplyAndPreview(int32 Direction)
 {
 	if (UVNHGameInstance* VNHGameInstance = GetVNHGameInstance())
@@ -304,6 +358,11 @@ void UVNHCharacterCustomizerWidget::HandleBackClicked()
 
 void UVNHCharacterCustomizerWidget::HandleReadyClicked()
 {
+	if (AVNHPlayerController* VNHPlayerController = Cast<AVNHPlayerController>(GetOwningPlayer()))
+	{
+		VNHPlayerController->RequestPreRoundCustomizationReady();
+	}
+
 	if (UVNHGameInstance* VNHGameInstance = GetVNHGameInstance())
 	{
 		VNHGameInstance->HideCharacterCustomizer();
