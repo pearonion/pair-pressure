@@ -114,7 +114,7 @@ bool IsVNHSuspicious(const AActor* Actor)
 	return Actor && (Actor->ActorHasTag(TEXT("VNH.Suspicious")) || Actor->GetClass()->GetName().Contains(TEXT("Suspicious")));
 }
 
-bool IsMainMenuWorld(const UWorld* World)
+bool IsPlayerControllerMainMenuWorld(const UWorld* World)
 {
 	return World && World->GetMapName().Contains(TEXT("MainMenu"));
 }
@@ -137,7 +137,7 @@ void AVNHPlayerController::BeginPlay()
 	Super::BeginPlay();
 
 	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
-	const bool bIsMainMenuMap = IsMainMenuWorld(GetWorld());
+	const bool bIsMainMenuMap = IsPlayerControllerMainMenuWorld(GetWorld());
 	if (bIsMainMenuMap)
 	{
 		if (ComposureWidget.IsValid())
@@ -249,7 +249,7 @@ void AVNHPlayerController::EnsureMarkedSuspectsWidget()
 
 void AVNHPlayerController::EnsureComposureWidget()
 {
-	if (!IsLocalController() || ComposureWidget.IsValid() || IsMainMenuWorld(GetWorld()))
+	if (!IsLocalController() || ComposureWidget.IsValid() || IsPlayerControllerMainMenuWorld(GetWorld()))
 	{
 		return;
 	}
@@ -352,7 +352,7 @@ void AVNHPlayerController::PlayerTick(float DeltaTime)
 	Super::PlayerTick(DeltaTime);
 
 	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
-	if (IsMainMenuWorld(GetWorld()))
+	if (IsPlayerControllerMainMenuWorld(GetWorld()))
 	{
 		return;
 	}
@@ -1288,7 +1288,7 @@ void AVNHPlayerController::RestoreGameplayInputMode()
 
 void AVNHPlayerController::UpdatePreRoundCustomizationFlow()
 {
-	if (!IsLocalController() || !GetWorld() || IsMainMenuWorld(GetWorld()))
+	if (!IsLocalController() || !GetWorld() || IsPlayerControllerMainMenuWorld(GetWorld()))
 	{
 		return;
 	}
@@ -1551,7 +1551,7 @@ void AVNHPlayerController::UpdateComposureWidgetRuntimeLabels(float DeltaTime)
 		return;
 	}
 
-	if (IsMainMenuWorld(GetWorld()))
+	if (IsPlayerControllerMainMenuWorld(GetWorld()))
 	{
 		if (ComposureWidget.IsValid())
 		{
