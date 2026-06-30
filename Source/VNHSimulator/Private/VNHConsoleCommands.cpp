@@ -157,6 +157,22 @@ FAutoConsoleCommandWithWorld VNHOpenCustomizerCommand(
 		}
 	}));
 
+FAutoConsoleCommandWithWorld VNHOpenPreroundCustomizerCommand(
+	TEXT("vnh.OpenPreroundCustomizer"),
+	TEXT("Debug: open the lobby/preround character customizer over the current screen."),
+	FConsoleCommandWithWorldDelegate::CreateStatic([](UWorld* World)
+	{
+		if (UVNHGameInstance* GameInstance = World ? World->GetGameInstance<UVNHGameInstance>() : nullptr)
+		{
+			GameInstance->ShowCharacterCustomizer(true);
+			UE_LOG(LogVNH, Display, TEXT("vnh.OpenPreroundCustomizer: opened lobby-mode character customizer."));
+		}
+		else
+		{
+			UE_LOG(LogVNH, Warning, TEXT("vnh.OpenPreroundCustomizer failed: no VNH game instance."));
+		}
+	}));
+
 FAutoConsoleCommandWithWorldAndArgs VNHForceRoleCommand(
 	TEXT("vnh.ForceRole"),
 	TEXT("Debug: force the first local player role. Usage: vnh.ForceRole Alien|Hunter|Human"),

@@ -17,6 +17,10 @@
 
 #include <initializer_list>
 
+#if WITH_EDITOR
+#include "Editor.h"
+#endif
+
 namespace
 {
 const TCHAR* CharacterProfileSlotName = TEXT("VNHCharacterProfile");
@@ -170,6 +174,16 @@ void CycleMesh(TSoftObjectPtr<USkeletalMesh>& Mesh, const TArray<FSoftObjectPath
 	const int32 NextIndex = (CurrentIndex + Direction + Options.Num()) % Options.Num();
 	Mesh = MeshRef(Options[NextIndex]);
 }
+
+void ResetPIETransactionBuffer()
+{
+#if WITH_EDITOR
+	if (GEditor)
+	{
+		GEditor->ResetTransaction(NSLOCTEXT("VNH", "ResetPIETransactions", "Clearing PIE-only VNH runtime references"));
+	}
+#endif
+}
 }
 
 void UVNHGameInstance::Init()
@@ -186,6 +200,14 @@ void UVNHGameInstance::Init()
 
 void UVNHGameInstance::Shutdown()
 {
+	if (APlayerController* PlayerController = GetFirstLocalPlayerController())
+	{
+		PlayerController->SetInputMode(FInputModeGameOnly());
+		PlayerController->bShowMouseCursor = false;
+		PlayerController->bEnableClickEvents = false;
+		PlayerController->bEnableMouseOverEvents = false;
+	}
+
 	if (ActiveCustomizer)
 	{
 		ActiveCustomizer->RemoveFromParent();
@@ -199,6 +221,7 @@ void UVNHGameInstance::Shutdown()
 	}
 
 	CharacterProfile = nullptr;
+	ResetPIETransactionBuffer();
 	Super::Shutdown();
 }
 
@@ -397,6 +420,11 @@ void UVNHGameInstance::ShowCharacterCustomizer(bool bLobbyMode)
 
 void UVNHGameInstance::HideCharacterCustomizer()
 {
+	if (APlayerController* PlayerController = GetFirstLocalPlayerController())
+	{
+		PlayerController->SetInputMode(FInputModeGameAndUI());
+	}
+
 	if (ActiveCustomizer)
 	{
 		ActiveCustomizer->RemoveFromParent();
@@ -416,6 +444,8 @@ void UVNHGameInstance::HideCharacterCustomizer()
 		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 		PlayerController->SetInputMode(InputMode);
 	}
+
+	ResetPIETransactionBuffer();
 }
 
 void UVNHGameInstance::SelectCharacterPreset(int32 PresetIndex)

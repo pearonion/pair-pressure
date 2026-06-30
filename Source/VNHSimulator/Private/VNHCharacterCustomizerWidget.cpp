@@ -146,10 +146,10 @@ void UVNHCharacterCustomizerWidget::Rebuild()
 	AddPresetButton(LeftPanel, 1);
 	AddPresetButton(LeftPanel, 2);
 
-	UButton* RandomButton = MakeButton(WidgetTree, NSLOCTEXT("VNH", "CustomizerRandom", "MAKE ME UNEMPLOYABLE"), 15);
-	RandomButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleRandomClicked);
-	LeftPanel->AddChild(RandomButton);
-	Pad(RandomButton, FMargin(0.0f, 10.0f, 16.0f, 10.0f));
+	UButton* RandomizeButton = MakeButton(WidgetTree, NSLOCTEXT("VNH", "CustomizerRandom", "MAKE ME UNEMPLOYABLE"), 15);
+	RandomizeButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleRandomClicked);
+	LeftPanel->AddChild(RandomizeButton);
+	Pad(RandomizeButton, FMargin(0.0f, 10.0f, 16.0f, 10.0f));
 
 	UScrollBox* CategoryScroll = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass(), TEXT("CategoryScroll"));
 	LeftPanel->AddChild(CategoryScroll);

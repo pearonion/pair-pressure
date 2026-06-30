@@ -81,13 +81,13 @@ protected:
 	FString DefaultJoinAddress = TEXT("127.0.0.1");
 
 private:
-	UPROPERTY(Transient)
+	UPROPERTY(Transient, NonTransactional)
 	TObjectPtr<UUserWidget> ActiveMainMenu;
 
-	UPROPERTY(Transient)
+	UPROPERTY(Transient, NonTransactional)
 	TObjectPtr<UVNHCharacterCustomizerWidget> ActiveCustomizer;
 
-	UPROPERTY(Transient)
+	UPROPERTY(Transient, NonTransactional)
 	TObjectPtr<class UVNHCharacterProfileSave> CharacterProfile;
 
 	void HostGame(bool bPublic);
