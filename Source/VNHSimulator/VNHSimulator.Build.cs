@@ -17,7 +17,8 @@ public class VNHSimulator : ModuleRules
 			"EnhancedInput",
 			"AIModule",
 			"GameplayTasks",
-			"UMG"
+			"UMG",
+			"AssetRegistry"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

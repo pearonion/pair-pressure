@@ -1,5 +1,6 @@
 #include "VNHGameInstance.h"
 
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "Blueprint/UserWidget.h"
 #include "Components/Button.h"
 #include "Components/EditableTextBox.h"
@@ -8,10 +9,13 @@
 #include "Engine/SkeletalMesh.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "Modules/ModuleManager.h"
 #include "VNHCharacterCustomizerWidget.h"
 #include "VNHCharacterProfileSave.h"
 #include "VNHLog.h"
 #include "VNHPlayerController.h"
+
+#include <initializer_list>
 
 namespace
 {
@@ -27,89 +31,125 @@ TSoftObjectPtr<USkeletalMesh> MeshRef(const TCHAR* Path)
 	return TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(Path));
 }
 
+TSoftObjectPtr<USkeletalMesh> MeshRef(const FSoftObjectPath& Path)
+{
+	return Path.IsNull() ? TSoftObjectPtr<USkeletalMesh>() : TSoftObjectPtr<USkeletalMesh>(Path);
+}
+
 FString MeshLabel(const TSoftObjectPtr<USkeletalMesh>& Mesh)
 {
 	return Mesh.IsNull() ? FString(TEXT("NONE")) : Mesh.ToSoftObjectPath().GetAssetName();
 }
 
-const TArray<const TCHAR*>& BodyOptions()
+bool NameStartsWithAny(const FString& Name, std::initializer_list<const TCHAR*> Prefixes)
 {
-	static const TArray<const TCHAR*> Options = {
-		TEXT("/Game/TNG/Characters/BaseBodies/SK_TNG_Body_009.SK_TNG_Body_009"),
-		TEXT("/Game/TNG/Characters/BaseBodies/SK_TNG_Body_001.SK_TNG_Body_001"),
-		TEXT("/Game/TNG/Characters/BaseBodies/SK_TNG_Body_004.SK_TNG_Body_004"),
-		TEXT("/Game/TNG/Characters/BaseBodies/SK_TNG_Body_012.SK_TNG_Body_012")
-	};
+	for (const TCHAR* Prefix : Prefixes)
+	{
+		if (Name.StartsWith(Prefix))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool NameContainsAny(const FString& Name, std::initializer_list<const TCHAR*> Fragments)
+{
+	for (const TCHAR* Fragment : Fragments)
+	{
+		if (Name.Contains(Fragment))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool MatchesCustomizationSlot(const FString& Name, EVNHCustomizationSlot CustomizationSlot)
+{
+	switch (CustomizationSlot)
+	{
+	case EVNHCustomizationSlot::Body:
+		return NameStartsWithAny(Name, {TEXT("SK_Body_")});
+	case EVNHCustomizationSlot::Hair:
+		return NameStartsWithAny(Name, {TEXT("SK_Hairstyle_")});
+	case EVNHCustomizationSlot::Face:
+		return NameContainsAny(Name, {TEXT("_emotion_")});
+	case EVNHCustomizationSlot::Hat:
+		return NameStartsWithAny(Name, {TEXT("SK_Hat_"), TEXT("SK_Hat_Single_")});
+	case EVNHCustomizationSlot::Mustache:
+		return NameStartsWithAny(Name, {TEXT("SK_Mustache_"), TEXT("SK_Beard_")});
+	case EVNHCustomizationSlot::Outfit:
+		return NameStartsWithAny(Name, {TEXT("SK_Outfit_"), TEXT("SK_Costume_"), TEXT("SK_Mascot_")});
+	case EVNHCustomizationSlot::Outwear:
+		return NameStartsWithAny(Name, {TEXT("SK_Outwear_")});
+	case EVNHCustomizationSlot::Pants:
+		return NameStartsWithAny(Name, {TEXT("SK_Pants_"), TEXT("SK_Shorts_")});
+	case EVNHCustomizationSlot::Shoes:
+		return NameStartsWithAny(Name, {TEXT("SK_Shoe_"), TEXT("SK_Socks_")});
+	case EVNHCustomizationSlot::Accessory:
+		return NameStartsWithAny(Name, {
+			TEXT("SK_Bandage_"),
+			TEXT("SK_Clown_nose_"),
+			TEXT("SK_Earrings_"),
+			TEXT("SK_Glasses_"),
+			TEXT("SK_Gloves_"),
+			TEXT("SK_Headphones_"),
+			TEXT("SK_Mask_"),
+			TEXT("SK_Pacifier_"),
+			TEXT("SK_Piercing_")
+		});
+	default:
+		return false;
+	}
+}
+
+const TArray<FSoftObjectPath>& CreativeCharacterOptions(EVNHCustomizationSlot CustomizationSlot)
+{
+	static TMap<EVNHCustomizationSlot, TArray<FSoftObjectPath>> CachedOptions;
+	if (const TArray<FSoftObjectPath>* ExistingOptions = CachedOptions.Find(CustomizationSlot))
+	{
+		return *ExistingOptions;
+	}
+
+	TArray<FSoftObjectPath>& Options = CachedOptions.Add(CustomizationSlot);
+	if (CustomizationSlot != EVNHCustomizationSlot::Body)
+	{
+		Options.Add(FSoftObjectPath());
+	}
+
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+	FARFilter Filter;
+	Filter.PackagePaths.Add(FName(TEXT("/Game/Creative_Characters/Skeleton_Meshes")));
+	Filter.ClassPaths.Add(USkeletalMesh::StaticClass()->GetClassPathName());
+	Filter.bRecursivePaths = true;
+
+	TArray<FAssetData> AssetDataList;
+	AssetRegistryModule.Get().GetAssets(Filter, AssetDataList);
+	AssetDataList.Sort([](const FAssetData& Left, const FAssetData& Right)
+	{
+		return Left.AssetName.LexicalLess(Right.AssetName);
+	});
+
+	for (const FAssetData& AssetData : AssetDataList)
+	{
+		if (MatchesCustomizationSlot(AssetData.AssetName.ToString(), CustomizationSlot))
+		{
+			Options.Add(AssetData.GetSoftObjectPath());
+		}
+	}
+
+	UE_LOG(LogVNH, Display, TEXT("CustomizerOptions: slot %d loaded %d Creative_Characters options."), static_cast<int32>(CustomizationSlot), Options.Num());
 	return Options;
 }
 
-const TArray<const TCHAR*>& HairOptions()
+FSoftObjectPath GetOptionOrNone(EVNHCustomizationSlot CustomizationSlot, int32 Index)
 {
-	static const TArray<const TCHAR*> Options = {
-		TEXT(""),
-		TEXT("/Game/TNG/Characters/Cosmetics/Hair/SK_TNG_Hair_Male_003.SK_TNG_Hair_Male_003"),
-		TEXT("/Game/TNG/Characters/Cosmetics/Hair/SK_TNG_Hair_Male_006.SK_TNG_Hair_Male_006"),
-		TEXT("/Game/TNG/Characters/Cosmetics/Hair/SK_TNG_Hair_Female_003.SK_TNG_Hair_Female_003")
-	};
-	return Options;
+	const TArray<FSoftObjectPath>& Options = CreativeCharacterOptions(CustomizationSlot);
+	return Options.IsValidIndex(Index) ? Options[Index] : FSoftObjectPath();
 }
 
-const TArray<const TCHAR*>& FaceOptions()
-{
-	static const TArray<const TCHAR*> Options = {
-		TEXT("/Game/TNG/Characters/Cosmetics/Faces/SK_TNG_Face_Happy_001.SK_TNG_Face_Happy_001"),
-		TEXT("/Game/TNG/Characters/Cosmetics/Faces/SK_TNG_Face_Surprised_001.SK_TNG_Face_Surprised_001"),
-		TEXT("/Game/TNG/Characters/Cosmetics/Faces/SK_TNG_Face_Evil_001.SK_TNG_Face_Evil_001"),
-		TEXT("")
-	};
-	return Options;
-}
-
-const TArray<const TCHAR*>& HatOptions()
-{
-	static const TArray<const TCHAR*> Options = {
-		TEXT(""),
-		TEXT("/Game/TNG/Characters/Cosmetics/Hats/SK_TNG_Hat_003.SK_TNG_Hat_003"),
-		TEXT("/Game/TNG/Characters/Cosmetics/Hats/SK_TNG_Hat_010.SK_TNG_Hat_010"),
-		TEXT("/Game/TNG/Characters/Cosmetics/Hats/SK_TNG_Hat_020.SK_TNG_Hat_020")
-	};
-	return Options;
-}
-
-const TArray<const TCHAR*>& MustacheOptions()
-{
-	static const TArray<const TCHAR*> Options = {
-		TEXT(""),
-		TEXT("/Game/TNG/Characters/Cosmetics/Mustaches/SK_TNG_Mustache_001.SK_TNG_Mustache_001"),
-		TEXT("/Game/TNG/Characters/Cosmetics/Mustaches/SK_TNG_Mustache_004.SK_TNG_Mustache_004"),
-		TEXT("/Game/TNG/Characters/Cosmetics/Mustaches/SK_TNG_Mustache_010.SK_TNG_Mustache_010")
-	};
-	return Options;
-}
-
-const TArray<const TCHAR*>& OutfitOptions()
-{
-	static const TArray<const TCHAR*> Options = {
-		TEXT("/Game/TNG/Characters/Cosmetics/Outfits/SK_TNG_Outfit_001.SK_TNG_Outfit_001"),
-		TEXT("/Game/TNG/Characters/Cosmetics/Outfits/SK_TNG_Outfit_004.SK_TNG_Outfit_004"),
-		TEXT("/Game/TNG/Characters/Cosmetics/Outfits/SK_TNG_Outfit_007.SK_TNG_Outfit_007"),
-		TEXT("/Game/TNG/Characters/Cosmetics/Outfits/SK_TNG_Costume_7_001.SK_TNG_Costume_7_001")
-	};
-	return Options;
-}
-
-const TArray<const TCHAR*>& OutwearOptions()
-{
-	static const TArray<const TCHAR*> Options = {
-		TEXT(""),
-		TEXT("/Game/TNG/Characters/Cosmetics/Outwear/SK_TNG_Outwear_001.SK_TNG_Outwear_001"),
-		TEXT("/Game/TNG/Characters/Cosmetics/Outwear/SK_TNG_Outwear_014.SK_TNG_Outwear_014"),
-		TEXT("/Game/TNG/Characters/Cosmetics/Outwear/SK_TNG_Outwear_033.SK_TNG_Outwear_033")
-	};
-	return Options;
-}
-
-void CycleMesh(TSoftObjectPtr<USkeletalMesh>& Mesh, const TArray<const TCHAR*>& Options, int32 Direction)
+void CycleMesh(TSoftObjectPtr<USkeletalMesh>& Mesh, const TArray<FSoftObjectPath>& Options, int32 Direction)
 {
 	if (Options.IsEmpty())
 	{
@@ -120,7 +160,7 @@ void CycleMesh(TSoftObjectPtr<USkeletalMesh>& Mesh, const TArray<const TCHAR*>& 
 	int32 CurrentIndex = 0;
 	for (int32 Index = 0; Index < Options.Num(); ++Index)
 	{
-		if (CurrentPath == FString(Options[Index]))
+		if (CurrentPath == Options[Index].ToString())
 		{
 			CurrentIndex = Index;
 			break;
@@ -128,7 +168,7 @@ void CycleMesh(TSoftObjectPtr<USkeletalMesh>& Mesh, const TArray<const TCHAR*>& 
 	}
 
 	const int32 NextIndex = (CurrentIndex + Direction + Options.Num()) % Options.Num();
-	Mesh = Options[NextIndex][0] == TEXT('\0') ? TSoftObjectPtr<USkeletalMesh>() : MeshRef(Options[NextIndex]);
+	Mesh = MeshRef(Options[NextIndex]);
 }
 }
 
@@ -328,7 +368,13 @@ void UVNHGameInstance::ShowCharacterCustomizer(bool bLobbyMode)
 		return;
 	}
 
-	ActiveCustomizer = CreateWidget<UVNHCharacterCustomizerWidget>(PlayerController, UVNHCharacterCustomizerWidget::StaticClass());
+	UClass* CustomizerWidgetClass = LoadClass<UVNHCharacterCustomizerWidget>(nullptr, TEXT("/Game/UI/WBP_VNHCharacterCustomizer.WBP_VNHCharacterCustomizer_C"));
+	if (!CustomizerWidgetClass)
+	{
+		CustomizerWidgetClass = UVNHCharacterCustomizerWidget::StaticClass();
+	}
+
+	ActiveCustomizer = CreateWidget<UVNHCharacterCustomizerWidget>(PlayerController, CustomizerWidgetClass);
 	if (!ActiveCustomizer)
 	{
 		return;
@@ -398,26 +444,35 @@ void UVNHGameInstance::CycleCustomizationSlot(EVNHCustomizationSlot Customizatio
 	switch (CustomizationSlot)
 	{
 	case EVNHCustomizationSlot::Body:
-		CycleMesh(Customization.BodyMesh, BodyOptions(), Direction);
+		CycleMesh(Customization.BodyMesh, CreativeCharacterOptions(CustomizationSlot), Direction);
 		break;
 	case EVNHCustomizationSlot::Hair:
-		CycleMesh(Customization.HairMesh, HairOptions(), Direction);
+		CycleMesh(Customization.HairMesh, CreativeCharacterOptions(CustomizationSlot), Direction);
 		break;
 	case EVNHCustomizationSlot::Face:
-		CycleMesh(Customization.FaceMesh, FaceOptions(), Direction);
+		CycleMesh(Customization.FaceMesh, CreativeCharacterOptions(CustomizationSlot), Direction);
 		Customization.bNoFace = Customization.FaceMesh.IsNull();
 		break;
 	case EVNHCustomizationSlot::Hat:
-		CycleMesh(Customization.HatMesh, HatOptions(), Direction);
+		CycleMesh(Customization.HatMesh, CreativeCharacterOptions(CustomizationSlot), Direction);
 		break;
 	case EVNHCustomizationSlot::Mustache:
-		CycleMesh(Customization.MustacheMesh, MustacheOptions(), Direction);
+		CycleMesh(Customization.MustacheMesh, CreativeCharacterOptions(CustomizationSlot), Direction);
 		break;
 	case EVNHCustomizationSlot::Outfit:
-		CycleMesh(Customization.OutfitMesh, OutfitOptions(), Direction);
+		CycleMesh(Customization.OutfitMesh, CreativeCharacterOptions(CustomizationSlot), Direction);
 		break;
 	case EVNHCustomizationSlot::Outwear:
-		CycleMesh(Customization.OutwearMesh, OutwearOptions(), Direction);
+		CycleMesh(Customization.OutwearMesh, CreativeCharacterOptions(CustomizationSlot), Direction);
+		break;
+	case EVNHCustomizationSlot::Pants:
+		CycleMesh(Customization.PantsMesh, CreativeCharacterOptions(CustomizationSlot), Direction);
+		break;
+	case EVNHCustomizationSlot::Shoes:
+		CycleMesh(Customization.ShoesMesh, CreativeCharacterOptions(CustomizationSlot), Direction);
+		break;
+	case EVNHCustomizationSlot::Accessory:
+		CycleMesh(Customization.AccessoryMesh, CreativeCharacterOptions(CustomizationSlot), Direction);
 		break;
 	default:
 		break;
@@ -437,13 +492,22 @@ void UVNHGameInstance::RandomizeActiveCustomization()
 
 	FVNHCharacterCustomization& Customization = CharacterProfile->Presets[CharacterProfile->ActivePresetIndex];
 	const int32 PresetIndex = CharacterProfile->ActivePresetIndex;
-	Customization.BodyMesh = MeshRef(BodyOptions()[FMath::RandRange(0, BodyOptions().Num() - 1)]);
-	Customization.HairMesh = MeshRef(HairOptions()[FMath::RandRange(1, HairOptions().Num() - 1)]);
-	Customization.FaceMesh = MeshRef(FaceOptions()[FMath::RandRange(0, FaceOptions().Num() - 2)]);
-	Customization.HatMesh = MeshRef(HatOptions()[FMath::RandRange(0, HatOptions().Num() - 1)]);
-	Customization.MustacheMesh = MeshRef(MustacheOptions()[FMath::RandRange(0, MustacheOptions().Num() - 1)]);
-	Customization.OutfitMesh = MeshRef(OutfitOptions()[FMath::RandRange(0, OutfitOptions().Num() - 1)]);
-	Customization.OutwearMesh = MeshRef(OutwearOptions()[FMath::RandRange(0, OutwearOptions().Num() - 1)]);
+	auto PickRandomMesh = [](EVNHCustomizationSlot CustomizationSlot)
+	{
+		const TArray<FSoftObjectPath>& Options = CreativeCharacterOptions(CustomizationSlot);
+		return Options.IsEmpty() ? TSoftObjectPtr<USkeletalMesh>() : MeshRef(Options[FMath::RandRange(0, Options.Num() - 1)]);
+	};
+
+	Customization.BodyMesh = PickRandomMesh(EVNHCustomizationSlot::Body);
+	Customization.HairMesh = PickRandomMesh(EVNHCustomizationSlot::Hair);
+	Customization.FaceMesh = PickRandomMesh(EVNHCustomizationSlot::Face);
+	Customization.HatMesh = PickRandomMesh(EVNHCustomizationSlot::Hat);
+	Customization.MustacheMesh = PickRandomMesh(EVNHCustomizationSlot::Mustache);
+	Customization.OutfitMesh = PickRandomMesh(EVNHCustomizationSlot::Outfit);
+	Customization.OutwearMesh = PickRandomMesh(EVNHCustomizationSlot::Outwear);
+	Customization.PantsMesh = PickRandomMesh(EVNHCustomizationSlot::Pants);
+	Customization.ShoesMesh = PickRandomMesh(EVNHCustomizationSlot::Shoes);
+	Customization.AccessoryMesh = PickRandomMesh(EVNHCustomizationSlot::Accessory);
 	Customization.BodyColor = FLinearColor::MakeRandomColor();
 	Customization.HairColor = FLinearColor::MakeRandomColor();
 	Customization.OutfitColor = FLinearColor::MakeRandomColor();
@@ -470,13 +534,17 @@ FString UVNHGameInstance::GetActiveCustomizationSummary()
 {
 	const FVNHCharacterCustomization& Customization = GetActiveCustomization();
 	return FString::Printf(
-		TEXT("PRESET %d // %s // Body %s // Hair %s // Hat %s // Face %s"),
+		TEXT("PRESET %d // %s // Body %s // Hair %s // Face %s // Fit %s // Pants %s // Shoes %s // Hat %s // Accessory %s"),
 		Customization.PresetIndex + 1,
 		*Customization.Nickname.ToString(),
 		*MeshLabel(Customization.BodyMesh),
 		Customization.HairMesh.IsNull() ? TEXT("BALD POWER") : *MeshLabel(Customization.HairMesh),
+		Customization.bNoFace ? TEXT("NO FACE, NO PROBLEM") : *MeshLabel(Customization.FaceMesh),
+		Customization.OutfitMesh.IsNull() ? TEXT("NO FIT") : *MeshLabel(Customization.OutfitMesh),
+		Customization.PantsMesh.IsNull() ? TEXT("NO PANTS") : *MeshLabel(Customization.PantsMesh),
+		Customization.ShoesMesh.IsNull() ? TEXT("NO SHOES") : *MeshLabel(Customization.ShoesMesh),
 		Customization.HatMesh.IsNull() ? TEXT("NO HAT") : *MeshLabel(Customization.HatMesh),
-		Customization.bNoFace ? TEXT("NO FACE, NO PROBLEM") : *MeshLabel(Customization.FaceMesh));
+		Customization.AccessoryMesh.IsNull() ? TEXT("NO ACCESSORY") : *MeshLabel(Customization.AccessoryMesh));
 }
 
 void UVNHGameInstance::PreviewActiveCustomizationOnLocalPawn()
@@ -530,13 +598,16 @@ FVNHCharacterCustomization UVNHGameInstance::MakeDefaultCustomization(int32 Pres
 {
 	FVNHCharacterCustomization Customization;
 	Customization.PresetIndex = PresetIndex;
-	Customization.BodyMesh = MeshRef(BodyOptions()[PresetIndex % BodyOptions().Num()]);
-	Customization.HairMesh = MeshRef(HairOptions()[1 + (PresetIndex % (HairOptions().Num() - 1))]);
-	Customization.FaceMesh = MeshRef(FaceOptions()[PresetIndex % (FaceOptions().Num() - 1)]);
-	Customization.HatMesh = PresetIndex == 1 ? MeshRef(HatOptions()[2]) : TSoftObjectPtr<USkeletalMesh>();
-	Customization.MustacheMesh = PresetIndex == 2 ? MeshRef(MustacheOptions()[2]) : TSoftObjectPtr<USkeletalMesh>();
-	Customization.OutfitMesh = MeshRef(OutfitOptions()[PresetIndex % OutfitOptions().Num()]);
-	Customization.OutwearMesh = PresetIndex == 0 ? TSoftObjectPtr<USkeletalMesh>() : MeshRef(OutwearOptions()[PresetIndex]);
+	Customization.BodyMesh = MeshRef(GetOptionOrNone(EVNHCustomizationSlot::Body, 8 + PresetIndex));
+	Customization.HairMesh = MeshRef(GetOptionOrNone(EVNHCustomizationSlot::Hair, 1 + PresetIndex));
+	Customization.FaceMesh = MeshRef(GetOptionOrNone(EVNHCustomizationSlot::Face, 1 + PresetIndex));
+	Customization.HatMesh = PresetIndex == 1 ? MeshRef(GetOptionOrNone(EVNHCustomizationSlot::Hat, 3)) : TSoftObjectPtr<USkeletalMesh>();
+	Customization.MustacheMesh = PresetIndex == 2 ? MeshRef(GetOptionOrNone(EVNHCustomizationSlot::Mustache, 2)) : TSoftObjectPtr<USkeletalMesh>();
+	Customization.OutfitMesh = MeshRef(GetOptionOrNone(EVNHCustomizationSlot::Outfit, 1 + PresetIndex));
+	Customization.OutwearMesh = PresetIndex == 0 ? TSoftObjectPtr<USkeletalMesh>() : MeshRef(GetOptionOrNone(EVNHCustomizationSlot::Outwear, PresetIndex));
+	Customization.PantsMesh = MeshRef(GetOptionOrNone(EVNHCustomizationSlot::Pants, PresetIndex));
+	Customization.ShoesMesh = MeshRef(GetOptionOrNone(EVNHCustomizationSlot::Shoes, PresetIndex));
+	Customization.AccessoryMesh = PresetIndex == 2 ? MeshRef(GetOptionOrNone(EVNHCustomizationSlot::Accessory, 3)) : TSoftObjectPtr<USkeletalMesh>();
 	Customization.BodyColor = PresetIndex == 0 ? FLinearColor(0.95f, 0.58f, 0.36f, 1.0f) : PresetIndex == 1 ? FLinearColor(0.58f, 0.36f, 0.22f, 1.0f) : FLinearColor(0.78f, 0.70f, 0.54f, 1.0f);
 	Customization.HairColor = PresetIndex == 0 ? FLinearColor(0.10f, 0.06f, 0.03f, 1.0f) : PresetIndex == 1 ? FLinearColor(0.40f, 0.22f, 0.08f, 1.0f) : FLinearColor(0.02f, 0.02f, 0.025f, 1.0f);
 	Customization.OutfitColor = PresetIndex == 0 ? FLinearColor(0.05f, 0.58f, 0.82f, 1.0f) : PresetIndex == 1 ? FLinearColor(0.90f, 0.18f, 0.30f, 1.0f) : FLinearColor(0.95f, 0.76f, 0.10f, 1.0f);

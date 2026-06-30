@@ -31,7 +31,7 @@
 
 namespace
 {
-const TCHAR* DefaultBodyMeshPath = TEXT("/Game/TNG/Characters/BaseBodies/SK_TNG_Body_009.SK_TNG_Body_009");
+const TCHAR* DefaultBodyMeshPath = TEXT("/Game/Creative_Characters/Skeleton_Meshes/SK_Body_009.SK_Body_009");
 const TCHAR* CreativeAnimClassPath = TEXT("/Game/Creative_Characters/Animations/ABP_CreativeCharacter.ABP_CreativeCharacter_C");
 const TCHAR* CreativeIdleAnimPath = TEXT("/Game/TNG/Characters/Animations/ANIM_TNG_Idle_Breathing.ANIM_TNG_Idle_Breathing");
 constexpr float CalmFartVolume = 1.4f;

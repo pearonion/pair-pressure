@@ -61,14 +61,35 @@ void UVNHCharacterCustomizerWidget::SetLobbyMode(bool bInLobbyMode)
 	bLobbyMode = bInLobbyMode;
 	if (WidgetTree && WidgetTree->RootWidget)
 	{
-		Rebuild();
+		if (bUsingDesignerWidget || BindDesignerWidgets())
+		{
+			bUsingDesignerWidget = true;
+			ApplyModeText();
+			RefreshLabels();
+			RefreshLobbyCountdown();
+		}
+		else
+		{
+			Rebuild();
+		}
 	}
 }
 
 void UVNHCharacterCustomizerWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
-	Rebuild();
+	bUsingDesignerWidget = BindDesignerWidgets();
+	if (bUsingDesignerWidget)
+	{
+		BindDesignerEvents();
+		ApplyModeText();
+		RefreshLabels();
+		RefreshLobbyCountdown();
+	}
+	else
+	{
+		Rebuild();
+	}
 }
 
 void UVNHCharacterCustomizerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
@@ -143,6 +164,9 @@ void UVNHCharacterCustomizerWidget::Rebuild()
 	AddCategoryButton(Categories, EVNHCustomizationSlot::Mustache, NSLOCTEXT("VNH", "CustomizeMustache", "MUSTACHE"));
 	AddCategoryButton(Categories, EVNHCustomizationSlot::Outfit, NSLOCTEXT("VNH", "CustomizeOutfit", "OUTFIT"));
 	AddCategoryButton(Categories, EVNHCustomizationSlot::Outwear, NSLOCTEXT("VNH", "CustomizeOutwear", "OUTWEAR"));
+	AddCategoryButton(Categories, EVNHCustomizationSlot::Pants, NSLOCTEXT("VNH", "CustomizePants", "PANTS"));
+	AddCategoryButton(Categories, EVNHCustomizationSlot::Shoes, NSLOCTEXT("VNH", "CustomizeShoes", "SHOES"));
+	AddCategoryButton(Categories, EVNHCustomizationSlot::Accessory, NSLOCTEXT("VNH", "CustomizeAccessory", "ACCESSORY"));
 
 	UVerticalBox* RightPanel = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("CustomizerRightPanel"));
 	Layout->AddChild(RightPanel);
@@ -194,6 +218,131 @@ void UVNHCharacterCustomizerWidget::Rebuild()
 	RefreshLobbyCountdown();
 }
 
+bool UVNHCharacterCustomizerWidget::BindDesignerWidgets()
+{
+	if (!WidgetTree || !WidgetTree->FindWidget(TEXT("CustomizerRoot")))
+	{
+		return false;
+	}
+
+	TitleText = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("TitleText")));
+	PreviewText = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("PreviewText")));
+	StatusText = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("StatusText")));
+	PresetOneButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("PresetOneButton")));
+	PresetTwoButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("PresetTwoButton")));
+	PresetThreeButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("PresetThreeButton")));
+	RandomButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("RandomButton")));
+	BodyButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("BodyButton")));
+	HairButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("HairButton")));
+	FaceButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("FaceButton")));
+	HatButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("HatButton")));
+	MustacheButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("MustacheButton")));
+	OutfitButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("OutfitButton")));
+	OutwearButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("OutwearButton")));
+	PantsButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("PantsButton")));
+	ShoesButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("ShoesButton")));
+	AccessoryButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("AccessoryButton")));
+	PreviousButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("PreviousButton")));
+	NextButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("NextButton")));
+	BackReadyButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("BackReadyButton")));
+	return TitleText && PreviewText && StatusText && PreviousButton && NextButton && BackReadyButton;
+}
+
+void UVNHCharacterCustomizerWidget::BindDesignerEvents()
+{
+	if (PresetOneButton)
+	{
+		PresetOneButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandlePresetOneClicked);
+	}
+	if (PresetTwoButton)
+	{
+		PresetTwoButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandlePresetTwoClicked);
+	}
+	if (PresetThreeButton)
+	{
+		PresetThreeButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandlePresetThreeClicked);
+	}
+	if (RandomButton)
+	{
+		RandomButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleRandomClicked);
+	}
+	if (BodyButton)
+	{
+		BodyButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleBodyClicked);
+	}
+	if (HairButton)
+	{
+		HairButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleHairClicked);
+	}
+	if (FaceButton)
+	{
+		FaceButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleFaceClicked);
+	}
+	if (HatButton)
+	{
+		HatButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleHatClicked);
+	}
+	if (MustacheButton)
+	{
+		MustacheButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleMustacheClicked);
+	}
+	if (OutfitButton)
+	{
+		OutfitButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleOutfitClicked);
+	}
+	if (OutwearButton)
+	{
+		OutwearButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleOutwearClicked);
+	}
+	if (PantsButton)
+	{
+		PantsButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandlePantsClicked);
+	}
+	if (ShoesButton)
+	{
+		ShoesButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleShoesClicked);
+	}
+	if (AccessoryButton)
+	{
+		AccessoryButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleAccessoryClicked);
+	}
+	if (PreviousButton)
+	{
+		PreviousButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandlePreviousClicked);
+	}
+	if (NextButton)
+	{
+		NextButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleNextClicked);
+	}
+	if (BackReadyButton)
+	{
+		BackReadyButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleBackReadyClicked);
+	}
+}
+
+void UVNHCharacterCustomizerWidget::ApplyModeText()
+{
+	if (TitleText)
+	{
+		TitleText->SetText(bLobbyMode ? NSLOCTEXT("VNH", "LobbyCustomizerTitle", "DRIP CHECK") : NSLOCTEXT("VNH", "MainCustomizerTitle", "CHARACTER CUSTOMIZER"));
+	}
+
+	if (StatusText)
+	{
+		StatusText->SetText(bLobbyMode
+			? NSLOCTEXT("VNH", "LobbyCustomizerStatus", "READY locks your look. The timer does not care about your fashion crisis.")
+			: NSLOCTEXT("VNH", "MainCustomizerStatus", "Saved instantly. Your lobby pawn previews changes when one exists."));
+	}
+
+	if (BackReadyButton)
+	{
+		if (UTextBlock* ButtonText = Cast<UTextBlock>(BackReadyButton->GetContent()))
+		{
+			ButtonText->SetText(bLobbyMode ? NSLOCTEXT("VNH", "CustomizerReady", "READY") : NSLOCTEXT("VNH", "CustomizerBack", "SAVE + BACK"));
+		}
+	}
+}
+
 void UVNHCharacterCustomizerWidget::AddCategoryButton(UVerticalBox* Parent, EVNHCustomizationSlot CustomizationSlot, const FText& Label)
 {
 	if (!Parent || !WidgetTree)
@@ -224,6 +373,15 @@ void UVNHCharacterCustomizerWidget::AddCategoryButton(UVerticalBox* Parent, EVNH
 		break;
 	case EVNHCustomizationSlot::Outwear:
 		Button->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleOutwearClicked);
+		break;
+	case EVNHCustomizationSlot::Pants:
+		Button->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandlePantsClicked);
+		break;
+	case EVNHCustomizationSlot::Shoes:
+		Button->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleShoesClicked);
+		break;
+	case EVNHCustomizationSlot::Accessory:
+		Button->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleAccessoryClicked);
 		break;
 	default:
 		break;
@@ -370,6 +528,18 @@ void UVNHCharacterCustomizerWidget::HandleReadyClicked()
 	RemoveFromParent();
 }
 
+void UVNHCharacterCustomizerWidget::HandleBackReadyClicked()
+{
+	if (bLobbyMode)
+	{
+		HandleReadyClicked();
+	}
+	else
+	{
+		HandleBackClicked();
+	}
+}
+
 void UVNHCharacterCustomizerWidget::HandleRandomClicked()
 {
 	if (UVNHGameInstance* VNHGameInstance = GetVNHGameInstance())
@@ -428,6 +598,24 @@ void UVNHCharacterCustomizerWidget::HandleOutfitClicked()
 void UVNHCharacterCustomizerWidget::HandleOutwearClicked()
 {
 	ActiveSlot = EVNHCustomizationSlot::Outwear;
+	ApplyAndPreview();
+}
+
+void UVNHCharacterCustomizerWidget::HandlePantsClicked()
+{
+	ActiveSlot = EVNHCustomizationSlot::Pants;
+	ApplyAndPreview();
+}
+
+void UVNHCharacterCustomizerWidget::HandleShoesClicked()
+{
+	ActiveSlot = EVNHCustomizationSlot::Shoes;
+	ApplyAndPreview();
+}
+
+void UVNHCharacterCustomizerWidget::HandleAccessoryClicked()
+{
+	ActiveSlot = EVNHCustomizationSlot::Accessory;
 	ApplyAndPreview();
 }
 

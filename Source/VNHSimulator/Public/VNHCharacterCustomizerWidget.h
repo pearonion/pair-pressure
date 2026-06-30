@@ -25,6 +25,9 @@ protected:
 
 private:
 	void Rebuild();
+	bool BindDesignerWidgets();
+	void BindDesignerEvents();
+	void ApplyModeText();
 	void AddCategoryButton(UVerticalBox* Parent, EVNHCustomizationSlot CustomizationSlot, const FText& Label);
 	void AddPresetButton(UVerticalBox* Parent, int32 PresetIndex);
 	void AddOptionButton(UUniformGridPanel* Parent, const FText& Label, int32 Direction, int32 Column, int32 Row);
@@ -38,6 +41,9 @@ private:
 
 	UFUNCTION()
 	void HandleReadyClicked();
+
+	UFUNCTION()
+	void HandleBackReadyClicked();
 
 	UFUNCTION()
 	void HandleRandomClicked();
@@ -70,6 +76,15 @@ private:
 	void HandleOutwearClicked();
 
 	UFUNCTION()
+	void HandlePantsClicked();
+
+	UFUNCTION()
+	void HandleShoesClicked();
+
+	UFUNCTION()
+	void HandleAccessoryClicked();
+
+	UFUNCTION()
 	void HandlePresetOneClicked();
 
 	UFUNCTION()
@@ -79,6 +94,7 @@ private:
 	void HandlePresetThreeClicked();
 
 	bool bLobbyMode = false;
+	bool bUsingDesignerWidget = false;
 	EVNHCustomizationSlot ActiveSlot = EVNHCustomizationSlot::Body;
 
 	UPROPERTY(Transient)
@@ -89,4 +105,55 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> StatusText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> PresetOneButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> PresetTwoButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> PresetThreeButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> RandomButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> BodyButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> HairButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> FaceButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> HatButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> MustacheButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> OutfitButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> OutwearButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> PantsButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> ShoesButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> AccessoryButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> PreviousButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> NextButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> BackReadyButton;
 };
