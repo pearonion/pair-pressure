@@ -8,6 +8,7 @@
 class UInputAction;
 class UInputMappingContext;
 class UMaterialInterface;
+class UButton;
 class UPostProcessComponent;
 class UProgressBar;
 class UTextBlock;
@@ -202,6 +203,9 @@ private:
 	void EnsureTargetOutlinePostProcess();
 	void EnsureMarkedSuspectsWidget();
 	void EnsureComposureWidget();
+	void BindComposureWidgetButtons();
+	UFUNCTION()
+	void HandleHudCustomizeClicked();
 	void UpdateDebugDeckRuntimeLabels(float DeltaTime);
 	void UpdateMarkedSuspectsWidgetRuntimeLabels(float DeltaTime);
 	void UpdateComposureWidgetRuntimeLabels(float DeltaTime);
@@ -279,6 +283,7 @@ private:
 	TWeakObjectPtr<UTextBlock> FartRiskTextBlock;
 	TWeakObjectPtr<UTextBlock> UniversalActionTextBlock;
 	TWeakObjectPtr<UProgressBar> ComposureProgressBar;
+	TWeakObjectPtr<UButton> HudCustomizeButton;
 	FString LastInteractionText;
 	float LastInteractionTimeSeconds = -100.0f;
 	float TimeUntilDebugDeckLabelLookup = 0.0f;

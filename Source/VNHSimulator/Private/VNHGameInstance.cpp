@@ -12,6 +12,8 @@
 #include "Modules/ModuleManager.h"
 #include "VNHCharacterCustomizerWidget.h"
 #include "VNHCharacterProfileSave.h"
+#include "VNHDebugHUD.h"
+#include "VNHGameState.h"
 #include "VNHLog.h"
 #include "VNHPlayerController.h"
 
@@ -183,6 +185,29 @@ void ResetPIETransactionBuffer()
 		GEditor->ResetTransaction(NSLOCTEXT("VNH", "ResetPIETransactions", "Clearing PIE-only VNH runtime references"));
 	}
 #endif
+}
+
+bool IsMainMenuWorld(const UWorld* World)
+{
+	return World && World->GetMapName().Contains(TEXT("MainMenu"));
+}
+
+bool IsInGameCustomizationAllowed(const UWorld* World)
+{
+	if (IsMainMenuWorld(World))
+	{
+		return true;
+	}
+
+	const AVNHGameState* VNHGameState = World ? World->GetGameState<AVNHGameState>() : nullptr;
+	if (!VNHGameState)
+	{
+		return false;
+	}
+
+	const EVNHRoundPhase RoundPhase = VNHGameState->GetRoundPhase();
+	return RoundPhase == EVNHRoundPhase::WaitingForPlayers
+		|| RoundPhase == EVNHRoundPhase::AssigningRoles;
 }
 }
 
@@ -376,6 +401,14 @@ FString UVNHGameInstance::GetJoinAddressFromMenu() const
 
 void UVNHGameInstance::ShowCharacterCustomizer(bool bLobbyMode)
 {
+	UWorld* World = GetWorld();
+	if (!IsInGameCustomizationAllowed(World))
+	{
+		HideCharacterCustomizer();
+		UE_LOG(LogVNH, Display, TEXT("Customizer: blocked because the round is already active."));
+		return;
+	}
+
 	EnsureCharacterProfileLoaded();
 
 	if (ActiveCustomizer)
@@ -389,6 +422,10 @@ void UVNHGameInstance::ShowCharacterCustomizer(bool bLobbyMode)
 	{
 		UE_LOG(LogVNH, Warning, TEXT("Customizer: cannot open without a local player controller."));
 		return;
+	}
+	if (AVNHDebugHUD* DebugHUD = PlayerController->GetHUD<AVNHDebugHUD>())
+	{
+		DebugHUD->SetDebugPanelVisible(false);
 	}
 
 	UClass* CustomizerWidgetClass = LoadClass<UVNHCharacterCustomizerWidget>(nullptr, TEXT("/Game/UI/WBP_VNHCharacterCustomizer.WBP_VNHCharacterCustomizer_C"));

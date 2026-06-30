@@ -245,6 +245,7 @@ bool UVNHCharacterCustomizerWidget::BindDesignerWidgets()
 	PreviousButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("PreviousButton")));
 	NextButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("NextButton")));
 	BackReadyButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("BackReadyButton")));
+	CloseButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("CloseButton")));
 	return TitleText && PreviewText && StatusText && PreviousButton && NextButton && BackReadyButton;
 }
 
@@ -317,6 +318,10 @@ void UVNHCharacterCustomizerWidget::BindDesignerEvents()
 	if (BackReadyButton)
 	{
 		BackReadyButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleBackReadyClicked);
+	}
+	if (CloseButton)
+	{
+		CloseButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleBackClicked);
 	}
 }
 

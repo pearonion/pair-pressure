@@ -23,6 +23,7 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "VNHAlienLocomotionComponent.h"
+#include "VNHGameState.h"
 #include "VNHLog.h"
 #include "VNHPlayerState.h"
 #include "VNHShopperAIController.h"
@@ -38,6 +39,19 @@ constexpr float CalmFartVolume = 1.4f;
 constexpr float PanicFartVolume = 2.6f;
 constexpr float CalmFartInnerRadius = 275.0f;
 constexpr float PanicFartInnerRadius = 700.0f;
+
+bool IsComposureLockedForRoundPhase(const UWorld* World)
+{
+	const AVNHGameState* VNHGameState = World ? World->GetGameState<AVNHGameState>() : nullptr;
+	if (!VNHGameState)
+	{
+		return false;
+	}
+
+	const EVNHRoundPhase RoundPhase = VNHGameState->GetRoundPhase();
+	return RoundPhase == EVNHRoundPhase::WaitingForPlayers
+		|| RoundPhase == EVNHRoundPhase::AssigningRoles;
+}
 constexpr float CalmFartFalloffDistance = 325.0f;
 constexpr float PanicFartFalloffDistance = 1100.0f;
 }
@@ -311,6 +325,10 @@ void AVNHShopperCharacter::ApplyComposureDelta(float Delta, FName Reason)
 	{
 		return;
 	}
+	if (Delta < 0.0f && IsComposureLockedForRoundPhase(GetWorld()))
+	{
+		return;
+	}
 
 	const float PreviousComposure = Composure;
 	Composure = FMath::Clamp(Composure + Delta, 0.0f, 100.0f);
@@ -372,6 +390,12 @@ bool AVNHShopperCharacter::WasActionRepeatedRecently(EVNHUniversalAction Action,
 
 void AVNHShopperCharacter::UpdateComposureSystem(float DeltaSeconds)
 {
+	if (IsComposureLockedForRoundPhase(GetWorld()))
+	{
+		ResetInactivity();
+		return;
+	}
+
 	const FVector CurrentLocation = GetActorLocation();
 	const FRotator CurrentControlRotation = GetControlRotation();
 	const float MeaningfulMoveDistance = FVector::Dist2D(CurrentLocation, LastMeaningfulLocation);

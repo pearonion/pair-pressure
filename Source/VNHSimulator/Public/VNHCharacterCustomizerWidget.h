@@ -156,4 +156,7 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UButton> BackReadyButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> CloseButton;
 };

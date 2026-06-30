@@ -118,6 +118,18 @@ bool IsMainMenuWorld(const UWorld* World)
 {
 	return World && World->GetMapName().Contains(TEXT("MainMenu"));
 }
+
+bool IsCustomizationPhase(const AVNHGameState* VNHGameState)
+{
+	if (!VNHGameState)
+	{
+		return false;
+	}
+
+	const EVNHRoundPhase RoundPhase = VNHGameState->GetRoundPhase();
+	return RoundPhase == EVNHRoundPhase::WaitingForPlayers
+		|| RoundPhase == EVNHRoundPhase::AssigningRoles;
+}
 }
 
 void AVNHPlayerController::BeginPlay()
@@ -257,7 +269,32 @@ void AVNHPlayerController::EnsureComposureWidget()
 	NewWidget->AddToViewport(6300);
 	ComposureWidget = NewWidget;
 	TimeUntilComposureWidgetLookup = 0.0f;
+	BindComposureWidgetButtons();
 	UpdateComposureWidgetRuntimeLabels(0.0f);
+}
+
+void AVNHPlayerController::BindComposureWidgetButtons()
+{
+	UUserWidget* Widget = ComposureWidget.Get();
+	if (!Widget)
+	{
+		HudCustomizeButton.Reset();
+		return;
+	}
+
+	if (UButton* CustomizeButton = Cast<UButton>(Widget->GetWidgetFromName(TEXT("CustomizeButton"))))
+	{
+		CustomizeButton->OnClicked.AddUniqueDynamic(this, &AVNHPlayerController::HandleHudCustomizeClicked);
+		HudCustomizeButton = CustomizeButton;
+	}
+}
+
+void AVNHPlayerController::HandleHudCustomizeClicked()
+{
+	if (UVNHGameInstance* VNHGameInstance = GetGameInstance<UVNHGameInstance>())
+	{
+		VNHGameInstance->ShowCharacterCustomizer(true);
+	}
 }
 
 void AVNHPlayerController::AcknowledgePossession(APawn* PossessedPawn)
@@ -302,6 +339,7 @@ void AVNHPlayerController::SetupInputComponent()
 	InputComponent->BindAction(TEXT("VNH_QuickChat_NoThanks"), IE_Pressed, this, &AVNHPlayerController::HandleQuickChatNoThanksPressed);
 	InputComponent->BindAction(TEXT("VNH_QuickChat_WrongSize"), IE_Pressed, this, &AVNHPlayerController::HandleQuickChatFoundWrongSizePressed);
 	InputComponent->BindAction(TEXT("VNH_ToggleDebugHud"), IE_Pressed, this, &AVNHPlayerController::ToggleDebugHud);
+	InputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &AVNHPlayerController::ToggleDebugHud);
 
 	UE_LOG(LogVNH, Display, TEXT("AlienInput: setup complete. Controller=%s InputComponent=%s EnhancedComponent=%s"),
 		*GetClass()->GetName(),
@@ -1281,7 +1319,7 @@ void AVNHPlayerController::UpdatePreRoundCustomizationFlow()
 			UE_LOG(LogVNH, Display, TEXT("PreroundCustomization: opened lobby-mode customizer for round %d."), CurrentRound);
 		}
 	}
-	else if (bPhaseChanged && LastObservedRoundPhase == EVNHRoundPhase::AssigningRoles)
+	else if (bPhaseChanged)
 	{
 		if (UVNHGameInstance* VNHGameInstance = GetGameInstance<UVNHGameInstance>())
 		{
@@ -1545,17 +1583,25 @@ void AVNHPlayerController::UpdateComposureWidgetRuntimeLabels(float DeltaTime)
 		FartRiskTextBlock = Widget ? Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("FartRiskText"))) : nullptr;
 		UniversalActionTextBlock = Widget ? Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("UniversalActionText"))) : nullptr;
 		ComposureProgressBar = Widget ? Cast<UProgressBar>(Widget->GetWidgetFromName(TEXT("ComposureBar"))) : nullptr;
+		HudCustomizeButton = Widget ? Cast<UButton>(Widget->GetWidgetFromName(TEXT("CustomizeButton"))) : nullptr;
+		BindComposureWidgetButtons();
 	}
 
 	AVNHShopperCharacter* Shopper = GetPawn<AVNHShopperCharacter>();
 	const bool bShow = Shopper != nullptr;
+	const AVNHGameState* VNHGameState = GetWorld()->GetGameState<AVNHGameState>();
+	const bool bShowCustomizeButton = bShow && IsCustomizationPhase(VNHGameState);
 	if (UUserWidget* Widget = ComposureWidget.Get())
 	{
-		Widget->SetVisibility(bShow ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		Widget->SetVisibility(bShow ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
 	}
 	if (UWidget* Panel = ComposurePanelWidget.Get())
 	{
-		Panel->SetVisibility(bShow ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		Panel->SetVisibility(bShow ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	if (UButton* CustomizeButton = HudCustomizeButton.Get())
+	{
+		CustomizeButton->SetVisibility(bShowCustomizeButton ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	}
 	if (!Shopper)
 	{
