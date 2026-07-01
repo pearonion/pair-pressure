@@ -1827,7 +1827,7 @@ void AVNHPlayerController::RegisterGameplayHardwareCursors()
 	const bool bNormalRegistered = UWidgetBlueprintLibrary::SetHardwareCursor(
 		this,
 		EMouseCursor::Default,
-		TEXT("UI/Cursors/T_NormalCursor"),
+		TEXT("Slate/default-cursor"),
 		FVector2D::ZeroVector);
 	const bool bRegularRegistered = UWidgetBlueprintLibrary::SetHardwareCursor(
 		this,

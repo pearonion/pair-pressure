@@ -135,6 +135,7 @@ private:
 	void UpdateControlLabels();
 	void ApplyAudioSettings();
 	void ApplyVideoSettings();
+	void StyleComboBox(UComboBoxString* ComboBox) const;
 
 	UFUNCTION()
 	void HandleGameplayTabClicked();

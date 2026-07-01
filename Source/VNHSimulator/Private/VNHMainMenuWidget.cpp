@@ -4,6 +4,7 @@
 #include "Components/EditableTextBox.h"
 #include "Components/TextBlock.h"
 #include "GameFramework/PlayerController.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "VNHLog.h"
 #include "VNHGameInstance.h"
@@ -44,9 +45,21 @@ void UVNHMainMenuWidget::NativeConstruct()
 
 	if (APlayerController* PlayerController = GetOwningPlayer())
 	{
+		const bool bDefaultCursorRegistered = UWidgetBlueprintLibrary::SetHardwareCursor(
+			PlayerController,
+			EMouseCursor::Default,
+			TEXT("Slate/default-cursor"),
+			FVector2D::ZeroVector);
+		if (!bDefaultCursorRegistered)
+		{
+			UE_LOG(LogVNH, Warning, TEXT("MainMenu: Failed to register Slate/default-cursor hardware cursor."));
+		}
+
 		PlayerController->bShowMouseCursor = true;
 		PlayerController->bEnableClickEvents = true;
 		PlayerController->bEnableMouseOverEvents = true;
+		PlayerController->DefaultMouseCursor = EMouseCursor::Default;
+		PlayerController->CurrentMouseCursor = EMouseCursor::Default;
 
 		FInputModeUIOnly InputMode;
 		InputMode.SetWidgetToFocus(TakeWidget());

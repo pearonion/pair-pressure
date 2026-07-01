@@ -9,6 +9,7 @@
 #include "Components/WidgetSwitcher.h"
 #include "Engine/Engine.h"
 #include "GameFramework/GameUserSettings.h"
+#include "Styling/SlateTypes.h"
 #include "VNHLog.h"
 
 void UVNHSettingsDialogWidget::NativeConstruct()
@@ -20,6 +21,11 @@ void UVNHSettingsDialogWidget::NativeConstruct()
 	PopulateComboBox(InputPresetCombo, {TEXT("Keyboard & Mouse"), TEXT("Controller")}, TEXT("Keyboard & Mouse"));
 	PopulateComboBox(KeyboardLayoutCombo, {TEXT("WASD"), TEXT("Arrow Keys"), TEXT("Left-Handed")}, TEXT("WASD"));
 	PopulateComboBox(ControllerLayoutCombo, {TEXT("Default"), TEXT("Southpaw"), TEXT("Legacy")}, TEXT("Default"));
+	StyleComboBox(WindowModeCombo);
+	StyleComboBox(QualityPresetCombo);
+	StyleComboBox(InputPresetCombo);
+	StyleComboBox(KeyboardLayoutCombo);
+	StyleComboBox(ControllerLayoutCombo);
 
 	if (TabGameplayButton)
 	{
@@ -250,6 +256,94 @@ FString UVNHSettingsDialogWidget::GetSelectedOption(const UComboBoxString* Combo
 
 	const FString SelectedValue = ComboBox->GetSelectedOption();
 	return SelectedValue.IsEmpty() ? DefaultValue : SelectedValue;
+}
+
+void UVNHSettingsDialogWidget::StyleComboBox(UComboBoxString* ComboBox) const
+{
+	if (!ComboBox)
+	{
+		return;
+	}
+
+	const FLinearColor TextColor(1.0f, 0.98f, 0.94f, 1.0f);
+	const FLinearColor MenuBackground(0.018f, 0.030f, 0.038f, 0.99f);
+	const FLinearColor RowBackground(0.032f, 0.043f, 0.054f, 1.0f);
+	const FLinearColor RowBackgroundAlt(0.025f, 0.036f, 0.047f, 1.0f);
+	const FLinearColor RowHover(0.020f, 0.180f, 0.165f, 1.0f);
+	const FLinearColor RowSelected(0.000f, 0.260f, 0.225f, 1.0f);
+	const FLinearColor Accent(0.000f, 0.920f, 0.780f, 1.0f);
+	const FLinearColor Border(0.000f, 0.520f, 0.450f, 0.85f);
+
+	auto MakeBrush = [](const FLinearColor& Color)
+	{
+		FSlateBrush Brush;
+		Brush.DrawAs = ESlateBrushDrawType::Box;
+		Brush.TintColor = FSlateColor(Color);
+		Brush.Margin = FMargin(0.0f);
+		Brush.SetImageSize(FVector2D(8.0f, 8.0f));
+		return Brush;
+	};
+
+	FComboBoxStyle ComboStyle = ComboBox->GetWidgetStyle();
+	FComboButtonStyle ComboButtonStyle = ComboStyle.ComboButtonStyle;
+	FButtonStyle ButtonStyle = ComboButtonStyle.ButtonStyle;
+	ButtonStyle
+		.SetNormal(MakeBrush(FLinearColor(0.030f, 0.037f, 0.048f, 0.96f)))
+		.SetHovered(MakeBrush(FLinearColor(0.045f, 0.075f, 0.078f, 1.0f)))
+		.SetPressed(MakeBrush(FLinearColor(0.000f, 0.115f, 0.105f, 1.0f)))
+		.SetNormalForeground(FSlateColor(TextColor))
+		.SetHoveredForeground(FSlateColor(TextColor))
+		.SetPressedForeground(FSlateColor(TextColor))
+		.SetNormalPadding(FMargin(12.0f, 6.0f))
+		.SetPressedPadding(FMargin(12.0f, 7.0f, 12.0f, 5.0f));
+
+	FSlateBrush MenuBorderBrush = MakeBrush(MenuBackground);
+	MenuBorderBrush.DrawAs = ESlateBrushDrawType::RoundedBox;
+	MenuBorderBrush.OutlineSettings = FSlateBrushOutlineSettings(FSlateColor(Accent), 1.0f);
+
+	FSlateBrush DownArrowBrush = MakeBrush(Accent);
+	DownArrowBrush.DrawAs = ESlateBrushDrawType::Image;
+
+	ComboButtonStyle
+		.SetButtonStyle(ButtonStyle)
+		.SetDownArrowImage(DownArrowBrush)
+		.SetMenuBorderBrush(MenuBorderBrush)
+		.SetMenuBorderPadding(FMargin(4.0f))
+		.SetContentPadding(FMargin(10.0f, 6.0f))
+		.SetDownArrowPadding(FMargin(8.0f, 2.0f, 4.0f, 2.0f))
+		.SetDownArrowAlignment(VAlign_Center);
+	ComboStyle
+		.SetComboButtonStyle(ComboButtonStyle)
+		.SetContentPadding(FMargin(10.0f, 6.0f))
+		.SetMenuRowPadding(FMargin(2.0f));
+
+	FSlateBrush HoverBrush = MakeBrush(RowHover);
+	HoverBrush.DrawAs = ESlateBrushDrawType::RoundedBox;
+	HoverBrush.OutlineSettings = FSlateBrushOutlineSettings(FSlateColor(Border), 1.0f);
+
+	FSlateBrush SelectedBrush = MakeBrush(RowSelected);
+	SelectedBrush.DrawAs = ESlateBrushDrawType::RoundedBox;
+	SelectedBrush.OutlineSettings = FSlateBrushOutlineSettings(FSlateColor(Accent), 1.0f);
+
+	FTableRowStyle RowStyle = ComboBox->GetItemStyle();
+	RowStyle
+		.SetSelectorFocusedBrush(SelectedBrush)
+		.SetActiveHoveredBrush(HoverBrush)
+		.SetActiveBrush(SelectedBrush)
+		.SetInactiveHoveredBrush(HoverBrush)
+		.SetInactiveBrush(MakeBrush(RowBackground))
+		.SetEvenRowBackgroundBrush(MakeBrush(RowBackground))
+		.SetEvenRowBackgroundHoveredBrush(HoverBrush)
+		.SetOddRowBackgroundBrush(MakeBrush(RowBackgroundAlt))
+		.SetOddRowBackgroundHoveredBrush(HoverBrush)
+		.SetTextColor(FSlateColor(TextColor))
+		.SetSelectedTextColor(FSlateColor(TextColor));
+
+	ComboBox->SetWidgetStyle(ComboStyle);
+	ComboBox->SetItemStyle(RowStyle);
+	ComboBox->SetContentPadding(FMargin(10.0f, 6.0f));
+	ComboBox->SetMaxListHeight(360.0f);
+	ComboBox->SetHasDownArrow(true);
 }
 
 bool UVNHSettingsDialogWidget::GetCheckBoxValue(const UCheckBox* CheckBox, bool DefaultValue) const
