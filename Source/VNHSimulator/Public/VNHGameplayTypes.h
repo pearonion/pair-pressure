@@ -64,6 +64,9 @@ enum class EVNHUniversalAction : uint8
 	Inspect,
 	Point,
 	Wave,
+	Laugh,
+	Fart,
+	PlaceDecoy,
 	PickUp,
 	Drop
 };

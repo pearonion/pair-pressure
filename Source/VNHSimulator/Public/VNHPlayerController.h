@@ -7,6 +7,8 @@
 
 class UInputAction;
 class UInputMappingContext;
+class UAnimMontage;
+class UDataTable;
 class UMaterialInterface;
 class UButton;
 class UPostProcessComponent;
@@ -24,6 +26,8 @@ class VNHSIMULATOR_API AVNHPlayerController : public APlayerController
 	GENERATED_BODY()
 
 public:
+	AVNHPlayerController();
+
 	virtual void BeginPlay() override;
 	virtual void AcknowledgePossession(APawn* PossessedPawn) override;
 	virtual void SetupInputComponent() override;
@@ -172,6 +176,12 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Input|Alien")
 	bool bEnablePolledAlienKeyboardInput = true;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Actions|Animations")
+	TSoftObjectPtr<UDataTable> HumanActionAnimationTable;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Actions|Animations")
+	TSoftObjectPtr<UDataTable> AlienActionAnimationTable;
+
 private:
 	UVNHAlienLocomotionComponent* GetAlienLocomotionComponent() const;
 
@@ -189,6 +199,9 @@ private:
 	void HandleInspectPressed();
 	void HandlePointPressed();
 	void HandleWavePressed();
+	void HandleLaughPressed();
+	void HandleFartPressed();
+	void HandlePlaceDecoyPressed();
 	void HandlePickUpPressed();
 	void HandleDropPressed();
 	void HandleInteractPressed();
@@ -205,9 +218,23 @@ private:
 	void EnsureMarkedSuspectsWidget();
 	void EnsureComposureWidget();
 	void RemoveComposureWidget();
+	void BindRoleHudActionButtons();
+	void BindRoleHudActionButton(FName ButtonName, FName HandlerName);
 	void BindComposureWidgetButtons();
 	UFUNCTION()
 	void HandleHudCustomizeClicked();
+	UFUNCTION()
+	void HandleHudInspectClicked();
+	UFUNCTION()
+	void HandleHudWaveClicked();
+	UFUNCTION()
+	void HandleHudPointClicked();
+	UFUNCTION()
+	void HandleHudLaughClicked();
+	UFUNCTION()
+	void HandleHudFartClicked();
+	UFUNCTION()
+	void HandleHudPlaceDecoyClicked();
 	FString GetRoundTimerText() const;
 	void UpdateRoleHudWidgetRuntimeLabels(float DeltaTime);
 	void UpdateDebugDeckRuntimeLabels(float DeltaTime);
@@ -230,6 +257,8 @@ private:
 	void RefreshShopperOutline(AVNHShopperCharacter* Shopper, bool bHovered) const;
 	void ClearMarkedSuspectsForNewRound();
 	AActor* GetUniversalActionTarget(EVNHUniversalAction Action) const;
+	UAnimMontage* ResolveRoleActionMontage(EVNHPlayerRole Role, const AVNHShopperCharacter* Shopper, EVNHUniversalAction Action) const;
+	void PlayRoleActionAnimation(EVNHPlayerRole Role, AVNHShopperCharacter* Shopper, EVNHUniversalAction Action) const;
 	void SetInteractableOutline(AActor* Actor, bool bEnabled) const;
 	void PerformPickUp(AVNHShopperCharacter* Shopper, AActor* Prop);
 	void PerformDrop(AVNHShopperCharacter* Shopper);

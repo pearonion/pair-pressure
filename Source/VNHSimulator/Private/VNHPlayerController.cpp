@@ -2,6 +2,7 @@
 
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Animation/AnimMontage.h"
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Camera/PlayerCameraManager.h"
@@ -13,11 +14,13 @@
 #include "Components/Button.h"
 #include "Components/VerticalBox.h"
 #include "Components/Widget.h"
+#include "Engine/DataTable.h"
 #include "Engine/Scene.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "InputCoreTypes.h"
 #include "Materials/MaterialInterface.h"
+#include "UObject/UnrealType.h"
 #include "EngineUtils.h"
 #include "VNHGameMode.h"
 #include "VNHGameState.h"
@@ -87,6 +90,12 @@ const TCHAR* ToUniversalActionText(EVNHUniversalAction Action)
 		return TEXT("POINT");
 	case EVNHUniversalAction::Wave:
 		return TEXT("WAVE");
+	case EVNHUniversalAction::Laugh:
+		return TEXT("LAUGH");
+	case EVNHUniversalAction::Fart:
+		return TEXT("FART");
+	case EVNHUniversalAction::PlaceDecoy:
+		return TEXT("PLACE DECOY");
 	case EVNHUniversalAction::PickUp:
 		return TEXT("PICK UP");
 	case EVNHUniversalAction::Drop:
@@ -94,6 +103,80 @@ const TCHAR* ToUniversalActionText(EVNHUniversalAction Action)
 	default:
 		return TEXT("NONE");
 	}
+}
+
+FName ToUniversalActionRowName(EVNHUniversalAction Action)
+{
+	switch (Action)
+	{
+	case EVNHUniversalAction::Inspect:
+		return TEXT("Inspect");
+	case EVNHUniversalAction::Point:
+		return TEXT("Point");
+	case EVNHUniversalAction::Wave:
+		return TEXT("Wave");
+	case EVNHUniversalAction::Laugh:
+		return TEXT("Laugh");
+	case EVNHUniversalAction::PlaceDecoy:
+		return TEXT("PlaceDecoy");
+	case EVNHUniversalAction::PickUp:
+		return TEXT("PickUp");
+	case EVNHUniversalAction::Drop:
+		return TEXT("Drop");
+	default:
+		return NAME_None;
+	}
+}
+
+const FArrayProperty* FindArrayFieldByPrefix(const UScriptStruct* RowStruct, const TCHAR* FieldPrefix)
+{
+	if (!RowStruct || !FieldPrefix)
+	{
+		return nullptr;
+	}
+
+	const FString PrefixString(FieldPrefix);
+	for (TFieldIterator<FProperty> It(RowStruct); It; ++It)
+	{
+		const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(*It);
+		if (ArrayProperty && ArrayProperty->GetName().StartsWith(PrefixString))
+		{
+			return ArrayProperty;
+		}
+	}
+
+	return nullptr;
+}
+
+UAnimMontage* ChooseMontageFromField(const uint8* RowData, const FArrayProperty* ArrayProperty)
+{
+	if (!RowData || !ArrayProperty)
+	{
+		return nullptr;
+	}
+
+	const FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(ArrayProperty->Inner);
+	if (!ObjectProperty || !ObjectProperty->PropertyClass || !ObjectProperty->PropertyClass->IsChildOf(UAnimMontage::StaticClass()))
+	{
+		return nullptr;
+	}
+
+	FScriptArrayHelper ArrayHelper(ArrayProperty, ArrayProperty->ContainerPtrToValuePtr<void>(RowData));
+	TArray<UAnimMontage*> Montages;
+	for (int32 Index = 0; Index < ArrayHelper.Num(); ++Index)
+	{
+		if (UAnimMontage* Montage = Cast<UAnimMontage>(ObjectProperty->GetObjectPropertyValue(ArrayHelper.GetRawPtr(Index))))
+		{
+			Montages.Add(Montage);
+		}
+	}
+
+	if (Montages.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	return Montages[FMath::RandRange(0, Montages.Num() - 1)];
 }
 
 bool IsVNHInteractable(const AActor* Actor)
@@ -130,6 +213,12 @@ bool IsCustomizationPhase(const AVNHGameState* VNHGameState)
 	return RoundPhase == EVNHRoundPhase::WaitingForPlayers
 		|| RoundPhase == EVNHRoundPhase::AssigningRoles;
 }
+}
+
+AVNHPlayerController::AVNHPlayerController()
+{
+	HumanActionAnimationTable = TSoftObjectPtr<UDataTable>(FSoftObjectPath(TEXT("/Game/Data/DT_HumanActionAnimations.DT_HumanActionAnimations")));
+	AlienActionAnimationTable = TSoftObjectPtr<UDataTable>(FSoftObjectPath(TEXT("/Game/Data/DT_AlienActionAnimations.DT_AlienActionAnimations")));
 }
 
 void AVNHPlayerController::BeginPlay()
@@ -283,6 +372,7 @@ void AVNHPlayerController::EnsureRoleHudWidget()
 	RoleHudWidget = NewWidget;
 	ActiveRoleHudRole = AssignedRole;
 	TimeUntilRoleHudWidgetLookup = 0.0f;
+	BindRoleHudActionButtons();
 	UpdateRoleHudWidgetRuntimeLabels(0.0f);
 }
 
@@ -470,6 +560,65 @@ void AVNHPlayerController::PlayerTick(float DeltaTime)
 	UpdateRoleHudWidgetRuntimeLabels(DeltaTime);
 	UpdateDebugDeckRuntimeLabels(DeltaTime);
 	UpdateMarkedSuspectsWidgetRuntimeLabels(DeltaTime);
+}
+
+void AVNHPlayerController::BindRoleHudActionButtons()
+{
+	if (!RoleHudWidget.IsValid())
+	{
+		return;
+	}
+
+	BindRoleHudActionButton(TEXT("ActionButton_Inspect"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudInspectClicked));
+	BindRoleHudActionButton(TEXT("ActionButton_Wave"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudWaveClicked));
+	BindRoleHudActionButton(TEXT("ActionButton_Point"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudPointClicked));
+	BindRoleHudActionButton(TEXT("ActionButton_Laugh"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudLaughClicked));
+	BindRoleHudActionButton(TEXT("ActionButton_Fart"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudFartClicked));
+	BindRoleHudActionButton(TEXT("ActionButton_PlaceDecoy"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudPlaceDecoyClicked));
+}
+
+void AVNHPlayerController::BindRoleHudActionButton(FName ButtonName, FName HandlerName)
+{
+	UUserWidget* Widget = RoleHudWidget.Get();
+	UButton* Button = Widget ? Cast<UButton>(Widget->GetWidgetFromName(ButtonName)) : nullptr;
+	if (!Button)
+	{
+		return;
+	}
+
+	FScriptDelegate Delegate;
+	Delegate.BindUFunction(this, HandlerName);
+	Button->OnClicked.AddUnique(Delegate);
+}
+
+void AVNHPlayerController::HandleHudInspectClicked()
+{
+	HandleInspectPressed();
+}
+
+void AVNHPlayerController::HandleHudWaveClicked()
+{
+	HandleWavePressed();
+}
+
+void AVNHPlayerController::HandleHudPointClicked()
+{
+	HandlePointPressed();
+}
+
+void AVNHPlayerController::HandleHudLaughClicked()
+{
+	HandleLaughPressed();
+}
+
+void AVNHPlayerController::HandleHudFartClicked()
+{
+	HandleFartPressed();
+}
+
+void AVNHPlayerController::HandleHudPlaceDecoyClicked()
+{
+	HandlePlaceDecoyPressed();
 }
 
 FString AVNHPlayerController::DescribeAlienInputDebugState() const
@@ -960,6 +1109,19 @@ void AVNHPlayerController::ServerPerformUniversalAction_Implementation(EVNHUnive
 		return;
 	}
 
+	const AVNHPlayerState* VNHPlayerState = GetPlayerState<AVNHPlayerState>();
+	const EVNHPlayerRole AssignedRole = VNHPlayerState ? VNHPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
+	if (Action == EVNHUniversalAction::PlaceDecoy && AssignedRole != EVNHPlayerRole::Alien)
+	{
+		ClientReceiveInteractionText(TEXT("Only the Alien can place a decoy."));
+		return;
+	}
+	if ((Action == EVNHUniversalAction::Laugh || Action == EVNHUniversalAction::Fart) && AssignedRole == EVNHPlayerRole::Hunter)
+	{
+		ClientReceiveInteractionText(TEXT("That action is unavailable for the Hunter."));
+		return;
+	}
+
 	const bool bRepeatedAction = Shopper->WasActionRepeatedRecently(Action);
 	const bool bTargetInRange = !Target
 		|| FVector::DistSquared(Target->GetActorLocation(), Shopper->GetActorLocation()) <= FMath::Square(Action == EVNHUniversalAction::Point ? 2000.0f : 350.0f);
@@ -1013,6 +1175,23 @@ void AVNHPlayerController::ServerPerformUniversalAction_Implementation(EVNHUnive
 		Shopper->ApplyComposureDelta(bRepeatedAction ? -4.0f : 3.0f, bRepeatedAction ? TEXT("RepeatedWave") : TEXT("CasualWave"));
 		break;
 
+	case EVNHUniversalAction::Laugh:
+		Shopper->ApplyComposureDelta(bRepeatedAction ? -4.0f : 2.0f, bRepeatedAction ? TEXT("RepeatedLaugh") : TEXT("CasualLaugh"));
+		break;
+
+	case EVNHUniversalAction::Fart:
+		if (!Shopper->TriggerFartFromAction())
+		{
+			ClientReceiveInteractionText(TEXT("Fart unavailable while the anti-camping fart is on cooldown."));
+			return;
+		}
+		Shopper->RegisterMeaningfulAction(Action, nullptr);
+		ClientReceiveInteractionText(TEXT("FART // anti-camping pressure released."));
+		return;
+
+	case EVNHUniversalAction::PlaceDecoy:
+		break;
+
 	case EVNHUniversalAction::PickUp:
 		if (!IsVNHInteractable(Target) || Shopper->GetHeldProp())
 		{
@@ -1059,6 +1238,7 @@ void AVNHPlayerController::ServerPerformUniversalAction_Implementation(EVNHUnive
 		return;
 	}
 
+	PlayRoleActionAnimation(AssignedRole, Shopper, Action);
 	Shopper->RegisterMeaningfulAction(Action, Target);
 	ClientReceiveInteractionText(FString::Printf(TEXT("%s // %s"), ToUniversalActionText(Action), Target ? *GetNameSafe(Target) : TEXT("NO TARGET")));
 }
@@ -1310,6 +1490,21 @@ void AVNHPlayerController::HandlePointPressed()
 void AVNHPlayerController::HandleWavePressed()
 {
 	RequestUniversalAction(EVNHUniversalAction::Wave);
+}
+
+void AVNHPlayerController::HandleLaughPressed()
+{
+	RequestUniversalAction(EVNHUniversalAction::Laugh);
+}
+
+void AVNHPlayerController::HandleFartPressed()
+{
+	RequestUniversalAction(EVNHUniversalAction::Fart);
+}
+
+void AVNHPlayerController::HandlePlaceDecoyPressed()
+{
+	RequestUniversalAction(EVNHUniversalAction::PlaceDecoy);
 }
 
 void AVNHPlayerController::HandlePickUpPressed()
@@ -2370,6 +2565,70 @@ AActor* AVNHPlayerController::GetUniversalActionTarget(EVNHUniversalAction Actio
 	}
 
 	return FocusedInteractable.IsValid() ? FocusedInteractable.Get() : FocusedShopper.Get();
+}
+
+UAnimMontage* AVNHPlayerController::ResolveRoleActionMontage(EVNHPlayerRole Role, const AVNHShopperCharacter* Shopper, EVNHUniversalAction Action) const
+{
+	if (!Shopper || Action == EVNHUniversalAction::Fart)
+	{
+		return nullptr;
+	}
+
+	UDataTable* ActionAnimationTable = nullptr;
+	if (Role == EVNHPlayerRole::Human)
+	{
+		ActionAnimationTable = HumanActionAnimationTable.LoadSynchronous();
+	}
+	else if (Role == EVNHPlayerRole::Alien)
+	{
+		ActionAnimationTable = AlienActionAnimationTable.LoadSynchronous();
+	}
+
+	if (!ActionAnimationTable)
+	{
+		return nullptr;
+	}
+
+	const FName RowName = ToUniversalActionRowName(Action);
+	if (RowName.IsNone())
+	{
+		return nullptr;
+	}
+
+	const TMap<FName, uint8*>& RowMap = ActionAnimationTable->GetRowMap();
+	uint8* const* RowDataPtr = RowMap.Find(RowName);
+	const uint8* RowData = RowDataPtr ? *RowDataPtr : nullptr;
+	if (!RowData)
+	{
+		return nullptr;
+	}
+
+	const UScriptStruct* RowStruct = ActionAnimationTable->GetRowStruct();
+	const TCHAR* AnimationFieldName = TEXT("HighComposureAnimations");
+	const float ComposureValue = Shopper->GetComposure();
+	if (ComposureValue <= 0.0f)
+	{
+		AnimationFieldName = TEXT("NoComposureAnimations");
+	}
+	else if (ComposureValue <= 50.0f)
+	{
+		AnimationFieldName = TEXT("LowComposureAnimations");
+	}
+
+	return ChooseMontageFromField(RowData, FindArrayFieldByPrefix(RowStruct, AnimationFieldName));
+}
+
+void AVNHPlayerController::PlayRoleActionAnimation(EVNHPlayerRole Role, AVNHShopperCharacter* Shopper, EVNHUniversalAction Action) const
+{
+	if (!Shopper)
+	{
+		return;
+	}
+
+	if (UAnimMontage* Montage = ResolveRoleActionMontage(Role, Shopper, Action))
+	{
+		Shopper->PlayUniversalActionMontage(Montage);
+	}
 }
 
 void AVNHPlayerController::PerformPickUp(AVNHShopperCharacter* Shopper, AActor* Prop)

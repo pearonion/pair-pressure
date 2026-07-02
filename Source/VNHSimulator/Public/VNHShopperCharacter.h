@@ -7,6 +7,7 @@
 #include "VNHShopperCharacter.generated.h"
 
 class UVNHAlienLocomotionComponent;
+class UAnimMontage;
 class UCameraComponent;
 class USoundBase;
 class USpringArmComponent;
@@ -110,6 +111,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "VNH|Interaction")
 	void RegisterMeaningfulAction(EVNHUniversalAction Action, AActor* Target);
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Composure")
+	bool TriggerFartFromAction();
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Interaction")
+	void PlayUniversalActionMontage(UAnimMontage* Montage);
 
 	UFUNCTION(BlueprintCallable, Category = "VNH|Interaction")
 	void SetHeldProp(AActor* NewHeldProp);
@@ -251,11 +258,14 @@ private:
 	UFUNCTION(NetMulticast, Reliable)
 	void MulticastTriggerFart();
 
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastPlayUniversalActionMontage(UAnimMontage* Montage);
+
 	void SetFrozenByPublicTest(bool bNewFrozen);
 	void UpdateComposureSystem(float DeltaSeconds);
 	void UpdateComposureState();
 	void ResetInactivity();
-	void TriggerFart();
+	bool TriggerFart();
 	bool IsWatchedByHunter(bool& bOutHunterVeryClose) const;
 	bool IsNearSuspiciousObject() const;
 	void ApplyComposureVisualState();

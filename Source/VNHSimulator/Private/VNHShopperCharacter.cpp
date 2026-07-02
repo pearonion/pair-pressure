@@ -1,8 +1,9 @@
 #include "VNHShopperCharacter.h"
 
 #include "Camera/CameraComponent.h"
-#include "Animation/AnimInstance.h"
 #include "Animation/AnimationAsset.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
 #include "Components/AudioComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -495,11 +496,11 @@ void AVNHShopperCharacter::ResetInactivity()
 	LastMeaningfulControlRotation = GetControlRotation();
 }
 
-void AVNHShopperCharacter::TriggerFart()
+bool AVNHShopperCharacter::TriggerFart()
 {
 	if (!HasAuthority() || FartCooldownRemaining > 0.0f)
 	{
-		return;
+		return false;
 	}
 
 	MulticastTriggerFart();
@@ -517,6 +518,20 @@ void AVNHShopperCharacter::TriggerFart()
 		}
 	}
 
+	return true;
+}
+
+bool AVNHShopperCharacter::TriggerFartFromAction()
+{
+	return TriggerFart();
+}
+
+void AVNHShopperCharacter::PlayUniversalActionMontage(UAnimMontage* Montage)
+{
+	if (HasAuthority() && Montage)
+	{
+		MulticastPlayUniversalActionMontage(Montage);
+	}
 }
 
 bool AVNHShopperCharacter::IsWatchedByHunter(bool& bOutHunterVeryClose) const
@@ -689,6 +704,21 @@ void AVNHShopperCharacter::MulticastTriggerFart_Implementation()
 		VolumeMultiplier,
 		InnerRadius,
 		InnerRadius + FalloffDistance);
+}
+
+void AVNHShopperCharacter::MulticastPlayUniversalActionMontage_Implementation(UAnimMontage* Montage)
+{
+	if (!Montage)
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* MeshComponent = GetMesh();
+	UAnimInstance* AnimInstance = MeshComponent ? MeshComponent->GetAnimInstance() : nullptr;
+	if (AnimInstance)
+	{
+		AnimInstance->Montage_Play(Montage);
+	}
 }
 
 void AVNHShopperCharacter::OnRep_Composure()
