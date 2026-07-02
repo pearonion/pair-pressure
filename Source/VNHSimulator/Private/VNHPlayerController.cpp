@@ -140,24 +140,7 @@ void AVNHPlayerController::BeginPlay()
 	const bool bIsMainMenuMap = IsPlayerControllerMainMenuWorld(GetWorld());
 	if (bIsMainMenuMap)
 	{
-		if (ComposureWidget.IsValid())
-		{
-			ComposureWidget->RemoveFromParent();
-			ComposureWidget.Reset();
-		}
-
-		if (UClass* WidgetClass = LoadClass<UUserWidget>(nullptr, TEXT("/Game/UI/WBP_VNHComposure.WBP_VNHComposure_C")))
-		{
-			TArray<UUserWidget*> ExistingComposureWidgets;
-			UWidgetBlueprintLibrary::GetAllWidgetsOfClass(this, ExistingComposureWidgets, WidgetClass, false);
-			for (UUserWidget* Widget : ExistingComposureWidgets)
-			{
-				if (Widget)
-				{
-					Widget->RemoveFromParent();
-				}
-			}
-		}
+		RemoveComposureWidget();
 	}
 
 	if (!bIsMainMenuMap)
@@ -165,7 +148,7 @@ void AVNHPlayerController::BeginPlay()
 		EnsureTargetOutlinePostProcess();
 		EnsureRoleHudWidget();
 		EnsureMarkedSuspectsWidget();
-		EnsureComposureWidget();
+		RemoveComposureWidget();
 		RegisterGameplayHardwareCursors();
 	}
 
@@ -354,6 +337,37 @@ void AVNHPlayerController::EnsureComposureWidget()
 	UpdateComposureWidgetRuntimeLabels(0.0f);
 }
 
+void AVNHPlayerController::RemoveComposureWidget()
+{
+	if (ComposureWidget.IsValid())
+	{
+		ComposureWidget->RemoveFromParent();
+		ComposureWidget.Reset();
+	}
+
+	ComposurePanelWidget.Reset();
+	ComposureStateTextBlock.Reset();
+	ComposureValueTextBlock.Reset();
+	FartRiskTextBlock.Reset();
+	UniversalActionTextBlock.Reset();
+	ComposureProgressBar.Reset();
+	HudCustomizeButton.Reset();
+	TimeUntilComposureWidgetLookup = 0.0f;
+
+	if (UClass* WidgetClass = LoadClass<UUserWidget>(nullptr, TEXT("/Game/UI/WBP_VNHComposure.WBP_VNHComposure_C")))
+	{
+		TArray<UUserWidget*> ExistingComposureWidgets;
+		UWidgetBlueprintLibrary::GetAllWidgetsOfClass(this, ExistingComposureWidgets, WidgetClass, false);
+		for (UUserWidget* Widget : ExistingComposureWidgets)
+		{
+			if (Widget)
+			{
+				Widget->RemoveFromParent();
+			}
+		}
+	}
+}
+
 void AVNHPlayerController::BindComposureWidgetButtons()
 {
 	UUserWidget* Widget = ComposureWidget.Get();
@@ -456,7 +470,6 @@ void AVNHPlayerController::PlayerTick(float DeltaTime)
 	UpdateRoleHudWidgetRuntimeLabels(DeltaTime);
 	UpdateDebugDeckRuntimeLabels(DeltaTime);
 	UpdateMarkedSuspectsWidgetRuntimeLabels(DeltaTime);
-	UpdateComposureWidgetRuntimeLabels(DeltaTime);
 }
 
 FString AVNHPlayerController::DescribeAlienInputDebugState() const

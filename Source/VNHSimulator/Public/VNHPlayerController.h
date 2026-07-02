@@ -204,6 +204,7 @@ private:
 	void EnsureRoleHudWidget();
 	void EnsureMarkedSuspectsWidget();
 	void EnsureComposureWidget();
+	void RemoveComposureWidget();
 	void BindComposureWidgetButtons();
 	UFUNCTION()
 	void HandleHudCustomizeClicked();
