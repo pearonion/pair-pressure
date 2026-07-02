@@ -9,6 +9,7 @@
 class UVNHAlienLocomotionComponent;
 class UAnimMontage;
 class UCameraComponent;
+class UDataTable;
 class USoundBase;
 class USpringArmComponent;
 class UStaticMeshComponent;
@@ -200,6 +201,12 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Composure", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USoundBase> FartSound;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Actions|Animations", meta = (AllowPrivateAccess = "true"))
+	TSoftObjectPtr<UDataTable> HumanActionAnimationTable;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Actions|Animations", meta = (AllowPrivateAccess = "true"))
+	TSoftObjectPtr<UDataTable> AlienActionAnimationTable;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Shopper|AI", meta = (AllowPrivateAccess = "true", AllowedClasses = "/Script/StateTreeModule.StateTree"))
 	TSoftObjectPtr<UObject> ShopperStateTree = TSoftObjectPtr<UObject>(FSoftObjectPath(TEXT("/Game/AI/ST_Shoppers.ST_Shoppers")));
 
@@ -278,4 +285,6 @@ private:
 	void ApplyCharacterCustomization();
 	void ApplySlotMesh(USkeletalMeshComponent* SlotComponent, const TSoftObjectPtr<USkeletalMesh>& MeshAsset, bool bHideSlot = false);
 	void ApplyColorToMesh(USkeletalMeshComponent* MeshComponent, const FLinearColor& Color);
+	UAnimMontage* ResolveFartKnockdownMontage(EVNHPlayerRole Role, FName RowName) const;
+	FName GetFartKnockdownRowName(const AVNHShopperCharacter* HitShopper, const FVector& CloudCenter) const;
 };

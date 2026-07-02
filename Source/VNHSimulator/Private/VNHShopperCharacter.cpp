@@ -8,6 +8,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
+#include "Engine/DataTable.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
@@ -22,6 +23,7 @@
 #include "Sound/SoundWaveProcedural.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
+#include "UObject/UnrealType.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "VNHAlienLocomotionComponent.h"
 #include "VNHGameState.h"
@@ -40,6 +42,9 @@ constexpr float CalmFartVolume = 1.4f;
 constexpr float PanicFartVolume = 2.6f;
 constexpr float CalmFartInnerRadius = 275.0f;
 constexpr float PanicFartInnerRadius = 700.0f;
+constexpr float FartCloudBackwardOffset = 58.0f;
+constexpr float FartCloudHeightOffset = 35.0f;
+constexpr float FartCloudKnockdownRadius = 700.0f;
 
 bool IsComposureLockedForRoundPhase(const UWorld* World)
 {
@@ -55,6 +60,57 @@ bool IsComposureLockedForRoundPhase(const UWorld* World)
 }
 constexpr float CalmFartFalloffDistance = 325.0f;
 constexpr float PanicFartFalloffDistance = 1100.0f;
+
+const FArrayProperty* FindArrayFieldByPrefix(const UScriptStruct* RowStruct, const TCHAR* FieldPrefix)
+{
+	if (!RowStruct || !FieldPrefix)
+	{
+		return nullptr;
+	}
+
+	const FString PrefixString(FieldPrefix);
+	for (TFieldIterator<FProperty> It(RowStruct); It; ++It)
+	{
+		const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(*It);
+		if (ArrayProperty && ArrayProperty->GetName().StartsWith(PrefixString))
+		{
+			return ArrayProperty;
+		}
+	}
+
+	return nullptr;
+}
+
+UAnimMontage* ChooseMontageFromField(const uint8* RowData, const FArrayProperty* ArrayProperty)
+{
+	if (!RowData || !ArrayProperty)
+	{
+		return nullptr;
+	}
+
+	const FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(ArrayProperty->Inner);
+	if (!ObjectProperty || !ObjectProperty->PropertyClass || !ObjectProperty->PropertyClass->IsChildOf(UAnimMontage::StaticClass()))
+	{
+		return nullptr;
+	}
+
+	FScriptArrayHelper ArrayHelper(ArrayProperty, ArrayProperty->ContainerPtrToValuePtr<void>(RowData));
+	TArray<UAnimMontage*> Montages;
+	for (int32 Index = 0; Index < ArrayHelper.Num(); ++Index)
+	{
+		if (UAnimMontage* Montage = Cast<UAnimMontage>(ObjectProperty->GetObjectPropertyValue(ArrayHelper.GetRawPtr(Index))))
+		{
+			Montages.Add(Montage);
+		}
+	}
+
+	if (Montages.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	return Montages[FMath::RandRange(0, Montages.Num() - 1)];
+}
 }
 
 AVNHShopperCharacter::AVNHShopperCharacter()
@@ -131,6 +187,8 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 	CharacterCustomization.HatMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(TEXT("/Game/TNG/Characters/Cosmetics/Hats/SK_TNG_Hat_003.SK_TNG_Hat_003")));
 	CharacterCustomization.MustacheMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(TEXT("/Game/TNG/Characters/Cosmetics/Mustaches/SK_TNG_Mustache_001.SK_TNG_Mustache_001")));
 	CharacterCustomization.OutfitMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(TEXT("/Game/TNG/Characters/Cosmetics/Outfits/SK_TNG_Outfit_001.SK_TNG_Outfit_001")));
+	HumanActionAnimationTable = TSoftObjectPtr<UDataTable>(FSoftObjectPath(TEXT("/Game/Data/DT_HumanActionAnimations.DT_HumanActionAnimations")));
+	AlienActionAnimationTable = TSoftObjectPtr<UDataTable>(FSoftObjectPath(TEXT("/Game/Data/DT_AlienActionAnimations.DT_AlienActionAnimations")));
 
 	if (USkeletalMesh* DefaultBodyMesh = LoadObject<USkeletalMesh>(nullptr, DefaultBodyMeshPath))
 	{
@@ -503,6 +561,7 @@ bool AVNHShopperCharacter::TriggerFart()
 		return false;
 	}
 
+	const FVector CloudCenter = GetActorLocation() - GetActorForwardVector() * FartCloudBackwardOffset + FVector(0.0f, 0.0f, FartCloudHeightOffset);
 	MulticastTriggerFart();
 	ApplyComposureDelta(-20.0f, TEXT("PublicFart"));
 	FartCooldownRemaining = 30.0f;
@@ -512,9 +571,18 @@ bool AVNHShopperCharacter::TriggerFart()
 	{
 		AVNHShopperCharacter* NearbyShopper = *It;
 		if (NearbyShopper && NearbyShopper != this && NearbyShopper->IsPlayerControlled()
-			&& FVector::DistSquared(NearbyShopper->GetActorLocation(), GetActorLocation()) <= FMath::Square(700.0f))
+			&& FVector::DistSquared(NearbyShopper->GetActorLocation(), CloudCenter) <= FMath::Square(FartCloudKnockdownRadius))
 		{
 			NearbyShopper->ApplyComposureDelta(-3.0f, TEXT("NearbyFart"));
+			const AVNHPlayerState* NearbyPlayerState = NearbyShopper->GetPlayerState<AVNHPlayerState>();
+			const EVNHPlayerRole NearbyRole = NearbyPlayerState ? NearbyPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
+			if (NearbyRole == EVNHPlayerRole::Human || NearbyRole == EVNHPlayerRole::Alien)
+			{
+				if (UAnimMontage* KnockdownMontage = NearbyShopper->ResolveFartKnockdownMontage(NearbyRole, GetFartKnockdownRowName(NearbyShopper, CloudCenter)))
+				{
+					NearbyShopper->PlayUniversalActionMontage(KnockdownMontage);
+				}
+			}
 		}
 	}
 
@@ -635,6 +703,7 @@ void AVNHShopperCharacter::MulticastTriggerFart_Implementation()
 	const float VolumeMultiplier = FMath::Lerp(CalmFartVolume, PanicFartVolume, PressureAlpha);
 	const float InnerRadius = FMath::Lerp(CalmFartInnerRadius, PanicFartInnerRadius, PressureAlpha);
 	const float FalloffDistance = FMath::Lerp(CalmFartFalloffDistance, PanicFartFalloffDistance, PressureAlpha);
+	const FVector CloudCenter = GetActorLocation() - GetActorForwardVector() * FartCloudBackwardOffset + FVector(0.0f, 0.0f, FartCloudHeightOffset);
 
 	USoundAttenuation* DynamicAttenuation = NewObject<USoundAttenuation>(this);
 	DynamicAttenuation->Attenuation.bAttenuate = true;
@@ -649,7 +718,7 @@ void AVNHShopperCharacter::MulticastTriggerFart_Implementation()
 		UGameplayStatics::PlaySoundAtLocation(
 			this,
 			FartSound,
-			GetActorLocation(),
+			CloudCenter,
 			FRotator::ZeroRotator,
 			VolumeMultiplier,
 			1.0f,
@@ -686,7 +755,7 @@ void AVNHShopperCharacter::MulticastTriggerFart_Implementation()
 		UGameplayStatics::SpawnSoundAtLocation(
 			this,
 			ProceduralFart,
-			GetActorLocation(),
+			CloudCenter,
 			FRotator::ZeroRotator,
 			VolumeMultiplier,
 			1.0f,
@@ -694,16 +763,86 @@ void AVNHShopperCharacter::MulticastTriggerFart_Implementation()
 			DynamicAttenuation);
 	}
 
-	const FVector CloudCenter = GetActorLocation() + FVector(0.0f, 0.0f, 35.0f);
-	DrawDebugSphere(GetWorld(), CloudCenter + FVector(0.0f, -18.0f, 0.0f), 18.0f, 10, FColor(125, 180, 70), false, 2.0f, 0, 2.0f);
-	DrawDebugSphere(GetWorld(), CloudCenter + FVector(0.0f, 8.0f, 10.0f), 24.0f, 10, FColor(155, 195, 85), false, 2.0f, 0, 2.0f);
-	DrawDebugSphere(GetWorld(), CloudCenter + FVector(0.0f, 28.0f, 22.0f), 14.0f, 10, FColor(180, 205, 95), false, 2.0f, 0, 2.0f);
+	const FVector CloudForward = GetActorForwardVector();
+	DrawDebugSphere(GetWorld(), CloudCenter - CloudForward * 18.0f, 18.0f, 10, FColor(125, 180, 70), false, 2.0f, 0, 2.0f);
+	DrawDebugSphere(GetWorld(), CloudCenter + CloudForward * 8.0f + FVector(0.0f, 0.0f, 10.0f), 24.0f, 10, FColor(155, 195, 85), false, 2.0f, 0, 2.0f);
+	DrawDebugSphere(GetWorld(), CloudCenter + CloudForward * 28.0f + FVector(0.0f, 0.0f, 22.0f), 14.0f, 10, FColor(180, 205, 95), false, 2.0f, 0, 2.0f);
 	UE_LOG(LogVNH, Display, TEXT("FartEvent: %s broke composure in public. SourceComposure=%.1f Volume=%.2f InnerRadius=%.0f MaxDistance=%.0f"),
 		*GetNameSafe(this),
 		SourceComposure,
 		VolumeMultiplier,
 		InnerRadius,
 		InnerRadius + FalloffDistance);
+}
+
+UAnimMontage* AVNHShopperCharacter::ResolveFartKnockdownMontage(EVNHPlayerRole Role, FName RowName) const
+{
+	if (RowName.IsNone())
+	{
+		return nullptr;
+	}
+
+	UDataTable* ActionAnimationTable = nullptr;
+	if (Role == EVNHPlayerRole::Human)
+	{
+		ActionAnimationTable = HumanActionAnimationTable.LoadSynchronous();
+	}
+	else if (Role == EVNHPlayerRole::Alien)
+	{
+		ActionAnimationTable = AlienActionAnimationTable.LoadSynchronous();
+	}
+
+	if (!ActionAnimationTable)
+	{
+		return nullptr;
+	}
+
+	const TMap<FName, uint8*>& RowMap = ActionAnimationTable->GetRowMap();
+	uint8* const* RowDataPtr = RowMap.Find(RowName);
+	const uint8* RowData = RowDataPtr ? *RowDataPtr : nullptr;
+	if (!RowData)
+	{
+		return nullptr;
+	}
+
+	const UScriptStruct* RowStruct = ActionAnimationTable->GetRowStruct();
+	const TCHAR* AnimationFieldName = TEXT("HighComposureAnimations");
+	if (Composure <= 0.0f)
+	{
+		AnimationFieldName = TEXT("NoComposureAnimations");
+	}
+	else if (Composure <= 50.0f)
+	{
+		AnimationFieldName = TEXT("LowComposureAnimations");
+	}
+
+	return ChooseMontageFromField(RowData, FindArrayFieldByPrefix(RowStruct, AnimationFieldName));
+}
+
+FName AVNHShopperCharacter::GetFartKnockdownRowName(const AVNHShopperCharacter* HitShopper, const FVector& CloudCenter) const
+{
+	if (!HitShopper)
+	{
+		return NAME_None;
+	}
+
+	const FVector PushDirection = (HitShopper->GetActorLocation() - CloudCenter).GetSafeNormal2D();
+	if (PushDirection.IsNearlyZero())
+	{
+		return TEXT("BackKnockdown");
+	}
+
+	const FVector HitForward = HitShopper->GetActorForwardVector().GetSafeNormal2D();
+	const FVector HitRight = HitShopper->GetActorRightVector().GetSafeNormal2D();
+	const float ForwardDot = FVector::DotProduct(HitForward, PushDirection);
+	const float RightDot = FVector::DotProduct(HitRight, PushDirection);
+
+	if (FMath::Abs(ForwardDot) >= FMath::Abs(RightDot))
+	{
+		return ForwardDot >= 0.0f ? TEXT("FrontKnockdown") : TEXT("BackKnockdown");
+	}
+
+	return RightDot >= 0.0f ? TEXT("RightKnockdown") : TEXT("LeftKnockdown");
 }
 
 void AVNHShopperCharacter::MulticastPlayUniversalActionMontage_Implementation(UAnimMontage* Montage)
