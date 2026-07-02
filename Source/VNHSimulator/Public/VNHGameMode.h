@@ -65,6 +65,12 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Round")
 	FVNHPhaseTiming PhaseTiming;
 
+	UPROPERTY(BlueprintReadOnly, Category = "VNH|Lobby")
+	FString ServerName = TEXT("My Awesome Game");
+
+	UPROPERTY(BlueprintReadOnly, Category = "VNH|Lobby")
+	bool bPrivateSession = false;
+
 private:
 	FTimerHandle PhaseTimerHandle;
 	bool bStartRoundWhenPlayersReady = false;

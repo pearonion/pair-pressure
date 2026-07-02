@@ -89,6 +89,17 @@ void AVNHGameMode::InitGame(const FString& MapName, const FString& Options, FStr
 	}
 
 	bStartRoundWhenPlayersReady = UGameplayStatics::HasOption(Options, TEXT("StartRound"));
+	const int32 RequestedPlayers = UGameplayStatics::GetIntOption(Options, TEXT("MaxPlayers"), RequiredPlayers);
+	RequiredPlayers = FMath::Clamp(RequestedPlayers, 3, 20);
+
+	const int32 RequestedRoundSeconds = UGameplayStatics::GetIntOption(Options, TEXT("RoundSeconds"), FMath::RoundToInt(PhaseTiming.InvestigationSeconds));
+	PhaseTiming.InvestigationSeconds = FMath::Clamp(static_cast<float>(RequestedRoundSeconds), 60.0f, 600.0f);
+	ServerName = UGameplayStatics::ParseOption(Options, TEXT("ServerName"));
+	if (ServerName.IsEmpty())
+	{
+		ServerName = TEXT("My Awesome Game");
+	}
+	bPrivateSession = UGameplayStatics::GetIntOption(Options, TEXT("Private"), 0) != 0;
 }
 
 void AVNHGameMode::BeginPlay()

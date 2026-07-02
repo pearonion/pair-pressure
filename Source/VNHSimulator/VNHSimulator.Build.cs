@@ -18,7 +18,10 @@ public class VNHSimulator : ModuleRules
 			"AIModule",
 			"GameplayTasks",
 			"UMG",
-			"AssetRegistry"
+			"AssetRegistry",
+			"OnlineSubsystem",
+			"OnlineSubsystemUtils",
+			"AdvancedSessions"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
