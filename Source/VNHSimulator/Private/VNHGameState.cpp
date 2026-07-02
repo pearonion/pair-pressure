@@ -21,6 +21,7 @@ void AVNHGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(AVNHGameState, AccusationResult);
 	DOREPLIFETIME(AVNHGameState, PossessedShopper);
 	DOREPLIFETIME(AVNHGameState, LastQuickChatMessage);
+	DOREPLIFETIME(AVNHGameState, HumanDrillPrompt);
 }
 
 namespace
@@ -121,6 +122,18 @@ void AVNHGameState::SetPossessedShopper(AActor* NewPossessedShopper)
 	}
 }
 
+void AVNHGameState::SetHumanDrillPrompt(EVNHHumanDrillAction Action, float PromptEndsAtServerTime, float CooldownEndsAtServerTime)
+{
+	if (HasAuthority())
+	{
+		HumanDrillPrompt.Action = Action;
+		HumanDrillPrompt.PromptEndsAtServerTime = PromptEndsAtServerTime;
+		HumanDrillPrompt.CooldownEndsAtServerTime = CooldownEndsAtServerTime;
+		++HumanDrillPrompt.Serial;
+		OnRep_HumanDrillPrompt();
+	}
+}
+
 void AVNHGameState::PublishQuickChat(APlayerState* Speaker, EVNHQuickChatLine Line)
 {
 	if (HasAuthority())
@@ -188,5 +201,9 @@ void AVNHGameState::OnRep_PossessedShopper()
 }
 
 void AVNHGameState::OnRep_LastQuickChatMessage()
+{
+}
+
+void AVNHGameState::OnRep_HumanDrillPrompt()
 {
 }

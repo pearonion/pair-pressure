@@ -82,6 +82,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Hunter")
 	void RequestAccusation(AVNHShopperCharacter* AccusedShopper);
 
+	UFUNCTION(BlueprintCallable, Category = "VNH|Hunter")
+	void RequestHumanDrill();
+
 	UFUNCTION(BlueprintCallable, Category = "VNH|Alien")
 	void RequestActNatural();
 
@@ -123,6 +126,9 @@ public:
 
 	UFUNCTION(Server, Reliable)
 	void ServerRequestAccusation(AVNHShopperCharacter* AccusedShopper);
+
+	UFUNCTION(Server, Reliable)
+	void ServerRequestHumanDrill();
 
 	UFUNCTION(Server, Reliable)
 	void ServerRequestDirectQuestion(AVNHShopperCharacter* QuestionedShopper);
@@ -224,6 +230,14 @@ private:
 	UFUNCTION()
 	void HandleHudCustomizeClicked();
 	UFUNCTION()
+	void HandleHudMarkClicked();
+	UFUNCTION()
+	void HandleHudAccuseClicked();
+	UFUNCTION()
+	void HandleHudPressureClicked();
+	UFUNCTION()
+	void HandleHudHumanDrillClicked();
+	UFUNCTION()
 	void HandleHudInspectClicked();
 	UFUNCTION()
 	void HandleHudWaveClicked();
@@ -310,6 +324,10 @@ private:
 	TWeakObjectPtr<UTextBlock> RoleHudComposureStateTextBlock;
 	TWeakObjectPtr<UTextBlock> RoleHudComposureValueTextBlock;
 	TWeakObjectPtr<UProgressBar> RoleHudComposureProgressBar;
+	TWeakObjectPtr<UWidget> RoleHudDrillPromptPanelWidget;
+	TWeakObjectPtr<UTextBlock> RoleHudDrillPromptTextBlock;
+	TWeakObjectPtr<UWidget> RoleHudHumanDrillCooldownPanelWidget;
+	TWeakObjectPtr<UTextBlock> RoleHudHumanDrillCooldownTextBlock;
 	TArray<TWeakObjectPtr<AVNHShopperCharacter>> MarkedSuspects;
 	TWeakObjectPtr<UUserWidget> MarkedSuspectsWidget;
 	TWeakObjectPtr<UTextBlock> MarkedSuspectsListTextBlock;

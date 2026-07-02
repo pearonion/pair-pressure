@@ -72,6 +72,18 @@ enum class EVNHUniversalAction : uint8
 };
 
 UENUM(BlueprintType)
+enum class EVNHHumanDrillAction : uint8
+{
+	None,
+	Wave,
+	Point,
+	Laugh,
+	Jump,
+	Crouch,
+	PickUpNearestItem
+};
+
+UENUM(BlueprintType)
 enum class EVNHCustomizationSlot : uint8
 {
 	Body,
@@ -150,6 +162,24 @@ struct FVNHQuickChatMessage
 	FText Text;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Quick Chat")
+	int32 Serial = 0;
+};
+
+USTRUCT(BlueprintType)
+struct FVNHHumanDrillPrompt
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Human Drill")
+	EVNHHumanDrillAction Action = EVNHHumanDrillAction::None;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Human Drill")
+	float PromptEndsAtServerTime = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Human Drill")
+	float CooldownEndsAtServerTime = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Human Drill")
 	int32 Serial = 0;
 };
 

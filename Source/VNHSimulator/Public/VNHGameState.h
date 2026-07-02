@@ -51,6 +51,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "VNH|Quick Chat")
 	FVNHQuickChatMessage GetLastQuickChatMessage() const { return LastQuickChatMessage; }
 
+	UFUNCTION(BlueprintPure, Category = "VNH|Human Drill")
+	FVNHHumanDrillPrompt GetHumanDrillPrompt() const { return HumanDrillPrompt; }
+
 	UFUNCTION(BlueprintPure, Category = "VNH|Round")
 	AActor* GetPossessedShopper() const { return PossessedShopper; }
 
@@ -63,6 +66,7 @@ public:
 	void SetActivePublicTest(EVNHPublicTestType NewActivePublicTest);
 	void SetAccusationResult(const FVNHAccusationResult& NewAccusationResult);
 	void SetPossessedShopper(AActor* NewPossessedShopper);
+	void SetHumanDrillPrompt(EVNHHumanDrillAction Action, float PromptEndsAtServerTime, float CooldownEndsAtServerTime);
 	void PublishQuickChat(APlayerState* Speaker, EVNHQuickChatLine Line);
 	void ClearRoundOutcome();
 
@@ -97,6 +101,9 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_LastQuickChatMessage, BlueprintReadOnly, Category = "VNH|Quick Chat", meta = (AllowPrivateAccess = "true"))
 	FVNHQuickChatMessage LastQuickChatMessage;
 
+	UPROPERTY(ReplicatedUsing = OnRep_HumanDrillPrompt, BlueprintReadOnly, Category = "VNH|Human Drill", meta = (AllowPrivateAccess = "true"))
+	FVNHHumanDrillPrompt HumanDrillPrompt;
+
 	UFUNCTION()
 	void OnRep_RoundPhase();
 
@@ -111,4 +118,7 @@ private:
 
 	UFUNCTION()
 	void OnRep_LastQuickChatMessage();
+
+	UFUNCTION()
+	void OnRep_HumanDrillPrompt();
 };
