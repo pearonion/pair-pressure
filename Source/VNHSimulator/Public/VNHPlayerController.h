@@ -277,6 +277,9 @@ private:
 	TWeakObjectPtr<UWidget> RevealRailWidget;
 	TWeakObjectPtr<UUserWidget> RoleHudWidget;
 	TWeakObjectPtr<UTextBlock> RoleHudRoundTimerTextBlock;
+	TWeakObjectPtr<UTextBlock> RoleHudComposureStateTextBlock;
+	TWeakObjectPtr<UTextBlock> RoleHudComposureValueTextBlock;
+	TWeakObjectPtr<UProgressBar> RoleHudComposureProgressBar;
 	TArray<TWeakObjectPtr<AVNHShopperCharacter>> MarkedSuspects;
 	TWeakObjectPtr<UUserWidget> MarkedSuspectsWidget;
 	TWeakObjectPtr<UTextBlock> MarkedSuspectsListTextBlock;

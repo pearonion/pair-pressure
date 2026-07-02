@@ -256,6 +256,9 @@ void AVNHPlayerController::EnsureRoleHudWidget()
 			RoleHudWidget->RemoveFromParent();
 			RoleHudWidget.Reset();
 			RoleHudRoundTimerTextBlock.Reset();
+			RoleHudComposureStateTextBlock.Reset();
+			RoleHudComposureValueTextBlock.Reset();
+			RoleHudComposureProgressBar.Reset();
 		}
 		ActiveRoleHudRole = EVNHPlayerRole::Unassigned;
 		return;
@@ -271,6 +274,9 @@ void AVNHPlayerController::EnsureRoleHudWidget()
 		RoleHudWidget->RemoveFromParent();
 		RoleHudWidget.Reset();
 		RoleHudRoundTimerTextBlock.Reset();
+		RoleHudComposureStateTextBlock.Reset();
+		RoleHudComposureValueTextBlock.Reset();
+		RoleHudComposureProgressBar.Reset();
 	}
 
 	UClass* WidgetClass = LoadClass<UUserWidget>(nullptr, WidgetPath);
@@ -1496,16 +1502,78 @@ void AVNHPlayerController::UpdateRoleHudWidgetRuntimeLabels(float DeltaTime)
 	}
 
 	TimeUntilRoleHudWidgetLookup -= DeltaTime;
-	if (!RoleHudRoundTimerTextBlock.IsValid() && TimeUntilRoleHudWidgetLookup <= 0.0f)
+	if ((!RoleHudRoundTimerTextBlock.IsValid()
+		|| !RoleHudComposureStateTextBlock.IsValid()
+		|| !RoleHudComposureValueTextBlock.IsValid()
+		|| !RoleHudComposureProgressBar.IsValid()) && TimeUntilRoleHudWidgetLookup <= 0.0f)
 	{
 		TimeUntilRoleHudWidgetLookup = 0.5f;
 		UUserWidget* Widget = RoleHudWidget.Get();
-		RoleHudRoundTimerTextBlock = Widget ? Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("RoundTimerText"))) : nullptr;
+		if (!RoleHudRoundTimerTextBlock.IsValid())
+		{
+			RoleHudRoundTimerTextBlock = Widget ? Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("RoundTimerText"))) : nullptr;
+		}
+		if (!RoleHudComposureStateTextBlock.IsValid())
+		{
+			RoleHudComposureStateTextBlock = Widget ? Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("ComposureStateText"))) : nullptr;
+		}
+		if (!RoleHudComposureValueTextBlock.IsValid())
+		{
+			RoleHudComposureValueTextBlock = Widget ? Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("ComposureValueText"))) : nullptr;
+		}
+		if (!RoleHudComposureProgressBar.IsValid())
+		{
+			RoleHudComposureProgressBar = Widget ? Cast<UProgressBar>(Widget->GetWidgetFromName(TEXT("ComposureBar"))) : nullptr;
+		}
 	}
+
+	const AVNHShopperCharacter* Shopper = Cast<AVNHShopperCharacter>(GetPawn());
+	const float ComposureValue = Shopper ? Shopper->GetComposure() : 0.0f;
 
 	if (UTextBlock* TimerText = RoleHudRoundTimerTextBlock.Get())
 	{
 		TimerText->SetText(FText::FromString(GetRoundTimerText()));
+	}
+
+	if (UTextBlock* StateText = RoleHudComposureStateTextBlock.Get())
+	{
+		FText RoleHudComposureText = FText::GetEmpty();
+		if (Shopper)
+		{
+			if (ComposureValue <= 0.0f)
+			{
+				RoleHudComposureText = NSLOCTEXT("VNH", "RoleHudComposureDepleted", "COMPOSURE DEPLETED");
+			}
+			else
+			{
+				switch (Shopper->GetComposureState())
+				{
+				case EVNHComposureState::Nervous:
+					RoleHudComposureText = NSLOCTEXT("VNH", "RoleHudComposureNervous", "NERVOUS");
+					break;
+				case EVNHComposureState::Cracking:
+				case EVNHComposureState::Panic:
+					RoleHudComposureText = NSLOCTEXT("VNH", "RoleHudComposurePanicked", "PANICKED");
+					break;
+				case EVNHComposureState::Calm:
+				case EVNHComposureState::Stable:
+				default:
+					RoleHudComposureText = NSLOCTEXT("VNH", "RoleHudComposureStable", "STABLE");
+					break;
+				}
+			}
+		}
+		StateText->SetText(RoleHudComposureText);
+	}
+
+	if (UTextBlock* ValueText = RoleHudComposureValueTextBlock.Get())
+	{
+		ValueText->SetText(FText::FromString(FString::Printf(TEXT("%.0f%%"), ComposureValue)));
+	}
+
+	if (UProgressBar* ProgressBar = RoleHudComposureProgressBar.Get())
+	{
+		ProgressBar->SetPercent(ComposureValue / 100.0f);
 	}
 }
 
