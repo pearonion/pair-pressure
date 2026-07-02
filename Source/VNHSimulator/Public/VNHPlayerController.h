@@ -85,6 +85,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Hunter")
 	void RequestHumanDrill();
 
+	UFUNCTION(BlueprintCallable, Category = "VNH|Hunter")
+	void RequestFakeDrill();
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Hunter")
+	void RequestEveryonePoint();
+
 	UFUNCTION(BlueprintCallable, Category = "VNH|Alien")
 	void RequestActNatural();
 
@@ -129,6 +135,12 @@ public:
 
 	UFUNCTION(Server, Reliable)
 	void ServerRequestHumanDrill();
+
+	UFUNCTION(Server, Reliable)
+	void ServerRequestFakeDrill();
+
+	UFUNCTION(Server, Reliable)
+	void ServerRequestEveryonePoint();
 
 	UFUNCTION(Server, Reliable)
 	void ServerRequestDirectQuestion(AVNHShopperCharacter* QuestionedShopper);
@@ -238,6 +250,10 @@ private:
 	UFUNCTION()
 	void HandleHudHumanDrillClicked();
 	UFUNCTION()
+	void HandleHudFakeDrillClicked();
+	UFUNCTION()
+	void HandleHudEveryonePointClicked();
+	UFUNCTION()
 	void HandleHudInspectClicked();
 	UFUNCTION()
 	void HandleHudWaveClicked();
@@ -328,6 +344,8 @@ private:
 	TWeakObjectPtr<UTextBlock> RoleHudDrillPromptTextBlock;
 	TWeakObjectPtr<UWidget> RoleHudHumanDrillCooldownPanelWidget;
 	TWeakObjectPtr<UTextBlock> RoleHudHumanDrillCooldownTextBlock;
+	TWeakObjectPtr<UWidget> RoleHudEveryonePointCooldownPanelWidget;
+	TWeakObjectPtr<UTextBlock> RoleHudEveryonePointCooldownTextBlock;
 	TArray<TWeakObjectPtr<AVNHShopperCharacter>> MarkedSuspects;
 	TWeakObjectPtr<UUserWidget> MarkedSuspectsWidget;
 	TWeakObjectPtr<UTextBlock> MarkedSuspectsListTextBlock;

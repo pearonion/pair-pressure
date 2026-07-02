@@ -84,6 +84,15 @@ enum class EVNHHumanDrillAction : uint8
 };
 
 UENUM(BlueprintType)
+enum class EVNHHunterCommandPromptType : uint8
+{
+	None,
+	HumanDrill,
+	FakeDrill,
+	EveryonePoint
+};
+
+UENUM(BlueprintType)
 enum class EVNHCustomizationSlot : uint8
 {
 	Body,
@@ -170,6 +179,9 @@ struct FVNHHumanDrillPrompt
 {
 	GENERATED_BODY()
 
+	UPROPERTY(BlueprintReadOnly, Category = "Hunter Command")
+	EVNHHunterCommandPromptType PromptType = EVNHHunterCommandPromptType::None;
+
 	UPROPERTY(BlueprintReadOnly, Category = "Human Drill")
 	EVNHHumanDrillAction Action = EVNHHumanDrillAction::None;
 
@@ -178,6 +190,12 @@ struct FVNHHumanDrillPrompt
 
 	UPROPERTY(BlueprintReadOnly, Category = "Human Drill")
 	float CooldownEndsAtServerTime = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Hunter Command")
+	float EveryonePointCooldownEndsAtServerTime = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Hunter Command")
+	int32 EveryonePointUsesThisRound = 0;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Human Drill")
 	int32 Serial = 0;

@@ -67,6 +67,8 @@ public:
 	void SetAccusationResult(const FVNHAccusationResult& NewAccusationResult);
 	void SetPossessedShopper(AActor* NewPossessedShopper);
 	void SetHumanDrillPrompt(EVNHHumanDrillAction Action, float PromptEndsAtServerTime, float CooldownEndsAtServerTime);
+	void SetFakeDrillPrompt(float PromptEndsAtServerTime);
+	void SetEveryonePointPrompt(float PromptEndsAtServerTime, float CooldownEndsAtServerTime, int32 UsesThisRound);
 	void PublishQuickChat(APlayerState* Speaker, EVNHQuickChatLine Line);
 	void ClearRoundOutcome();
 

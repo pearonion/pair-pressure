@@ -81,6 +81,8 @@ constexpr int32 TargetedShopperStencil = 186;
 constexpr int32 MarkedShopperStencil = 200;
 constexpr float HumanDrillCooldownSeconds = 30.0f;
 constexpr float HumanDrillPromptSeconds = 10.0f;
+constexpr float EveryonePointCooldownSeconds = 60.0f;
+constexpr int32 EveryonePointMaxUsesPerRound = 2;
 
 const TCHAR* ToUniversalActionText(EVNHUniversalAction Action)
 {
@@ -374,6 +376,8 @@ void AVNHPlayerController::EnsureRoleHudWidget()
 			RoleHudDrillPromptTextBlock.Reset();
 			RoleHudHumanDrillCooldownPanelWidget.Reset();
 			RoleHudHumanDrillCooldownTextBlock.Reset();
+			RoleHudEveryonePointCooldownPanelWidget.Reset();
+			RoleHudEveryonePointCooldownTextBlock.Reset();
 		}
 		ActiveRoleHudRole = EVNHPlayerRole::Unassigned;
 		return;
@@ -396,6 +400,8 @@ void AVNHPlayerController::EnsureRoleHudWidget()
 		RoleHudDrillPromptTextBlock.Reset();
 		RoleHudHumanDrillCooldownPanelWidget.Reset();
 		RoleHudHumanDrillCooldownTextBlock.Reset();
+		RoleHudEveryonePointCooldownPanelWidget.Reset();
+		RoleHudEveryonePointCooldownTextBlock.Reset();
 	}
 
 	UClass* WidgetClass = LoadClass<UUserWidget>(nullptr, WidgetPath);
@@ -626,6 +632,8 @@ void AVNHPlayerController::BindRoleHudActionButtons()
 	BindRoleHudActionButton(TEXT("ActionButton_Accuse"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudAccuseClicked));
 	BindRoleHudActionButton(TEXT("ActionButton_Pressure"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudPressureClicked));
 	BindRoleHudActionButton(TEXT("ActionButton_HumanDrill"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudHumanDrillClicked));
+	BindRoleHudActionButton(TEXT("ActionButton_FakeDrill"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudFakeDrillClicked));
+	BindRoleHudActionButton(TEXT("ActionButton_EveryonePoint"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudEveryonePointClicked));
 }
 
 void AVNHPlayerController::BindRoleHudActionButton(FName ButtonName, FName HandlerName)
@@ -690,6 +698,16 @@ void AVNHPlayerController::HandleHudPressureClicked()
 void AVNHPlayerController::HandleHudHumanDrillClicked()
 {
 	RequestHumanDrill();
+}
+
+void AVNHPlayerController::HandleHudFakeDrillClicked()
+{
+	RequestFakeDrill();
+}
+
+void AVNHPlayerController::HandleHudEveryonePointClicked()
+{
+	RequestEveryonePoint();
 }
 
 FString AVNHPlayerController::DescribeAlienInputDebugState() const
@@ -903,6 +921,30 @@ void AVNHPlayerController::RequestHumanDrill()
 	}
 
 	ServerRequestHumanDrill();
+}
+
+void AVNHPlayerController::RequestFakeDrill()
+{
+	if (!IsAssignedHunter())
+	{
+		LastInteractionText = TEXT("Only the Hunter can trigger Fake Drill.");
+		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		return;
+	}
+
+	ServerRequestFakeDrill();
+}
+
+void AVNHPlayerController::RequestEveryonePoint()
+{
+	if (!IsAssignedHunter())
+	{
+		LastInteractionText = TEXT("Only the Hunter can trigger Everyone Point.");
+		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		return;
+	}
+
+	ServerRequestEveryonePoint();
 }
 
 void AVNHPlayerController::RequestActNatural()
@@ -1150,6 +1192,47 @@ void AVNHPlayerController::ServerRequestHumanDrill_Implementation()
 	const EVNHHumanDrillAction DrillAction = ChooseRandomHumanDrillAction();
 	VNHGameState->SetHumanDrillPrompt(DrillAction, Now + HumanDrillPromptSeconds, Now + HumanDrillCooldownSeconds);
 	ClientReceiveInteractionText(FString::Printf(TEXT("HUMAN DRILL // %s"), ToHumanDrillActionText(DrillAction)));
+}
+
+void AVNHPlayerController::ServerRequestFakeDrill_Implementation()
+{
+	AVNHGameState* VNHGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr;
+	if (!VNHGameState || !IsAssignedHunter())
+	{
+		return;
+	}
+
+	const float Now = VNHGameState->GetServerWorldTimeSeconds();
+	VNHGameState->SetFakeDrillPrompt(Now + HumanDrillPromptSeconds);
+	ClientReceiveInteractionText(TEXT("FAKE DRILL // DO NOTHING"));
+}
+
+void AVNHPlayerController::ServerRequestEveryonePoint_Implementation()
+{
+	AVNHGameState* VNHGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr;
+	if (!VNHGameState || !IsAssignedHunter())
+	{
+		return;
+	}
+
+	const float Now = VNHGameState->GetServerWorldTimeSeconds();
+	const FVNHHumanDrillPrompt CurrentPrompt = VNHGameState->GetHumanDrillPrompt();
+	if (CurrentPrompt.EveryonePointUsesThisRound >= EveryonePointMaxUsesPerRound)
+	{
+		ClientReceiveInteractionText(TEXT("Everyone Point already used twice this round."));
+		return;
+	}
+	if (CurrentPrompt.EveryonePointCooldownEndsAtServerTime > Now)
+	{
+		ClientReceiveInteractionText(FString::Printf(TEXT("Everyone Point cooldown %.0fs."), CurrentPrompt.EveryonePointCooldownEndsAtServerTime - Now));
+		return;
+	}
+
+	VNHGameState->SetEveryonePointPrompt(
+		Now + HumanDrillPromptSeconds,
+		Now + EveryonePointCooldownSeconds,
+		CurrentPrompt.EveryonePointUsesThisRound + 1);
+	ClientReceiveInteractionText(TEXT("EVERYONE POINT // Point at who you think is the alien."));
 }
 
 void AVNHPlayerController::ServerRequestDirectQuestion_Implementation(AVNHShopperCharacter* QuestionedShopper)
@@ -1821,7 +1904,9 @@ void AVNHPlayerController::UpdateRoleHudWidgetRuntimeLabels(float DeltaTime)
 		|| !RoleHudDrillPromptPanelWidget.IsValid()
 		|| !RoleHudDrillPromptTextBlock.IsValid()
 		|| !RoleHudHumanDrillCooldownPanelWidget.IsValid()
-		|| !RoleHudHumanDrillCooldownTextBlock.IsValid()) && TimeUntilRoleHudWidgetLookup <= 0.0f)
+		|| !RoleHudHumanDrillCooldownTextBlock.IsValid()
+		|| !RoleHudEveryonePointCooldownPanelWidget.IsValid()
+		|| !RoleHudEveryonePointCooldownTextBlock.IsValid()) && TimeUntilRoleHudWidgetLookup <= 0.0f)
 	{
 		TimeUntilRoleHudWidgetLookup = 0.5f;
 		UUserWidget* Widget = RoleHudWidget.Get();
@@ -1856,6 +1941,14 @@ void AVNHPlayerController::UpdateRoleHudWidgetRuntimeLabels(float DeltaTime)
 		if (!RoleHudHumanDrillCooldownTextBlock.IsValid())
 		{
 			RoleHudHumanDrillCooldownTextBlock = Widget ? Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("HumanDrillCooldownText"))) : nullptr;
+		}
+		if (!RoleHudEveryonePointCooldownPanelWidget.IsValid())
+		{
+			RoleHudEveryonePointCooldownPanelWidget = Widget ? Widget->GetWidgetFromName(TEXT("EveryonePointCooldownPanel")) : nullptr;
+		}
+		if (!RoleHudEveryonePointCooldownTextBlock.IsValid())
+		{
+			RoleHudEveryonePointCooldownTextBlock = Widget ? Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("EveryonePointCooldownText"))) : nullptr;
 		}
 	}
 
@@ -1913,7 +2006,7 @@ void AVNHPlayerController::UpdateRoleHudWidgetRuntimeLabels(float DeltaTime)
 	const EVNHPlayerRole AssignedRole = VNHPlayerState ? VNHPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
 	const float ServerTime = VNHGameState ? VNHGameState->GetServerWorldTimeSeconds() : 0.0f;
 	const FVNHHumanDrillPrompt HumanDrillPrompt = VNHGameState ? VNHGameState->GetHumanDrillPrompt() : FVNHHumanDrillPrompt();
-	const bool bShowDrillPrompt = HumanDrillPrompt.Action != EVNHHumanDrillAction::None
+	const bool bShowDrillPrompt = HumanDrillPrompt.PromptType != EVNHHunterCommandPromptType::None
 		&& HumanDrillPrompt.PromptEndsAtServerTime > ServerTime
 		&& (AssignedRole == EVNHPlayerRole::Human || AssignedRole == EVNHPlayerRole::Alien);
 	if (UWidget* PromptPanel = RoleHudDrillPromptPanelWidget.Get())
@@ -1923,10 +2016,24 @@ void AVNHPlayerController::UpdateRoleHudWidgetRuntimeLabels(float DeltaTime)
 	}
 	if (UTextBlock* PromptText = RoleHudDrillPromptTextBlock.Get())
 	{
-		const FString DrillText = AssignedRole == EVNHPlayerRole::Alien
-			? TEXT("HUMAN DRILL! COPY THE HUMANS")
-			: FString::Printf(TEXT("HUMAN DRILL: %s"), ToHumanDrillActionText(HumanDrillPrompt.Action));
-		PromptText->SetText(FText::FromString(DrillText));
+		FString PromptTextString;
+		if (HumanDrillPrompt.PromptType == EVNHHunterCommandPromptType::EveryonePoint)
+		{
+			PromptTextString = TEXT("Everyone Point - Point at who you think is the alien");
+		}
+		else if (AssignedRole == EVNHPlayerRole::Alien)
+		{
+			PromptTextString = TEXT("HUMAN DRILL! COPY THE HUMANS");
+		}
+		else if (HumanDrillPrompt.PromptType == EVNHHunterCommandPromptType::FakeDrill)
+		{
+			PromptTextString = TEXT("FAKE DRILL: DO NOTHING");
+		}
+		else
+		{
+			PromptTextString = FString::Printf(TEXT("HUMAN DRILL: %s"), ToHumanDrillActionText(HumanDrillPrompt.Action));
+		}
+		PromptText->SetText(FText::FromString(PromptTextString));
 	}
 
 	const float CooldownRemaining = HumanDrillPrompt.CooldownEndsAtServerTime > ServerTime
@@ -1941,6 +2048,20 @@ void AVNHPlayerController::UpdateRoleHudWidgetRuntimeLabels(float DeltaTime)
 	if (UTextBlock* CooldownText = RoleHudHumanDrillCooldownTextBlock.Get())
 	{
 		CooldownText->SetText(FText::FromString(FString::Printf(TEXT("%.0fs"), CooldownRemaining)));
+	}
+
+	const float EveryonePointCooldownRemaining = HumanDrillPrompt.EveryonePointCooldownEndsAtServerTime > ServerTime
+		? HumanDrillPrompt.EveryonePointCooldownEndsAtServerTime - ServerTime
+		: 0.0f;
+	const bool bShowEveryonePointCooldown = AssignedRole == EVNHPlayerRole::Hunter && EveryonePointCooldownRemaining > 0.0f;
+	if (UWidget* CooldownPanel = RoleHudEveryonePointCooldownPanelWidget.Get())
+	{
+		CooldownPanel->SetVisibility(bShowEveryonePointCooldown ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		CooldownPanel->SetRenderOpacity(bShowEveryonePointCooldown ? 1.0f : 0.0f);
+	}
+	if (UTextBlock* CooldownText = RoleHudEveryonePointCooldownTextBlock.Get())
+	{
+		CooldownText->SetText(FText::FromString(FString::Printf(TEXT("%.0fs"), EveryonePointCooldownRemaining)));
 	}
 }
 

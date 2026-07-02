@@ -60,6 +60,8 @@ void AVNHGameState::SetRoundNumber(int32 NewRoundNumber)
 	if (HasAuthority())
 	{
 		RoundNumber = NewRoundNumber;
+		HumanDrillPrompt = FVNHHumanDrillPrompt();
+		OnRep_HumanDrillPrompt();
 	}
 }
 
@@ -126,9 +128,36 @@ void AVNHGameState::SetHumanDrillPrompt(EVNHHumanDrillAction Action, float Promp
 {
 	if (HasAuthority())
 	{
+		HumanDrillPrompt.PromptType = EVNHHunterCommandPromptType::HumanDrill;
 		HumanDrillPrompt.Action = Action;
 		HumanDrillPrompt.PromptEndsAtServerTime = PromptEndsAtServerTime;
 		HumanDrillPrompt.CooldownEndsAtServerTime = CooldownEndsAtServerTime;
+		++HumanDrillPrompt.Serial;
+		OnRep_HumanDrillPrompt();
+	}
+}
+
+void AVNHGameState::SetFakeDrillPrompt(float PromptEndsAtServerTime)
+{
+	if (HasAuthority())
+	{
+		HumanDrillPrompt.PromptType = EVNHHunterCommandPromptType::FakeDrill;
+		HumanDrillPrompt.Action = EVNHHumanDrillAction::None;
+		HumanDrillPrompt.PromptEndsAtServerTime = PromptEndsAtServerTime;
+		++HumanDrillPrompt.Serial;
+		OnRep_HumanDrillPrompt();
+	}
+}
+
+void AVNHGameState::SetEveryonePointPrompt(float PromptEndsAtServerTime, float CooldownEndsAtServerTime, int32 UsesThisRound)
+{
+	if (HasAuthority())
+	{
+		HumanDrillPrompt.PromptType = EVNHHunterCommandPromptType::EveryonePoint;
+		HumanDrillPrompt.Action = EVNHHumanDrillAction::None;
+		HumanDrillPrompt.PromptEndsAtServerTime = PromptEndsAtServerTime;
+		HumanDrillPrompt.EveryonePointCooldownEndsAtServerTime = CooldownEndsAtServerTime;
+		HumanDrillPrompt.EveryonePointUsesThisRound = FMath::Clamp(UsesThisRound, 0, 2);
 		++HumanDrillPrompt.Serial;
 		OnRep_HumanDrillPrompt();
 	}
