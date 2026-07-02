@@ -288,8 +288,8 @@ private:
 	void RefreshShopperOutline(AVNHShopperCharacter* Shopper, bool bHovered) const;
 	void ClearMarkedSuspectsForNewRound();
 	AActor* GetUniversalActionTarget(EVNHUniversalAction Action) const;
-	UAnimMontage* ResolveRoleActionMontage(EVNHPlayerRole Role, const AVNHShopperCharacter* Shopper, EVNHUniversalAction Action) const;
-	void PlayRoleActionAnimation(EVNHPlayerRole Role, AVNHShopperCharacter* Shopper, EVNHUniversalAction Action) const;
+	UAnimMontage* ResolveRoleActionMontage(EVNHPlayerRole PlayerRole, const AVNHShopperCharacter* Shopper, EVNHUniversalAction Action) const;
+	void PlayRoleActionAnimation(EVNHPlayerRole PlayerRole, AVNHShopperCharacter* Shopper, EVNHUniversalAction Action) const;
 	void SetInteractableOutline(AActor* Actor, bool bEnabled) const;
 	void PerformPickUp(AVNHShopperCharacter* Shopper, AActor* Prop);
 	void PerformDrop(AVNHShopperCharacter* Shopper);

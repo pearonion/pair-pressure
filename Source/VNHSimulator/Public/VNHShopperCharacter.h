@@ -285,6 +285,6 @@ private:
 	void ApplyCharacterCustomization();
 	void ApplySlotMesh(USkeletalMeshComponent* SlotComponent, const TSoftObjectPtr<USkeletalMesh>& MeshAsset, bool bHideSlot = false);
 	void ApplyColorToMesh(USkeletalMeshComponent* MeshComponent, const FLinearColor& Color);
-	UAnimMontage* ResolveFartKnockdownMontage(EVNHPlayerRole Role, FName RowName) const;
+	UAnimMontage* ResolveFartKnockdownMontage(EVNHPlayerRole PlayerRole, FName RowName) const;
 	FName GetFartKnockdownRowName(const AVNHShopperCharacter* HitShopper, const FVector& CloudCenter) const;
 };

@@ -169,7 +169,7 @@ FName ToUniversalActionRowName(EVNHUniversalAction Action)
 	}
 }
 
-const FArrayProperty* FindArrayFieldByPrefix(const UScriptStruct* RowStruct, const TCHAR* FieldPrefix)
+const FArrayProperty* FindRoleActionArrayFieldByPrefix(const UScriptStruct* RowStruct, const TCHAR* FieldPrefix)
 {
 	if (!RowStruct || !FieldPrefix)
 	{
@@ -189,7 +189,7 @@ const FArrayProperty* FindArrayFieldByPrefix(const UScriptStruct* RowStruct, con
 	return nullptr;
 }
 
-UAnimMontage* ChooseMontageFromField(const uint8* RowData, const FArrayProperty* ArrayProperty)
+UAnimMontage* ChooseRoleActionMontageFromField(const uint8* RowData, const FArrayProperty* ArrayProperty)
 {
 	if (!RowData || !ArrayProperty)
 	{
@@ -2874,7 +2874,7 @@ AActor* AVNHPlayerController::GetUniversalActionTarget(EVNHUniversalAction Actio
 	return FocusedInteractable.IsValid() ? FocusedInteractable.Get() : FocusedShopper.Get();
 }
 
-UAnimMontage* AVNHPlayerController::ResolveRoleActionMontage(EVNHPlayerRole Role, const AVNHShopperCharacter* Shopper, EVNHUniversalAction Action) const
+UAnimMontage* AVNHPlayerController::ResolveRoleActionMontage(EVNHPlayerRole PlayerRole, const AVNHShopperCharacter* Shopper, EVNHUniversalAction Action) const
 {
 	if (!Shopper || Action == EVNHUniversalAction::Fart)
 	{
@@ -2882,11 +2882,11 @@ UAnimMontage* AVNHPlayerController::ResolveRoleActionMontage(EVNHPlayerRole Role
 	}
 
 	UDataTable* ActionAnimationTable = nullptr;
-	if (Role == EVNHPlayerRole::Human)
+	if (PlayerRole == EVNHPlayerRole::Human)
 	{
 		ActionAnimationTable = HumanActionAnimationTable.LoadSynchronous();
 	}
-	else if (Role == EVNHPlayerRole::Alien)
+	else if (PlayerRole == EVNHPlayerRole::Alien)
 	{
 		ActionAnimationTable = AlienActionAnimationTable.LoadSynchronous();
 	}
@@ -2922,17 +2922,17 @@ UAnimMontage* AVNHPlayerController::ResolveRoleActionMontage(EVNHPlayerRole Role
 		AnimationFieldName = TEXT("LowComposureAnimations");
 	}
 
-	return ChooseMontageFromField(RowData, FindArrayFieldByPrefix(RowStruct, AnimationFieldName));
+	return ChooseRoleActionMontageFromField(RowData, FindRoleActionArrayFieldByPrefix(RowStruct, AnimationFieldName));
 }
 
-void AVNHPlayerController::PlayRoleActionAnimation(EVNHPlayerRole Role, AVNHShopperCharacter* Shopper, EVNHUniversalAction Action) const
+void AVNHPlayerController::PlayRoleActionAnimation(EVNHPlayerRole PlayerRole, AVNHShopperCharacter* Shopper, EVNHUniversalAction Action) const
 {
 	if (!Shopper)
 	{
 		return;
 	}
 
-	if (UAnimMontage* Montage = ResolveRoleActionMontage(Role, Shopper, Action))
+	if (UAnimMontage* Montage = ResolveRoleActionMontage(PlayerRole, Shopper, Action))
 	{
 		Shopper->PlayUniversalActionMontage(Montage);
 	}

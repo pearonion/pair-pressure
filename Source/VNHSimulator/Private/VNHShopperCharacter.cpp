@@ -61,7 +61,7 @@ bool IsComposureLockedForRoundPhase(const UWorld* World)
 constexpr float CalmFartFalloffDistance = 325.0f;
 constexpr float PanicFartFalloffDistance = 1100.0f;
 
-const FArrayProperty* FindArrayFieldByPrefix(const UScriptStruct* RowStruct, const TCHAR* FieldPrefix)
+const FArrayProperty* FindFartKnockdownArrayFieldByPrefix(const UScriptStruct* RowStruct, const TCHAR* FieldPrefix)
 {
 	if (!RowStruct || !FieldPrefix)
 	{
@@ -81,7 +81,7 @@ const FArrayProperty* FindArrayFieldByPrefix(const UScriptStruct* RowStruct, con
 	return nullptr;
 }
 
-UAnimMontage* ChooseMontageFromField(const uint8* RowData, const FArrayProperty* ArrayProperty)
+UAnimMontage* ChooseFartKnockdownMontageFromField(const uint8* RowData, const FArrayProperty* ArrayProperty)
 {
 	if (!RowData || !ArrayProperty)
 	{
@@ -775,7 +775,7 @@ void AVNHShopperCharacter::MulticastTriggerFart_Implementation()
 		InnerRadius + FalloffDistance);
 }
 
-UAnimMontage* AVNHShopperCharacter::ResolveFartKnockdownMontage(EVNHPlayerRole Role, FName RowName) const
+UAnimMontage* AVNHShopperCharacter::ResolveFartKnockdownMontage(EVNHPlayerRole PlayerRole, FName RowName) const
 {
 	if (RowName.IsNone())
 	{
@@ -783,11 +783,11 @@ UAnimMontage* AVNHShopperCharacter::ResolveFartKnockdownMontage(EVNHPlayerRole R
 	}
 
 	UDataTable* ActionAnimationTable = nullptr;
-	if (Role == EVNHPlayerRole::Human)
+	if (PlayerRole == EVNHPlayerRole::Human)
 	{
 		ActionAnimationTable = HumanActionAnimationTable.LoadSynchronous();
 	}
-	else if (Role == EVNHPlayerRole::Alien)
+	else if (PlayerRole == EVNHPlayerRole::Alien)
 	{
 		ActionAnimationTable = AlienActionAnimationTable.LoadSynchronous();
 	}
@@ -816,7 +816,7 @@ UAnimMontage* AVNHShopperCharacter::ResolveFartKnockdownMontage(EVNHPlayerRole R
 		AnimationFieldName = TEXT("LowComposureAnimations");
 	}
 
-	return ChooseMontageFromField(RowData, FindArrayFieldByPrefix(RowStruct, AnimationFieldName));
+	return ChooseFartKnockdownMontageFromField(RowData, FindFartKnockdownArrayFieldByPrefix(RowStruct, AnimationFieldName));
 }
 
 FName AVNHShopperCharacter::GetFartKnockdownRowName(const AVNHShopperCharacter* HitShopper, const FVector& CloudCenter) const
