@@ -270,6 +270,7 @@ private:
 	void UpdateDebugDeckRuntimeLabels(float DeltaTime);
 	void UpdateMarkedSuspectsWidgetRuntimeLabels(float DeltaTime);
 	void UpdateComposureWidgetRuntimeLabels(float DeltaTime);
+	void DismissActiveHunterCommandPrompt();
 	void UpdatePreRoundCustomizationFlow();
 	void RestoreGameplayInputMode();
 	void UpdateMarkedSuspectsForRound();
@@ -365,6 +366,7 @@ private:
 	float TimeUntilMarkedWidgetLookup = 0.0f;
 	float TimeUntilComposureWidgetLookup = 0.0f;
 	EVNHPlayerRole ActiveRoleHudRole = EVNHPlayerRole::Unassigned;
+	int32 DismissedHunterCommandPromptSerial = INDEX_NONE;
 	int32 LastMarkedRoundNumber = INDEX_NONE;
 	int32 LastPreRoundCustomizerRound = INDEX_NONE;
 	EVNHRoundPhase LastObservedRoundPhase = EVNHRoundPhase::WaitingForPlayers;

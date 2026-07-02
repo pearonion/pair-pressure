@@ -80,7 +80,7 @@ constexpr int32 HoveredShopperStencil = 89;
 constexpr int32 TargetedShopperStencil = 186;
 constexpr int32 MarkedShopperStencil = 200;
 constexpr float HumanDrillCooldownSeconds = 30.0f;
-constexpr float HumanDrillPromptSeconds = 10.0f;
+constexpr float HumanDrillPromptSeconds = 5.0f;
 constexpr float EveryonePointCooldownSeconds = 60.0f;
 constexpr int32 EveryonePointMaxUsesPerRound = 2;
 
@@ -949,6 +949,7 @@ void AVNHPlayerController::RequestEveryonePoint()
 
 void AVNHPlayerController::RequestActNatural()
 {
+	DismissActiveHunterCommandPrompt();
 	ServerRequestActNatural();
 	LastInteractionText = TEXT("Act Natural requested.");
 	LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
@@ -956,6 +957,7 @@ void AVNHPlayerController::RequestActNatural()
 
 void AVNHPlayerController::RequestUniversalAction(EVNHUniversalAction Action)
 {
+	DismissActiveHunterCommandPrompt();
 	AActor* Target = GetUniversalActionTarget(Action);
 	ServerPerformUniversalAction(Action, Target);
 	LastInteractionText = FString::Printf(TEXT("%s // %s"), ToUniversalActionText(Action), Target ? *GetNameSafe(Target) : TEXT("NO TARGET"));
@@ -2006,8 +2008,13 @@ void AVNHPlayerController::UpdateRoleHudWidgetRuntimeLabels(float DeltaTime)
 	const EVNHPlayerRole AssignedRole = VNHPlayerState ? VNHPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
 	const float ServerTime = VNHGameState ? VNHGameState->GetServerWorldTimeSeconds() : 0.0f;
 	const FVNHHumanDrillPrompt HumanDrillPrompt = VNHGameState ? VNHGameState->GetHumanDrillPrompt() : FVNHHumanDrillPrompt();
+	if (HumanDrillPrompt.PromptType == EVNHHunterCommandPromptType::None)
+	{
+		DismissedHunterCommandPromptSerial = INDEX_NONE;
+	}
 	const bool bShowDrillPrompt = HumanDrillPrompt.PromptType != EVNHHunterCommandPromptType::None
 		&& HumanDrillPrompt.PromptEndsAtServerTime > ServerTime
+		&& HumanDrillPrompt.Serial != DismissedHunterCommandPromptSerial
 		&& (AssignedRole == EVNHPlayerRole::Human || AssignedRole == EVNHPlayerRole::Alien);
 	if (UWidget* PromptPanel = RoleHudDrillPromptPanelWidget.Get())
 	{
@@ -2062,6 +2069,26 @@ void AVNHPlayerController::UpdateRoleHudWidgetRuntimeLabels(float DeltaTime)
 	if (UTextBlock* CooldownText = RoleHudEveryonePointCooldownTextBlock.Get())
 	{
 		CooldownText->SetText(FText::FromString(FString::Printf(TEXT("%.0fs"), EveryonePointCooldownRemaining)));
+	}
+}
+
+void AVNHPlayerController::DismissActiveHunterCommandPrompt()
+{
+	if (!IsLocalController() || !GetWorld())
+	{
+		return;
+	}
+
+	const AVNHGameState* VNHGameState = GetWorld()->GetGameState<AVNHGameState>();
+	const AVNHPlayerState* VNHPlayerState = GetPlayerState<AVNHPlayerState>();
+	const EVNHPlayerRole AssignedRole = VNHPlayerState ? VNHPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
+	const float ServerTime = VNHGameState ? VNHGameState->GetServerWorldTimeSeconds() : 0.0f;
+	const FVNHHumanDrillPrompt Prompt = VNHGameState ? VNHGameState->GetHumanDrillPrompt() : FVNHHumanDrillPrompt();
+	if ((AssignedRole == EVNHPlayerRole::Human || AssignedRole == EVNHPlayerRole::Alien)
+		&& Prompt.PromptType != EVNHHunterCommandPromptType::None
+		&& Prompt.PromptEndsAtServerTime > ServerTime)
+	{
+		DismissedHunterCommandPromptSerial = Prompt.Serial;
 	}
 }
 
