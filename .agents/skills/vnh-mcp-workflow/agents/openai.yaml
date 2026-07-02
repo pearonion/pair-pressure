@@ -1,0 +1,3 @@
+display_name: VNH MCP Workflow
+short_description: Disciplined Unreal MCP workflow for this project.
+default_prompt: Use the VNH MCP workflow for disciplined Unreal Editor asset and code changes in this project.

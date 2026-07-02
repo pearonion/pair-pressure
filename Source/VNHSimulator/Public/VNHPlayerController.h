@@ -201,11 +201,14 @@ private:
 	void ApplyDebugHudInputMode(bool bDebugHudVisible);
 	void ShowLobbyMenu();
 	void EnsureTargetOutlinePostProcess();
+	void EnsureRoleHudWidget();
 	void EnsureMarkedSuspectsWidget();
 	void EnsureComposureWidget();
 	void BindComposureWidgetButtons();
 	UFUNCTION()
 	void HandleHudCustomizeClicked();
+	FString GetRoundTimerText() const;
+	void UpdateRoleHudWidgetRuntimeLabels(float DeltaTime);
 	void UpdateDebugDeckRuntimeLabels(float DeltaTime);
 	void UpdateMarkedSuspectsWidgetRuntimeLabels(float DeltaTime);
 	void UpdateComposureWidgetRuntimeLabels(float DeltaTime);
@@ -272,6 +275,8 @@ private:
 	TWeakObjectPtr<UWidget> RevealStatusBoxWidget;
 	TWeakObjectPtr<UWidget> RevealStatusShadowWidget;
 	TWeakObjectPtr<UWidget> RevealRailWidget;
+	TWeakObjectPtr<UUserWidget> RoleHudWidget;
+	TWeakObjectPtr<UTextBlock> RoleHudRoundTimerTextBlock;
 	TArray<TWeakObjectPtr<AVNHShopperCharacter>> MarkedSuspects;
 	TWeakObjectPtr<UUserWidget> MarkedSuspectsWidget;
 	TWeakObjectPtr<UTextBlock> MarkedSuspectsListTextBlock;
@@ -286,9 +291,11 @@ private:
 	TWeakObjectPtr<UButton> HudCustomizeButton;
 	FString LastInteractionText;
 	float LastInteractionTimeSeconds = -100.0f;
+	float TimeUntilRoleHudWidgetLookup = 0.0f;
 	float TimeUntilDebugDeckLabelLookup = 0.0f;
 	float TimeUntilMarkedWidgetLookup = 0.0f;
 	float TimeUntilComposureWidgetLookup = 0.0f;
+	EVNHPlayerRole ActiveRoleHudRole = EVNHPlayerRole::Unassigned;
 	int32 LastMarkedRoundNumber = INDEX_NONE;
 	int32 LastPreRoundCustomizerRound = INDEX_NONE;
 	EVNHRoundPhase LastObservedRoundPhase = EVNHRoundPhase::WaitingForPlayers;

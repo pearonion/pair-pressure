@@ -163,6 +163,7 @@ void AVNHPlayerController::BeginPlay()
 	if (!bIsMainMenuMap)
 	{
 		EnsureTargetOutlinePostProcess();
+		EnsureRoleHudWidget();
 		EnsureMarkedSuspectsWidget();
 		EnsureComposureWidget();
 		RegisterGameplayHardwareCursors();
@@ -220,6 +221,80 @@ void AVNHPlayerController::EnsureTargetOutlinePostProcess()
 	TargetOutlinePostProcessComponent->Settings.WeightedBlendables.Array.Add(FWeightedBlendable(1.0f, OutlineMaterial));
 	AddInstanceComponent(TargetOutlinePostProcessComponent);
 	TargetOutlinePostProcessComponent->RegisterComponent();
+}
+
+void AVNHPlayerController::EnsureRoleHudWidget()
+{
+	if (!IsLocalController() || IsPlayerControllerMainMenuWorld(GetWorld()))
+	{
+		return;
+	}
+
+	const AVNHPlayerState* VNHPlayerState = GetPlayerState<AVNHPlayerState>();
+	const EVNHPlayerRole AssignedRole = VNHPlayerState ? VNHPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
+
+	const TCHAR* WidgetPath = nullptr;
+	switch (AssignedRole)
+	{
+	case EVNHPlayerRole::Hunter:
+		WidgetPath = TEXT("/Game/UI/WBP_HunterHUD.WBP_HunterHUD_C");
+		break;
+	case EVNHPlayerRole::Human:
+		WidgetPath = TEXT("/Game/UI/WBP_HumanHUD.WBP_HumanHUD_C");
+		break;
+	case EVNHPlayerRole::Alien:
+		WidgetPath = TEXT("/Game/UI/WBP_AlienHUD.WBP_AlienHUD_C");
+		break;
+	default:
+		break;
+	}
+
+	if (!WidgetPath)
+	{
+		if (RoleHudWidget.IsValid())
+		{
+			RoleHudWidget->RemoveFromParent();
+			RoleHudWidget.Reset();
+			RoleHudRoundTimerTextBlock.Reset();
+		}
+		ActiveRoleHudRole = EVNHPlayerRole::Unassigned;
+		return;
+	}
+
+	if (RoleHudWidget.IsValid() && ActiveRoleHudRole == AssignedRole)
+	{
+		return;
+	}
+
+	if (RoleHudWidget.IsValid())
+	{
+		RoleHudWidget->RemoveFromParent();
+		RoleHudWidget.Reset();
+		RoleHudRoundTimerTextBlock.Reset();
+	}
+
+	UClass* WidgetClass = LoadClass<UUserWidget>(nullptr, WidgetPath);
+	if (!WidgetClass)
+	{
+		UE_LOG(LogVNH, Warning, TEXT("RoleHUD: could not load %s."), WidgetPath);
+		ActiveRoleHudRole = EVNHPlayerRole::Unassigned;
+		return;
+	}
+
+	UUserWidget* NewWidget = CreateWidget<UUserWidget>(this, WidgetClass);
+	if (!NewWidget)
+	{
+		UE_LOG(LogVNH, Warning, TEXT("RoleHUD: CreateWidget failed for %s."), WidgetPath);
+		ActiveRoleHudRole = EVNHPlayerRole::Unassigned;
+		return;
+	}
+
+	NewWidget->AddToViewport(6200);
+	NewWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	RoleHudWidget = NewWidget;
+	ActiveRoleHudRole = AssignedRole;
+	TimeUntilRoleHudWidgetLookup = 0.0f;
+	UpdateRoleHudWidgetRuntimeLabels(0.0f);
 }
 
 void AVNHPlayerController::EnsureMarkedSuspectsWidget()
@@ -372,6 +447,7 @@ void AVNHPlayerController::PlayerTick(float DeltaTime)
 	UpdateGameplayCursor();
 	PollAlienKeyboardInput();
 	PollInteractionInput();
+	UpdateRoleHudWidgetRuntimeLabels(DeltaTime);
 	UpdateDebugDeckRuntimeLabels(DeltaTime);
 	UpdateMarkedSuspectsWidgetRuntimeLabels(DeltaTime);
 	UpdateComposureWidgetRuntimeLabels(DeltaTime);
@@ -476,6 +552,22 @@ FString AVNHPlayerController::GetRoundStatusText() const
 		RemainingSeconds,
 		VNHGameState->GetTestsRemaining(),
 		VNHGameState->GetQuestionsRemaining());
+}
+
+FString AVNHPlayerController::GetRoundTimerText() const
+{
+	const AVNHGameState* VNHGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr;
+	if (!VNHGameState)
+	{
+		return TEXT("00:00");
+	}
+
+	const float PhaseEndsAt = VNHGameState->GetPhaseEndsAtServerTime();
+	const float RemainingSecondsFloat = PhaseEndsAt > 0.0f ? FMath::Max(0.0f, PhaseEndsAt - VNHGameState->GetServerWorldTimeSeconds()) : 0.0f;
+	const int32 RemainingSeconds = FMath::FloorToInt(RemainingSecondsFloat);
+	const int32 Minutes = RemainingSeconds / 60;
+	const int32 Seconds = RemainingSeconds % 60;
+	return FString::Printf(TEXT("%02d:%02d"), Minutes, Seconds);
 }
 
 FString AVNHPlayerController::GetDebugDeckInteractionText() const
@@ -1388,6 +1480,33 @@ void AVNHPlayerController::ShowLobbyMenu()
 	SetInputMode(InputMode);
 
 	UE_LOG(LogVNH, Display, TEXT("LobbyMenu: shown as non-blocking overlay."));
+}
+
+void AVNHPlayerController::UpdateRoleHudWidgetRuntimeLabels(float DeltaTime)
+{
+	if (!IsLocalController() || !GetWorld())
+	{
+		return;
+	}
+
+	EnsureRoleHudWidget();
+	if (!RoleHudWidget.IsValid())
+	{
+		return;
+	}
+
+	TimeUntilRoleHudWidgetLookup -= DeltaTime;
+	if (!RoleHudRoundTimerTextBlock.IsValid() && TimeUntilRoleHudWidgetLookup <= 0.0f)
+	{
+		TimeUntilRoleHudWidgetLookup = 0.5f;
+		UUserWidget* Widget = RoleHudWidget.Get();
+		RoleHudRoundTimerTextBlock = Widget ? Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("RoundTimerText"))) : nullptr;
+	}
+
+	if (UTextBlock* TimerText = RoleHudRoundTimerTextBlock.Get())
+	{
+		TimerText->SetText(FText::FromString(GetRoundTimerText()));
+	}
 }
 
 void AVNHPlayerController::UpdateDebugDeckRuntimeLabels(float DeltaTime)
