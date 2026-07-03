@@ -2,6 +2,7 @@
 
 #include "Blueprint/WidgetTree.h"
 #include "Components/Button.h"
+#include "Components/ButtonSlot.h"
 #include "Components/Border.h"
 #include "Components/CheckBox.h"
 #include "Components/ComboBoxString.h"
@@ -10,6 +11,7 @@
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/SizeBox.h"
+#include "Components/SizeBoxSlot.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
@@ -32,11 +34,15 @@ const FName SessionKeyMapName(TEXT("MAP_NAME"));
 const FString DefaultMapName(TEXT("MVP_Clothing Store"));
 const FString DefaultRegion(TEXT("USEAST"));
 constexpr double DoubleClickWindowSeconds = 0.35;
-constexpr float ColumnServerNameWidth = 560.0f;
-constexpr float ColumnPlayersWidth = 150.0f;
-constexpr float ColumnMapWidth = 360.0f;
-constexpr float ColumnRegionWidth = 300.0f;
-constexpr float ColumnPingWidth = 170.0f;
+constexpr float ColumnServerNameWeight = 0.36f;
+constexpr float ColumnPlayersWeight = 0.12f;
+constexpr float ColumnMapWeight = 0.24f;
+constexpr float ColumnRegionWeight = 0.18f;
+constexpr float ColumnPingWeight = 0.10f;
+constexpr float RowFontSize = 23.0f;
+constexpr float HeaderFontSize = 21.0f;
+const FMargin DefaultCellPadding(10.0f, 6.0f);
+const FMargin PingCellPadding(10.0f, 6.0f, 6.0f, 6.0f);
 
 const FString MapPlaceholder(TEXT("Any Map"));
 const FString MinPlayersPlaceholder(TEXT("Min Players"));
@@ -85,13 +91,17 @@ FSlateFontInfo MakeServerBrowserFont(const int32 Size)
 	return FSlateFontInfo(FCoreStyle::GetDefaultFont(), Size);
 }
 
-USizeBox* MakeCell(UHorizontalBox* Row, UObject* Outer, const float Width, const FMargin Padding = FMargin(10.0f, 6.0f))
+USizeBox* MakeCell(UHorizontalBox* Row, UObject* Outer, const float FillWeight, const FMargin Padding = DefaultCellPadding)
 {
 	USizeBox* SizeBox = NewObject<USizeBox>(Outer);
-	SizeBox->SetWidthOverride(Width);
 
 	UHorizontalBoxSlot* Slot = Row->AddChildToHorizontalBox(SizeBox);
+	FSlateChildSize SlotSize;
+	SlotSize.SizeRule = ESlateSizeRule::Fill;
+	SlotSize.Value = FillWeight;
+	Slot->SetSize(SlotSize);
 	Slot->SetPadding(Padding);
+	Slot->SetHorizontalAlignment(HAlign_Fill);
 	Slot->SetVerticalAlignment(VAlign_Center);
 	return SizeBox;
 }
@@ -106,24 +116,33 @@ void AddCellText(UContentWidget* Parent, const FString& Text, const FLinearColor
 	UTextBlock* TextBlock = NewObject<UTextBlock>(Parent);
 	TextBlock->SetText(FText::FromString(Text));
 	TextBlock->SetColorAndOpacity(FSlateColor(Color));
-	TextBlock->SetFont(MakeServerBrowserFont(24));
+	TextBlock->SetFont(MakeServerBrowserFont(RowFontSize));
 	TextBlock->SetJustification(Justification);
 	TextBlock->SetClipping(EWidgetClipping::ClipToBounds);
 	TextBlock->SetToolTipText(FText::FromString(Text));
 #if ENGINE_MAJOR_VERSION >= 5
 	TextBlock->SetTextOverflowPolicy(ETextOverflowPolicy::Ellipsis);
 #endif
-	Parent->AddChild(TextBlock);
+	if (USizeBoxSlot* Slot = Cast<USizeBoxSlot>(Parent->AddChild(TextBlock)))
+	{
+		Slot->SetHorizontalAlignment(Justification == ETextJustify::Center ? HAlign_Center : Justification == ETextJustify::Right ? HAlign_Right : HAlign_Left);
+		Slot->SetVerticalAlignment(VAlign_Center);
+	}
 }
 
-void AddRowText(UHorizontalBox* Row, UObject* Outer, const FString& Text, const float Width, const FLinearColor Color = FLinearColor::White)
+void AddRowText(UHorizontalBox* Row, UObject* Outer, const FString& Text, const float FillWeight, const FLinearColor Color = FLinearColor::White)
 {
-	AddCellText(MakeCell(Row, Outer, Width), Text, Color);
+	AddCellText(MakeCell(Row, Outer, FillWeight), Text, Color);
+}
+
+void AddRowText(UHorizontalBox* Row, UObject* Outer, const FString& Text, const float FillWeight, const FLinearColor Color, const ETextJustify::Type Justification)
+{
+	AddCellText(MakeCell(Row, Outer, FillWeight), Text, Color, Justification);
 }
 
 void AddServerNameCell(UHorizontalBox* Row, UObject* Outer, const FString& ServerName, const bool bSelected)
 {
-	USizeBox* SizeBox = MakeCell(Row, Outer, ColumnServerNameWidth);
+	USizeBox* SizeBox = MakeCell(Row, Outer, ColumnServerNameWeight);
 	AddCellText(SizeBox, ServerName, bSelected ? FLinearColor(1.0f, 1.0f, 1.0f, 1.0f) : FLinearColor(0.92f, 0.94f, 0.94f, 1.0f));
 }
 
@@ -173,7 +192,7 @@ FSlateBrush MakeBoxBrush(const FLinearColor& Color, const FVector2D ImageSize = 
 
 void AddPingCell(UHorizontalBox* Row, UObject* Outer, const int32 Ping)
 {
-	USizeBox* SizeBox = MakeCell(Row, Outer, ColumnPingWidth, FMargin(10.0f, 6.0f, 6.0f, 6.0f));
+	USizeBox* SizeBox = MakeCell(Row, Outer, ColumnPingWeight, PingCellPadding);
 
 	UHorizontalBox* PingBox = NewObject<UHorizontalBox>(SizeBox);
 	USizeBox* TextBox = NewObject<USizeBox>(PingBox);
@@ -183,8 +202,13 @@ void AddPingCell(UHorizontalBox* Row, UObject* Outer, const int32 Ping)
 	UTextBlock* TextBlock = NewObject<UTextBlock>(TextBox);
 	TextBlock->SetText(FText::AsNumber(Ping));
 	TextBlock->SetColorAndOpacity(FSlateColor(Color));
-	TextBlock->SetFont(MakeServerBrowserFont(24));
-	TextBox->AddChild(TextBlock);
+	TextBlock->SetFont(MakeServerBrowserFont(RowFontSize));
+	TextBlock->SetJustification(ETextJustify::Center);
+	if (USizeBoxSlot* TextSlot = Cast<USizeBoxSlot>(TextBox->AddChild(TextBlock)))
+	{
+		TextSlot->SetHorizontalAlignment(HAlign_Center);
+		TextSlot->SetVerticalAlignment(VAlign_Center);
+	}
 
 	UHorizontalBoxSlot* PingTextSlot = PingBox->AddChildToHorizontalBox(TextBox);
 	PingTextSlot->SetVerticalAlignment(VAlign_Center);
@@ -206,7 +230,40 @@ void AddPingCell(UHorizontalBox* Row, UObject* Outer, const int32 Ping)
 		BarSlot->SetVerticalAlignment(VAlign_Bottom);
 	}
 
-	SizeBox->AddChild(PingBox);
+	if (USizeBoxSlot* PingBoxSlot = Cast<USizeBoxSlot>(SizeBox->AddChild(PingBox)))
+	{
+		PingBoxSlot->SetHorizontalAlignment(HAlign_Center);
+		PingBoxSlot->SetVerticalAlignment(VAlign_Center);
+	}
+}
+
+void ConfigureHeaderButton(UButton* Button, UTextBlock* Label, const float FillWeight, const ETextJustify::Type Justification, const EHorizontalAlignment Alignment)
+{
+	if (Button)
+	{
+		if (UHorizontalBoxSlot* HorizontalSlot = Cast<UHorizontalBoxSlot>(Button->Slot))
+		{
+			FSlateChildSize SlotSize;
+			SlotSize.SizeRule = ESlateSizeRule::Fill;
+			SlotSize.Value = FillWeight;
+			HorizontalSlot->SetSize(SlotSize);
+			HorizontalSlot->SetPadding(FMargin(0.0f));
+			HorizontalSlot->SetHorizontalAlignment(HAlign_Fill);
+			HorizontalSlot->SetVerticalAlignment(VAlign_Fill);
+		}
+	}
+
+	if (Label)
+	{
+		Label->SetFont(MakeServerBrowserFont(HeaderFontSize));
+		Label->SetJustification(Justification);
+		if (UButtonSlot* ButtonSlot = Cast<UButtonSlot>(Label->Slot))
+		{
+			ButtonSlot->SetPadding(FMargin(10.0f, 2.0f, 10.0f, 2.0f));
+			ButtonSlot->SetHorizontalAlignment(Alignment);
+			ButtonSlot->SetVerticalAlignment(VAlign_Center);
+		}
+	}
 }
 }
 
@@ -298,6 +355,7 @@ void UVNHServerBrowserWidget::NativeConstruct()
 	}
 
 	ConfigureFilterCombos();
+	ConfigureHeaderLayout();
 	SetFilterOverlayVisible(false);
 	PopulateExampleServers();
 	UpdateTabLabels();
@@ -721,14 +779,19 @@ void UVNHServerBrowserWidget::PopulateRows()
 
 		UHorizontalBox* Row = NewObject<UHorizontalBox>(RowButton);
 		AddServerNameCell(Row, RowButton, Entry.ServerName, Index == SelectedVisibleIndex);
-		AddRowText(Row, RowButton, FString::Printf(TEXT("%d / %d"), Entry.CurrentPlayers, Entry.MaxPlayers), ColumnPlayersWidth);
-		AddRowText(Row, RowButton, Entry.MapName, ColumnMapWidth);
-		AddRowText(Row, RowButton, Entry.Region, ColumnRegionWidth);
+		AddRowText(Row, RowButton, FString::Printf(TEXT("%d / %d"), Entry.CurrentPlayers, Entry.MaxPlayers), ColumnPlayersWeight, FLinearColor::White, ETextJustify::Center);
+		AddRowText(Row, RowButton, Entry.MapName, ColumnMapWeight);
+		AddRowText(Row, RowButton, Entry.Region, ColumnRegionWeight, FLinearColor::White, ETextJustify::Center);
 		AddPingCell(Row, RowButton, Entry.Ping);
-		RowButton->AddChild(Row);
+		if (UButtonSlot* RowContentSlot = Cast<UButtonSlot>(RowButton->AddChild(Row)))
+		{
+			RowContentSlot->SetHorizontalAlignment(HAlign_Fill);
+			RowContentSlot->SetVerticalAlignment(VAlign_Center);
+		}
 
 		UVerticalBoxSlot* RowSlot = ServerRowsBox->AddChildToVerticalBox(RowButton);
 		RowSlot->SetPadding(FMargin(0.0f, 1.0f));
+		RowSlot->SetHorizontalAlignment(HAlign_Fill);
 	}
 }
 
@@ -854,6 +917,15 @@ void UVNHServerBrowserWidget::ConfigureFilterCombos()
 
 	ConfigureNumberCombo(MinPlayersComboBox, 8, MinPlayersPlaceholder, TEXT("Players"));
 	ConfigureNumberCombo(MinOpenSlotsComboBox, 8, MinOpenSlotsPlaceholder, TEXT("Open Slots"));
+}
+
+void UVNHServerBrowserWidget::ConfigureHeaderLayout()
+{
+	ConfigureHeaderButton(SortServerNameButton, SortServerNameButton_Label, ColumnServerNameWeight, ETextJustify::Left, HAlign_Left);
+	ConfigureHeaderButton(SortPlayersButton, SortPlayersButton_Label, ColumnPlayersWeight, ETextJustify::Center, HAlign_Center);
+	ConfigureHeaderButton(SortMapButton, MapHeaderText, ColumnMapWeight, ETextJustify::Left, HAlign_Left);
+	ConfigureHeaderButton(SortRegionButton, RegionHeaderText, ColumnRegionWeight, ETextJustify::Center, HAlign_Center);
+	ConfigureHeaderButton(SortPingButton, SortPingButton_Label, ColumnPingWeight, ETextJustify::Center, HAlign_Center);
 }
 
 void UVNHServerBrowserWidget::UpdateTabLabels()

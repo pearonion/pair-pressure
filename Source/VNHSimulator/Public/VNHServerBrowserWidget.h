@@ -10,6 +10,7 @@
 class UCheckBox;
 class UComboBoxString;
 class UEditableTextBox;
+class UHorizontalBox;
 class UTextBlock;
 class UVerticalBox;
 class UWidget;
@@ -101,6 +102,9 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
 	TObjectPtr<UButton> SortPingButton;
+
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
+	TObjectPtr<UHorizontalBox> HeaderRow;
 
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> SortServerNameButton_Label;
@@ -253,6 +257,7 @@ private:
 	void SetStatus(const FText& NewStatus);
 	void SetFilterOverlayVisible(bool bVisible);
 	void ConfigureFilterCombos();
+	void ConfigureHeaderLayout();
 	void UpdateTabLabels();
 	void UpdateSortHeaderLabels();
 	FButtonStyle MakeRowButtonStyle(bool bSelected) const;
