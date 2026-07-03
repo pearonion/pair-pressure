@@ -15,9 +15,9 @@
 
 namespace
 {
-const TCHAR* DefaultBodyMeshPath = TEXT("/Game/Creative_Characters/Skeleton_Meshes/SK_Body_009.SK_Body_009");
-const TCHAR* CreativeAnimClassPath = TEXT("/Game/Creative_Characters/Animations/ABP_CreativeCharacter.ABP_CreativeCharacter_C");
-const TCHAR* CreativeIdleAnimPath = TEXT("/Game/TNG/Characters/Animations/TryingOnClothesAnims/Female/ANIM_TNG_Idle_Breathing.ANIM_TNG_Idle_Breathing");
+const TCHAR* PreviewDefaultBodyMeshPath = TEXT("/Game/Creative_Characters/Skeleton_Meshes/SK_Body_009.SK_Body_009");
+const TCHAR* PreviewCreativeAnimClassPath = TEXT("/Game/Creative_Characters/Animations/ABP_CreativeCharacter.ABP_CreativeCharacter_C");
+const TCHAR* PreviewCreativeIdleAnimPath = TEXT("/Game/TNG/Characters/Animations/TryingOnClothesAnims/Female/ANIM_TNG_Idle_Breathing.ANIM_TNG_Idle_Breathing");
 const TCHAR* MaleIdleAnimPath = TEXT("/Game/TNG/Characters/Animations/TryingOnClothesAnims/Male/A_Male_Idle.A_Male_Idle");
 const TCHAR* FemaleIdleAnimPath = TEXT("/Game/TNG/Characters/Animations/TryingOnClothesAnims/Female/A_Female_Idle.A_Female_Idle");
 const TCHAR* MaleHatPutOnAnimPath = TEXT("/Game/TNG/Characters/Animations/TryingOnClothesAnims/Male/A_Male_Hat_PutOn.A_Male_Hat_PutOn");
@@ -148,7 +148,7 @@ void AVNHCustomizationPreviewActor::ApplyCustomization(const FVNHCharacterCustom
 	EnsureRenderTarget();
 
 	ApplySlotMesh(BodyMeshComponent, Customization.BodyMesh.IsNull()
-		? TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(DefaultBodyMeshPath))
+		? TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(PreviewDefaultBodyMeshPath))
 		: Customization.BodyMesh);
 	ApplySlotMesh(HairMeshComponent, Customization.HairMesh);
 	ApplySlotMesh(FaceMeshComponent, Customization.FaceMesh, Customization.bNoFace);
@@ -450,18 +450,18 @@ void AVNHCustomizationPreviewActor::PlayIdleAnimation()
 		ResetBodyPreviewPose();
 	}
 
-	if (UAnimationAsset* TryingOnIdle = LoadPreferredAnimation(MaleIdleAnimPath, FemaleIdleAnimPath, CreativeIdleAnimPath, CreativeIdleAnimPath))
+	if (UAnimationAsset* TryingOnIdle = LoadPreferredAnimation(MaleIdleAnimPath, FemaleIdleAnimPath, PreviewCreativeIdleAnimPath, PreviewCreativeIdleAnimPath))
 	{
 		PlayAnimationAsset(TryingOnIdle, true);
 		return;
 	}
 
-	if (UClass* CreativeAnimClass = LoadClass<UAnimInstance>(nullptr, CreativeAnimClassPath))
+	if (UClass* CreativeAnimClass = LoadClass<UAnimInstance>(nullptr, PreviewCreativeAnimClassPath))
 	{
 		BodyMeshComponent->SetAnimationMode(EAnimationMode::AnimationBlueprint);
 		BodyMeshComponent->SetAnimInstanceClass(CreativeAnimClass);
 	}
-	else if (UAnimationAsset* FallbackIdle = LoadObject<UAnimationAsset>(nullptr, CreativeIdleAnimPath))
+	else if (UAnimationAsset* FallbackIdle = LoadObject<UAnimationAsset>(nullptr, PreviewCreativeIdleAnimPath))
 	{
 		PlayAnimationAsset(FallbackIdle, true);
 	}

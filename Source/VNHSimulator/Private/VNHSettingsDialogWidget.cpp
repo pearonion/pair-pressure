@@ -57,7 +57,7 @@ USaveGame* CreateSettingsSaveGame()
 	return SaveClass ? UGameplayStatics::CreateSaveGameObject(SaveClass) : nullptr;
 }
 
-float GetFloatPropertyValue(const UObject* Object, const FName PropertyName, float DefaultValue)
+float GetSettingsFloatPropertyValue(const UObject* Object, const FName PropertyName, float DefaultValue)
 {
 	if (const FFloatProperty* Property = Object ? FindFProperty<FFloatProperty>(Object->GetClass(), PropertyName) : nullptr)
 	{
@@ -66,7 +66,7 @@ float GetFloatPropertyValue(const UObject* Object, const FName PropertyName, flo
 	return DefaultValue;
 }
 
-bool GetBoolPropertyValue(const UObject* Object, const FName PropertyName, bool DefaultValue)
+bool GetSettingsBoolPropertyValue(const UObject* Object, const FName PropertyName, bool DefaultValue)
 {
 	if (const FBoolProperty* Property = Object ? FindFProperty<FBoolProperty>(Object->GetClass(), PropertyName) : nullptr)
 	{
@@ -75,7 +75,7 @@ bool GetBoolPropertyValue(const UObject* Object, const FName PropertyName, bool 
 	return DefaultValue;
 }
 
-FString GetStringPropertyValue(const UObject* Object, const FName PropertyName, const FString& DefaultValue)
+FString GetSettingsStringPropertyValue(const UObject* Object, const FName PropertyName, const FString& DefaultValue)
 {
 	if (const FStrProperty* Property = Object ? FindFProperty<FStrProperty>(Object->GetClass(), PropertyName) : nullptr)
 	{
@@ -84,7 +84,7 @@ FString GetStringPropertyValue(const UObject* Object, const FName PropertyName, 
 	return DefaultValue;
 }
 
-void SetFloatPropertyValue(UObject* Object, const FName PropertyName, float Value)
+void SetSettingsFloatPropertyValue(UObject* Object, const FName PropertyName, float Value)
 {
 	if (FFloatProperty* Property = Object ? FindFProperty<FFloatProperty>(Object->GetClass(), PropertyName) : nullptr)
 	{
@@ -92,7 +92,7 @@ void SetFloatPropertyValue(UObject* Object, const FName PropertyName, float Valu
 	}
 }
 
-void SetBoolPropertyValue(UObject* Object, const FName PropertyName, bool bValue)
+void SetSettingsBoolPropertyValue(UObject* Object, const FName PropertyName, bool bValue)
 {
 	if (FBoolProperty* Property = Object ? FindFProperty<FBoolProperty>(Object->GetClass(), PropertyName) : nullptr)
 	{
@@ -100,7 +100,7 @@ void SetBoolPropertyValue(UObject* Object, const FName PropertyName, bool bValue
 	}
 }
 
-void SetStringPropertyValue(UObject* Object, const FName PropertyName, const FString& Value)
+void SetSettingsStringPropertyValue(UObject* Object, const FName PropertyName, const FString& Value)
 {
 	if (FStrProperty* Property = Object ? FindFProperty<FStrProperty>(Object->GetClass(), PropertyName) : nullptr)
 	{
@@ -247,49 +247,49 @@ void UVNHSettingsDialogWidget::LoadSettings()
 	if (InvertLookCheckBox)
 	{
 		GConfig->GetBool(SettingsSection, TEXT("bInvertLook"), bBoolValue, GGameUserSettingsIni);
-		bBoolValue = GetBoolPropertyValue(SaveGame, TEXT("InvertLook"), bBoolValue);
+		bBoolValue = GetSettingsBoolPropertyValue(SaveGame, TEXT("InvertLook"), bBoolValue);
 		InvertLookCheckBox->SetIsChecked(bBoolValue);
 	}
 	if (MouseSensitivitySlider)
 	{
 		FloatValue = 0.5f;
 		GConfig->GetFloat(SettingsSection, TEXT("MouseSensitivity"), FloatValue, GGameUserSettingsIni);
-		FloatValue = GetFloatPropertyValue(SaveGame, TEXT("MouseSensitivity"), FloatValue);
+		FloatValue = GetSettingsFloatPropertyValue(SaveGame, TEXT("MouseSensitivity"), FloatValue);
 		MouseSensitivitySlider->SetValue(FMath::Clamp(FloatValue, 0.0f, 1.0f));
 	}
 	if (HoldActNaturalCheckBox)
 	{
 		bBoolValue = false;
 		GConfig->GetBool(SettingsSection, TEXT("bHoldActNatural"), bBoolValue, GGameUserSettingsIni);
-		bBoolValue = GetBoolPropertyValue(SaveGame, TEXT("HoldActNatural"), bBoolValue);
+		bBoolValue = GetSettingsBoolPropertyValue(SaveGame, TEXT("HoldActNatural"), bBoolValue);
 		HoldActNaturalCheckBox->SetIsChecked(bBoolValue);
 	}
 	if (MasterVolumeSlider)
 	{
 		FloatValue = 0.8f;
 		GConfig->GetFloat(SettingsSection, TEXT("MasterVolume"), FloatValue, GGameUserSettingsIni);
-		FloatValue = GetFloatPropertyValue(SaveGame, TEXT("MasterVolume"), FloatValue);
+		FloatValue = GetSettingsFloatPropertyValue(SaveGame, TEXT("MasterVolume"), FloatValue);
 		MasterVolumeSlider->SetValue(FMath::Clamp(FloatValue, 0.0f, 1.0f));
 	}
 	if (MusicVolumeSlider)
 	{
 		FloatValue = 0.8f;
 		GConfig->GetFloat(SettingsSection, TEXT("MusicVolume"), FloatValue, GGameUserSettingsIni);
-		FloatValue = GetFloatPropertyValue(SaveGame, TEXT("MusicVolume"), FloatValue);
+		FloatValue = GetSettingsFloatPropertyValue(SaveGame, TEXT("MusicVolume"), FloatValue);
 		MusicVolumeSlider->SetValue(FMath::Clamp(FloatValue, 0.0f, 1.0f));
 	}
 	if (SfxVolumeSlider)
 	{
 		FloatValue = 0.8f;
 		GConfig->GetFloat(SettingsSection, TEXT("SfxVolume"), FloatValue, GGameUserSettingsIni);
-		FloatValue = GetFloatPropertyValue(SaveGame, TEXT("SfxVolume"), FloatValue);
+		FloatValue = GetSettingsFloatPropertyValue(SaveGame, TEXT("SfxVolume"), FloatValue);
 		SfxVolumeSlider->SetValue(FMath::Clamp(FloatValue, 0.0f, 1.0f));
 	}
 	if (MuteWhenUnfocusedCheckBox)
 	{
 		bBoolValue = true;
 		GConfig->GetBool(SettingsSection, TEXT("bMuteWhenUnfocused"), bBoolValue, GGameUserSettingsIni);
-		bBoolValue = GetBoolPropertyValue(SaveGame, TEXT("MuteWhenUnfocused"), bBoolValue);
+		bBoolValue = GetSettingsBoolPropertyValue(SaveGame, TEXT("MuteWhenUnfocused"), bBoolValue);
 		MuteWhenUnfocusedCheckBox->SetIsChecked(bBoolValue);
 	}
 
@@ -316,65 +316,65 @@ void UVNHSettingsDialogWidget::LoadSettings()
 			VSyncCheckBox->SetIsChecked(UserSettings->IsVSyncEnabled());
 		}
 	}
-	StringValue = GetStringPropertyValue(SaveGame, TEXT("WindowMode"), FString());
+	StringValue = GetSettingsStringPropertyValue(SaveGame, TEXT("WindowMode"), FString());
 	if (!StringValue.IsEmpty())
 	{
 		SetSelectedOption(WindowModeCombo, StringValue, TEXT("Windowed Fullscreen"));
 	}
-	StringValue = GetStringPropertyValue(SaveGame, TEXT("QualityPreset"), FString());
+	StringValue = GetSettingsStringPropertyValue(SaveGame, TEXT("QualityPreset"), FString());
 	if (!StringValue.IsEmpty())
 	{
 		SetSelectedOption(QualityPresetCombo, StringValue, TEXT("High"));
 	}
 	if (VSyncCheckBox && SaveGame)
 	{
-		VSyncCheckBox->SetIsChecked(GetBoolPropertyValue(SaveGame, TEXT("VSync"), VSyncCheckBox->IsChecked()));
+		VSyncCheckBox->SetIsChecked(GetSettingsBoolPropertyValue(SaveGame, TEXT("VSync"), VSyncCheckBox->IsChecked()));
 	}
 
 	if (BrightnessSlider)
 	{
 		FloatValue = 0.5f;
 		GConfig->GetFloat(SettingsSection, TEXT("Brightness"), FloatValue, GGameUserSettingsIni);
-		FloatValue = GetFloatPropertyValue(SaveGame, TEXT("Brightness"), FloatValue);
+		FloatValue = GetSettingsFloatPropertyValue(SaveGame, TEXT("Brightness"), FloatValue);
 		BrightnessSlider->SetValue(FMath::Clamp(FloatValue, 0.0f, 1.0f));
 	}
 
 	GConfig->GetString(SettingsSection, TEXT("InputPreset"), StringValue, GGameUserSettingsIni);
-	StringValue = GetStringPropertyValue(SaveGame, TEXT("InputPreset"), StringValue);
+	StringValue = GetSettingsStringPropertyValue(SaveGame, TEXT("InputPreset"), StringValue);
 	SetSelectedOption(InputPresetCombo, StringValue, TEXT("Keyboard & Mouse"));
 	GConfig->GetString(SettingsSection, TEXT("KeyboardLayout"), StringValue, GGameUserSettingsIni);
-	StringValue = GetStringPropertyValue(SaveGame, TEXT("KeyboardLayout"), StringValue);
+	StringValue = GetSettingsStringPropertyValue(SaveGame, TEXT("KeyboardLayout"), StringValue);
 	SetSelectedOption(KeyboardLayoutCombo, StringValue, TEXT("WASD"));
 	GConfig->GetString(SettingsSection, TEXT("ControllerLayout"), StringValue, GGameUserSettingsIni);
-	StringValue = GetStringPropertyValue(SaveGame, TEXT("ControllerLayout"), StringValue);
+	StringValue = GetSettingsStringPropertyValue(SaveGame, TEXT("ControllerLayout"), StringValue);
 	SetSelectedOption(ControllerLayoutCombo, StringValue, TEXT("Default"));
 
 	if (SubtitlesCheckBox)
 	{
 		bBoolValue = true;
 		GConfig->GetBool(SettingsSection, TEXT("bSubtitles"), bBoolValue, GGameUserSettingsIni);
-		bBoolValue = GetBoolPropertyValue(SaveGame, TEXT("Subtitles"), bBoolValue);
+		bBoolValue = GetSettingsBoolPropertyValue(SaveGame, TEXT("Subtitles"), bBoolValue);
 		SubtitlesCheckBox->SetIsChecked(bBoolValue);
 	}
 	if (HighContrastCheckBox)
 	{
 		bBoolValue = false;
 		GConfig->GetBool(SettingsSection, TEXT("bHighContrast"), bBoolValue, GGameUserSettingsIni);
-		bBoolValue = GetBoolPropertyValue(SaveGame, TEXT("HighContrast"), bBoolValue);
+		bBoolValue = GetSettingsBoolPropertyValue(SaveGame, TEXT("HighContrast"), bBoolValue);
 		HighContrastCheckBox->SetIsChecked(bBoolValue);
 	}
 	if (UIScaleSlider)
 	{
 		FloatValue = 0.5f;
 		GConfig->GetFloat(SettingsSection, TEXT("UIScale"), FloatValue, GGameUserSettingsIni);
-		FloatValue = GetFloatPropertyValue(SaveGame, TEXT("UIScale"), FloatValue);
+		FloatValue = GetSettingsFloatPropertyValue(SaveGame, TEXT("UIScale"), FloatValue);
 		UIScaleSlider->SetValue(FMath::Clamp(FloatValue, 0.0f, 1.0f));
 	}
 	if (ReduceCameraShakeCheckBox)
 	{
 		bBoolValue = false;
 		GConfig->GetBool(SettingsSection, TEXT("bReduceCameraShake"), bBoolValue, GGameUserSettingsIni);
-		bBoolValue = GetBoolPropertyValue(SaveGame, TEXT("ReduceCameraShake"), bBoolValue);
+		bBoolValue = GetSettingsBoolPropertyValue(SaveGame, TEXT("ReduceCameraShake"), bBoolValue);
 		ReduceCameraShakeCheckBox->SetIsChecked(bBoolValue);
 	}
 
@@ -400,24 +400,24 @@ void UVNHSettingsDialogWidget::SaveSettings()
 
 	if (SaveGame)
 	{
-		SetBoolPropertyValue(SaveGame, TEXT("InvertLook"), GetCheckBoxValue(InvertLookCheckBox, false));
-		SetFloatPropertyValue(SaveGame, TEXT("MouseSensitivity"), GetSliderValue(MouseSensitivitySlider, 0.5f));
-		SetBoolPropertyValue(SaveGame, TEXT("HoldActNatural"), GetCheckBoxValue(HoldActNaturalCheckBox, false));
-		SetFloatPropertyValue(SaveGame, TEXT("MasterVolume"), GetSliderValue(MasterVolumeSlider, 0.8f));
-		SetFloatPropertyValue(SaveGame, TEXT("MusicVolume"), GetSliderValue(MusicVolumeSlider, 0.8f));
-		SetFloatPropertyValue(SaveGame, TEXT("SfxVolume"), GetSliderValue(SfxVolumeSlider, 0.8f));
-		SetBoolPropertyValue(SaveGame, TEXT("MuteWhenUnfocused"), GetCheckBoxValue(MuteWhenUnfocusedCheckBox, true));
-		SetStringPropertyValue(SaveGame, TEXT("WindowMode"), GetSelectedOption(WindowModeCombo, TEXT("Windowed Fullscreen")));
-		SetStringPropertyValue(SaveGame, TEXT("QualityPreset"), GetSelectedOption(QualityPresetCombo, TEXT("High")));
-		SetBoolPropertyValue(SaveGame, TEXT("VSync"), GetCheckBoxValue(VSyncCheckBox, false));
-		SetFloatPropertyValue(SaveGame, TEXT("Brightness"), GetSliderValue(BrightnessSlider, 0.5f));
-		SetStringPropertyValue(SaveGame, TEXT("InputPreset"), GetSelectedOption(InputPresetCombo, TEXT("Keyboard & Mouse")));
-		SetStringPropertyValue(SaveGame, TEXT("KeyboardLayout"), GetSelectedOption(KeyboardLayoutCombo, TEXT("WASD")));
-		SetStringPropertyValue(SaveGame, TEXT("ControllerLayout"), GetSelectedOption(ControllerLayoutCombo, TEXT("Default")));
-		SetBoolPropertyValue(SaveGame, TEXT("Subtitles"), GetCheckBoxValue(SubtitlesCheckBox, true));
-		SetBoolPropertyValue(SaveGame, TEXT("HighContrast"), GetCheckBoxValue(HighContrastCheckBox, false));
-		SetFloatPropertyValue(SaveGame, TEXT("UIScale"), GetSliderValue(UIScaleSlider, 0.5f));
-		SetBoolPropertyValue(SaveGame, TEXT("ReduceCameraShake"), GetCheckBoxValue(ReduceCameraShakeCheckBox, false));
+		SetSettingsBoolPropertyValue(SaveGame, TEXT("InvertLook"), GetCheckBoxValue(InvertLookCheckBox, false));
+		SetSettingsFloatPropertyValue(SaveGame, TEXT("MouseSensitivity"), GetSliderValue(MouseSensitivitySlider, 0.5f));
+		SetSettingsBoolPropertyValue(SaveGame, TEXT("HoldActNatural"), GetCheckBoxValue(HoldActNaturalCheckBox, false));
+		SetSettingsFloatPropertyValue(SaveGame, TEXT("MasterVolume"), GetSliderValue(MasterVolumeSlider, 0.8f));
+		SetSettingsFloatPropertyValue(SaveGame, TEXT("MusicVolume"), GetSliderValue(MusicVolumeSlider, 0.8f));
+		SetSettingsFloatPropertyValue(SaveGame, TEXT("SfxVolume"), GetSliderValue(SfxVolumeSlider, 0.8f));
+		SetSettingsBoolPropertyValue(SaveGame, TEXT("MuteWhenUnfocused"), GetCheckBoxValue(MuteWhenUnfocusedCheckBox, true));
+		SetSettingsStringPropertyValue(SaveGame, TEXT("WindowMode"), GetSelectedOption(WindowModeCombo, TEXT("Windowed Fullscreen")));
+		SetSettingsStringPropertyValue(SaveGame, TEXT("QualityPreset"), GetSelectedOption(QualityPresetCombo, TEXT("High")));
+		SetSettingsBoolPropertyValue(SaveGame, TEXT("VSync"), GetCheckBoxValue(VSyncCheckBox, false));
+		SetSettingsFloatPropertyValue(SaveGame, TEXT("Brightness"), GetSliderValue(BrightnessSlider, 0.5f));
+		SetSettingsStringPropertyValue(SaveGame, TEXT("InputPreset"), GetSelectedOption(InputPresetCombo, TEXT("Keyboard & Mouse")));
+		SetSettingsStringPropertyValue(SaveGame, TEXT("KeyboardLayout"), GetSelectedOption(KeyboardLayoutCombo, TEXT("WASD")));
+		SetSettingsStringPropertyValue(SaveGame, TEXT("ControllerLayout"), GetSelectedOption(ControllerLayoutCombo, TEXT("Default")));
+		SetSettingsBoolPropertyValue(SaveGame, TEXT("Subtitles"), GetCheckBoxValue(SubtitlesCheckBox, true));
+		SetSettingsBoolPropertyValue(SaveGame, TEXT("HighContrast"), GetCheckBoxValue(HighContrastCheckBox, false));
+		SetSettingsFloatPropertyValue(SaveGame, TEXT("UIScale"), GetSliderValue(UIScaleSlider, 0.5f));
+		SetSettingsBoolPropertyValue(SaveGame, TEXT("ReduceCameraShake"), GetCheckBoxValue(ReduceCameraShakeCheckBox, false));
 		UGameplayStatics::SaveGameToSlot(SaveGame, SettingsSaveSlot, 0);
 	}
 
@@ -496,7 +496,7 @@ void UVNHSettingsDialogWidget::StyleComboBox(UComboBoxString* ComboBox) const
 	const FLinearColor RowBackgroundAlt(0.025f, 0.036f, 0.047f, 1.0f);
 	const FLinearColor RowHover(0.020f, 0.180f, 0.165f, 1.0f);
 	const FLinearColor RowSelected(0.000f, 0.260f, 0.225f, 1.0f);
-	const FLinearColor Accent(0.000f, 0.920f, 0.780f, 1.0f);
+	const FLinearColor ComboAccent(0.000f, 0.920f, 0.780f, 1.0f);
 	const FLinearColor Border(0.000f, 0.520f, 0.450f, 0.85f);
 
 	auto MakeBrush = [](const FLinearColor& Color)
@@ -524,9 +524,9 @@ void UVNHSettingsDialogWidget::StyleComboBox(UComboBoxString* ComboBox) const
 
 	FSlateBrush MenuBorderBrush = MakeBrush(MenuBackground);
 	MenuBorderBrush.DrawAs = ESlateBrushDrawType::RoundedBox;
-	MenuBorderBrush.OutlineSettings = FSlateBrushOutlineSettings(FSlateColor(Accent), 1.0f);
+	MenuBorderBrush.OutlineSettings = FSlateBrushOutlineSettings(FSlateColor(ComboAccent), 1.0f);
 
-	FSlateBrush DownArrowBrush = MakeBrush(Accent);
+	FSlateBrush DownArrowBrush = MakeBrush(ComboAccent);
 	DownArrowBrush.DrawAs = ESlateBrushDrawType::Image;
 
 	ComboButtonStyle
@@ -548,7 +548,7 @@ void UVNHSettingsDialogWidget::StyleComboBox(UComboBoxString* ComboBox) const
 
 	FSlateBrush SelectedBrush = MakeBrush(RowSelected);
 	SelectedBrush.DrawAs = ESlateBrushDrawType::RoundedBox;
-	SelectedBrush.OutlineSettings = FSlateBrushOutlineSettings(FSlateColor(Accent), 1.0f);
+	SelectedBrush.OutlineSettings = FSlateBrushOutlineSettings(FSlateColor(ComboAccent), 1.0f);
 
 	FTableRowStyle RowStyle = ComboBox->GetItemStyle();
 	RowStyle

@@ -2338,10 +2338,10 @@ void AVNHPlayerController::UpdateMarkedSuspectsWidgetRuntimeLabels(float DeltaTi
 		ListText->SetText(FText::FromString(PanelText));
 	}
 
-	if (UWidget* Panel = MarkedSuspectsPanelWidget.Get())
+	if (UWidget* SuspectsPanel = MarkedSuspectsPanelWidget.Get())
 	{
-		Panel->SetVisibility(bShowPanel ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
-		Panel->SetRenderOpacity(bShowPanel ? 1.0f : 0.0f);
+		SuspectsPanel->SetVisibility(bShowPanel ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		SuspectsPanel->SetRenderOpacity(bShowPanel ? 1.0f : 0.0f);
 	}
 }
 
@@ -2396,9 +2396,9 @@ void AVNHPlayerController::UpdateComposureWidgetRuntimeLabels(float DeltaTime)
 	{
 		Widget->SetVisibility(bShow ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
 	}
-	if (UWidget* Panel = ComposurePanelWidget.Get())
+	if (UWidget* ComposurePanel = ComposurePanelWidget.Get())
 	{
-		Panel->SetVisibility(bShow ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+		ComposurePanel->SetVisibility(bShow ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
 	}
 	if (UButton* CustomizeButton = HudCustomizeButton.Get())
 	{

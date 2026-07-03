@@ -146,7 +146,7 @@ void AddServerNameCell(UHorizontalBox* Row, UObject* Outer, const FString& Serve
 	AddCellText(SizeBox, ServerName, bSelected ? FLinearColor(1.0f, 1.0f, 1.0f, 1.0f) : FLinearColor(0.92f, 0.94f, 0.94f, 1.0f));
 }
 
-FLinearColor PingColor(const int32 Ping)
+FLinearColor ServerBrowserPingColor(const int32 Ping)
 {
 	if (Ping >= 110)
 	{
@@ -163,7 +163,7 @@ FLinearColor PingColor(const int32 Ping)
 	return FLinearColor(0.0f, 1.0f, 0.22f, 1.0f);
 }
 
-int32 PingBarCount(const int32 Ping)
+int32 ServerBrowserPingBarCount(const int32 Ping)
 {
 	if (Ping >= 110)
 	{
@@ -198,7 +198,7 @@ void AddPingCell(UHorizontalBox* Row, UObject* Outer, const int32 Ping)
 	USizeBox* TextBox = NewObject<USizeBox>(PingBox);
 	TextBox->SetWidthOverride(58.0f);
 
-	const FLinearColor Color = PingColor(Ping);
+	const FLinearColor Color = ServerBrowserPingColor(Ping);
 	UTextBlock* TextBlock = NewObject<UTextBlock>(TextBox);
 	TextBlock->SetText(FText::AsNumber(Ping));
 	TextBlock->SetColorAndOpacity(FSlateColor(Color));
@@ -213,7 +213,7 @@ void AddPingCell(UHorizontalBox* Row, UObject* Outer, const int32 Ping)
 	UHorizontalBoxSlot* PingTextSlot = PingBox->AddChildToHorizontalBox(TextBox);
 	PingTextSlot->SetVerticalAlignment(VAlign_Center);
 
-	const int32 ActiveBars = PingBarCount(Ping);
+	const int32 ActiveBars = ServerBrowserPingBarCount(Ping);
 	for (int32 BarIndex = 0; BarIndex < 4; ++BarIndex)
 	{
 		USizeBox* BarBox = NewObject<USizeBox>(PingBox);
