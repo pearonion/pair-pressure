@@ -1,6 +1,7 @@
 #include "VNHSettingsDialogWidget.h"
 
 #include "AudioDevice.h"
+#include "Containers/Ticker.h"
 #include "Components/Button.h"
 #include "Components/CheckBox.h"
 #include "Components/ComboBoxString.h"
@@ -8,9 +9,148 @@
 #include "Components/TextBlock.h"
 #include "Components/WidgetSwitcher.h"
 #include "Engine/Engine.h"
+#include "Framework/Application/SlateApplication.h"
 #include "GameFramework/GameUserSettings.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/SaveGame.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundClass.h"
+#include "Sound/SoundMix.h"
 #include "Styling/SlateTypes.h"
+#include "UObject/UnrealType.h"
 #include "VNHLog.h"
+
+namespace
+{
+constexpr const TCHAR* SettingsSaveSlot = TEXT("PlayerSettings");
+constexpr const TCHAR* SettingsSaveGameClassPath = TEXT("/Game/UI/BP_SettingsSaveGame.BP_SettingsSaveGame_C");
+
+bool bCachedMuteWhenUnfocused = true;
+FTSTicker::FDelegateHandle AudioFocusTickerHandle;
+
+USoundMix* GetVNHSettingsSoundMix()
+{
+	static USoundMix* RuntimeSoundMix = nullptr;
+	if (!RuntimeSoundMix)
+	{
+		RuntimeSoundMix = NewObject<USoundMix>(GetTransientPackage(), TEXT("VNHSettingsRuntimeSoundMix"));
+		RuntimeSoundMix->AddToRoot();
+	}
+	return RuntimeSoundMix;
+}
+
+UClass* LoadSettingsSaveGameClass()
+{
+	return LoadClass<USaveGame>(nullptr, SettingsSaveGameClassPath);
+}
+
+USaveGame* LoadSettingsSaveGame()
+{
+	return UGameplayStatics::DoesSaveGameExist(SettingsSaveSlot, 0)
+		? UGameplayStatics::LoadGameFromSlot(SettingsSaveSlot, 0)
+		: nullptr;
+}
+
+USaveGame* CreateSettingsSaveGame()
+{
+	UClass* SaveClass = LoadSettingsSaveGameClass();
+	return SaveClass ? UGameplayStatics::CreateSaveGameObject(SaveClass) : nullptr;
+}
+
+float GetFloatPropertyValue(const UObject* Object, const FName PropertyName, float DefaultValue)
+{
+	if (const FFloatProperty* Property = Object ? FindFProperty<FFloatProperty>(Object->GetClass(), PropertyName) : nullptr)
+	{
+		return Property->GetPropertyValue_InContainer(Object);
+	}
+	return DefaultValue;
+}
+
+bool GetBoolPropertyValue(const UObject* Object, const FName PropertyName, bool DefaultValue)
+{
+	if (const FBoolProperty* Property = Object ? FindFProperty<FBoolProperty>(Object->GetClass(), PropertyName) : nullptr)
+	{
+		return Property->GetPropertyValue_InContainer(Object);
+	}
+	return DefaultValue;
+}
+
+FString GetStringPropertyValue(const UObject* Object, const FName PropertyName, const FString& DefaultValue)
+{
+	if (const FStrProperty* Property = Object ? FindFProperty<FStrProperty>(Object->GetClass(), PropertyName) : nullptr)
+	{
+		return Property->GetPropertyValue_InContainer(Object);
+	}
+	return DefaultValue;
+}
+
+void SetFloatPropertyValue(UObject* Object, const FName PropertyName, float Value)
+{
+	if (FFloatProperty* Property = Object ? FindFProperty<FFloatProperty>(Object->GetClass(), PropertyName) : nullptr)
+	{
+		Property->SetPropertyValue_InContainer(Object, Value);
+	}
+}
+
+void SetBoolPropertyValue(UObject* Object, const FName PropertyName, bool bValue)
+{
+	if (FBoolProperty* Property = Object ? FindFProperty<FBoolProperty>(Object->GetClass(), PropertyName) : nullptr)
+	{
+		Property->SetPropertyValue_InContainer(Object, bValue);
+	}
+}
+
+void SetStringPropertyValue(UObject* Object, const FName PropertyName, const FString& Value)
+{
+	if (FStrProperty* Property = Object ? FindFProperty<FStrProperty>(Object->GetClass(), PropertyName) : nullptr)
+	{
+		Property->SetPropertyValue_InContainer(Object, Value);
+	}
+}
+
+USoundClass* LoadSoundClass(const TCHAR* Path)
+{
+	return LoadObject<USoundClass>(nullptr, Path);
+}
+
+bool IsVNHApplicationActive()
+{
+	return !FSlateApplication::IsInitialized() || FSlateApplication::Get().IsActive();
+}
+
+void ApplyPrimaryVolumeForFocus()
+{
+	if (!GEngine)
+	{
+		return;
+	}
+
+	if (FAudioDeviceHandle AudioDevice = GEngine->GetMainAudioDevice())
+	{
+		const bool bShouldMute = bCachedMuteWhenUnfocused && !IsVNHApplicationActive();
+		AudioDevice->SetTransientPrimaryVolume(bShouldMute ? 0.0f : 1.0f);
+	}
+}
+
+bool TickAudioFocusSettings(float DeltaTime)
+{
+	ApplyPrimaryVolumeForFocus();
+	return true;
+}
+
+void EnsureAudioFocusTicker()
+{
+	if (!AudioFocusTickerHandle.IsValid())
+	{
+		AudioFocusTickerHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateStatic(&TickAudioFocusSettings), 0.25f);
+	}
+}
+
+float BrightnessToDisplayGamma(float Brightness)
+{
+	return FMath::Lerp(1.4f, 3.0f, FMath::Clamp(Brightness, 0.0f, 1.0f));
+}
+}
 
 void UVNHSettingsDialogWidget::NativeConstruct()
 {
@@ -55,6 +195,10 @@ void UVNHSettingsDialogWidget::NativeConstruct()
 	{
 		CloseSettingsButton->OnClicked.AddUniqueDynamic(this, &UVNHSettingsDialogWidget::HandleCloseClicked);
 	}
+	if (ResetBrightnessButton)
+	{
+		ResetBrightnessButton->OnClicked.AddUniqueDynamic(this, &UVNHSettingsDialogWidget::HandleResetBrightnessClicked);
+	}
 	if (InputPresetCombo)
 	{
 		InputPresetCombo->OnSelectionChanged.AddUniqueDynamic(this, &UVNHSettingsDialogWidget::HandleInputPresetChanged);
@@ -67,6 +211,26 @@ void UVNHSettingsDialogWidget::NativeConstruct()
 	{
 		ControllerLayoutCombo->OnSelectionChanged.AddUniqueDynamic(this, &UVNHSettingsDialogWidget::HandleControllerLayoutChanged);
 	}
+	if (MasterVolumeSlider)
+	{
+		MasterVolumeSlider->OnValueChanged.AddUniqueDynamic(this, &UVNHSettingsDialogWidget::HandleAudioSliderChanged);
+	}
+	if (MusicVolumeSlider)
+	{
+		MusicVolumeSlider->OnValueChanged.AddUniqueDynamic(this, &UVNHSettingsDialogWidget::HandleAudioSliderChanged);
+	}
+	if (SfxVolumeSlider)
+	{
+		SfxVolumeSlider->OnValueChanged.AddUniqueDynamic(this, &UVNHSettingsDialogWidget::HandleAudioSliderChanged);
+	}
+	if (BrightnessSlider)
+	{
+		BrightnessSlider->OnValueChanged.AddUniqueDynamic(this, &UVNHSettingsDialogWidget::HandleBrightnessSliderChanged);
+	}
+	if (MuteWhenUnfocusedCheckBox)
+	{
+		MuteWhenUnfocusedCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UVNHSettingsDialogWidget::HandleMuteWhenUnfocusedChanged);
+	}
 
 	LoadSettings();
 	ApplySettings();
@@ -78,46 +242,54 @@ void UVNHSettingsDialogWidget::LoadSettings()
 	bool bBoolValue = false;
 	float FloatValue = 0.0f;
 	FString StringValue;
+	USaveGame* SaveGame = LoadSettingsSaveGame();
 
 	if (InvertLookCheckBox)
 	{
 		GConfig->GetBool(SettingsSection, TEXT("bInvertLook"), bBoolValue, GGameUserSettingsIni);
+		bBoolValue = GetBoolPropertyValue(SaveGame, TEXT("InvertLook"), bBoolValue);
 		InvertLookCheckBox->SetIsChecked(bBoolValue);
 	}
 	if (MouseSensitivitySlider)
 	{
 		FloatValue = 0.5f;
 		GConfig->GetFloat(SettingsSection, TEXT("MouseSensitivity"), FloatValue, GGameUserSettingsIni);
+		FloatValue = GetFloatPropertyValue(SaveGame, TEXT("MouseSensitivity"), FloatValue);
 		MouseSensitivitySlider->SetValue(FMath::Clamp(FloatValue, 0.0f, 1.0f));
 	}
 	if (HoldActNaturalCheckBox)
 	{
 		bBoolValue = false;
 		GConfig->GetBool(SettingsSection, TEXT("bHoldActNatural"), bBoolValue, GGameUserSettingsIni);
+		bBoolValue = GetBoolPropertyValue(SaveGame, TEXT("HoldActNatural"), bBoolValue);
 		HoldActNaturalCheckBox->SetIsChecked(bBoolValue);
 	}
 	if (MasterVolumeSlider)
 	{
 		FloatValue = 0.8f;
 		GConfig->GetFloat(SettingsSection, TEXT("MasterVolume"), FloatValue, GGameUserSettingsIni);
+		FloatValue = GetFloatPropertyValue(SaveGame, TEXT("MasterVolume"), FloatValue);
 		MasterVolumeSlider->SetValue(FMath::Clamp(FloatValue, 0.0f, 1.0f));
 	}
 	if (MusicVolumeSlider)
 	{
 		FloatValue = 0.8f;
 		GConfig->GetFloat(SettingsSection, TEXT("MusicVolume"), FloatValue, GGameUserSettingsIni);
+		FloatValue = GetFloatPropertyValue(SaveGame, TEXT("MusicVolume"), FloatValue);
 		MusicVolumeSlider->SetValue(FMath::Clamp(FloatValue, 0.0f, 1.0f));
 	}
 	if (SfxVolumeSlider)
 	{
 		FloatValue = 0.8f;
 		GConfig->GetFloat(SettingsSection, TEXT("SfxVolume"), FloatValue, GGameUserSettingsIni);
+		FloatValue = GetFloatPropertyValue(SaveGame, TEXT("SfxVolume"), FloatValue);
 		SfxVolumeSlider->SetValue(FMath::Clamp(FloatValue, 0.0f, 1.0f));
 	}
 	if (MuteWhenUnfocusedCheckBox)
 	{
 		bBoolValue = true;
 		GConfig->GetBool(SettingsSection, TEXT("bMuteWhenUnfocused"), bBoolValue, GGameUserSettingsIni);
+		bBoolValue = GetBoolPropertyValue(SaveGame, TEXT("MuteWhenUnfocused"), bBoolValue);
 		MuteWhenUnfocusedCheckBox->SetIsChecked(bBoolValue);
 	}
 
@@ -144,43 +316,65 @@ void UVNHSettingsDialogWidget::LoadSettings()
 			VSyncCheckBox->SetIsChecked(UserSettings->IsVSyncEnabled());
 		}
 	}
+	StringValue = GetStringPropertyValue(SaveGame, TEXT("WindowMode"), FString());
+	if (!StringValue.IsEmpty())
+	{
+		SetSelectedOption(WindowModeCombo, StringValue, TEXT("Windowed Fullscreen"));
+	}
+	StringValue = GetStringPropertyValue(SaveGame, TEXT("QualityPreset"), FString());
+	if (!StringValue.IsEmpty())
+	{
+		SetSelectedOption(QualityPresetCombo, StringValue, TEXT("High"));
+	}
+	if (VSyncCheckBox && SaveGame)
+	{
+		VSyncCheckBox->SetIsChecked(GetBoolPropertyValue(SaveGame, TEXT("VSync"), VSyncCheckBox->IsChecked()));
+	}
 
 	if (BrightnessSlider)
 	{
 		FloatValue = 0.5f;
 		GConfig->GetFloat(SettingsSection, TEXT("Brightness"), FloatValue, GGameUserSettingsIni);
+		FloatValue = GetFloatPropertyValue(SaveGame, TEXT("Brightness"), FloatValue);
 		BrightnessSlider->SetValue(FMath::Clamp(FloatValue, 0.0f, 1.0f));
 	}
 
 	GConfig->GetString(SettingsSection, TEXT("InputPreset"), StringValue, GGameUserSettingsIni);
+	StringValue = GetStringPropertyValue(SaveGame, TEXT("InputPreset"), StringValue);
 	SetSelectedOption(InputPresetCombo, StringValue, TEXT("Keyboard & Mouse"));
 	GConfig->GetString(SettingsSection, TEXT("KeyboardLayout"), StringValue, GGameUserSettingsIni);
+	StringValue = GetStringPropertyValue(SaveGame, TEXT("KeyboardLayout"), StringValue);
 	SetSelectedOption(KeyboardLayoutCombo, StringValue, TEXT("WASD"));
 	GConfig->GetString(SettingsSection, TEXT("ControllerLayout"), StringValue, GGameUserSettingsIni);
+	StringValue = GetStringPropertyValue(SaveGame, TEXT("ControllerLayout"), StringValue);
 	SetSelectedOption(ControllerLayoutCombo, StringValue, TEXT("Default"));
 
 	if (SubtitlesCheckBox)
 	{
 		bBoolValue = true;
 		GConfig->GetBool(SettingsSection, TEXT("bSubtitles"), bBoolValue, GGameUserSettingsIni);
+		bBoolValue = GetBoolPropertyValue(SaveGame, TEXT("Subtitles"), bBoolValue);
 		SubtitlesCheckBox->SetIsChecked(bBoolValue);
 	}
 	if (HighContrastCheckBox)
 	{
 		bBoolValue = false;
 		GConfig->GetBool(SettingsSection, TEXT("bHighContrast"), bBoolValue, GGameUserSettingsIni);
+		bBoolValue = GetBoolPropertyValue(SaveGame, TEXT("HighContrast"), bBoolValue);
 		HighContrastCheckBox->SetIsChecked(bBoolValue);
 	}
 	if (UIScaleSlider)
 	{
 		FloatValue = 0.5f;
 		GConfig->GetFloat(SettingsSection, TEXT("UIScale"), FloatValue, GGameUserSettingsIni);
+		FloatValue = GetFloatPropertyValue(SaveGame, TEXT("UIScale"), FloatValue);
 		UIScaleSlider->SetValue(FMath::Clamp(FloatValue, 0.0f, 1.0f));
 	}
 	if (ReduceCameraShakeCheckBox)
 	{
 		bBoolValue = false;
 		GConfig->GetBool(SettingsSection, TEXT("bReduceCameraShake"), bBoolValue, GGameUserSettingsIni);
+		bBoolValue = GetBoolPropertyValue(SaveGame, TEXT("ReduceCameraShake"), bBoolValue);
 		ReduceCameraShakeCheckBox->SetIsChecked(bBoolValue);
 	}
 
@@ -190,12 +384,43 @@ void UVNHSettingsDialogWidget::LoadSettings()
 void UVNHSettingsDialogWidget::ApplySettings()
 {
 	ApplyVideoSettings();
+	ApplyBrightnessSettings();
 	ApplyAudioSettings();
+	ApplyMuteWhenUnfocusedSettings();
 	UpdateControlLabels();
 }
 
 void UVNHSettingsDialogWidget::SaveSettings()
 {
+	USaveGame* SaveGame = LoadSettingsSaveGame();
+	if (!SaveGame)
+	{
+		SaveGame = CreateSettingsSaveGame();
+	}
+
+	if (SaveGame)
+	{
+		SetBoolPropertyValue(SaveGame, TEXT("InvertLook"), GetCheckBoxValue(InvertLookCheckBox, false));
+		SetFloatPropertyValue(SaveGame, TEXT("MouseSensitivity"), GetSliderValue(MouseSensitivitySlider, 0.5f));
+		SetBoolPropertyValue(SaveGame, TEXT("HoldActNatural"), GetCheckBoxValue(HoldActNaturalCheckBox, false));
+		SetFloatPropertyValue(SaveGame, TEXT("MasterVolume"), GetSliderValue(MasterVolumeSlider, 0.8f));
+		SetFloatPropertyValue(SaveGame, TEXT("MusicVolume"), GetSliderValue(MusicVolumeSlider, 0.8f));
+		SetFloatPropertyValue(SaveGame, TEXT("SfxVolume"), GetSliderValue(SfxVolumeSlider, 0.8f));
+		SetBoolPropertyValue(SaveGame, TEXT("MuteWhenUnfocused"), GetCheckBoxValue(MuteWhenUnfocusedCheckBox, true));
+		SetStringPropertyValue(SaveGame, TEXT("WindowMode"), GetSelectedOption(WindowModeCombo, TEXT("Windowed Fullscreen")));
+		SetStringPropertyValue(SaveGame, TEXT("QualityPreset"), GetSelectedOption(QualityPresetCombo, TEXT("High")));
+		SetBoolPropertyValue(SaveGame, TEXT("VSync"), GetCheckBoxValue(VSyncCheckBox, false));
+		SetFloatPropertyValue(SaveGame, TEXT("Brightness"), GetSliderValue(BrightnessSlider, 0.5f));
+		SetStringPropertyValue(SaveGame, TEXT("InputPreset"), GetSelectedOption(InputPresetCombo, TEXT("Keyboard & Mouse")));
+		SetStringPropertyValue(SaveGame, TEXT("KeyboardLayout"), GetSelectedOption(KeyboardLayoutCombo, TEXT("WASD")));
+		SetStringPropertyValue(SaveGame, TEXT("ControllerLayout"), GetSelectedOption(ControllerLayoutCombo, TEXT("Default")));
+		SetBoolPropertyValue(SaveGame, TEXT("Subtitles"), GetCheckBoxValue(SubtitlesCheckBox, true));
+		SetBoolPropertyValue(SaveGame, TEXT("HighContrast"), GetCheckBoxValue(HighContrastCheckBox, false));
+		SetFloatPropertyValue(SaveGame, TEXT("UIScale"), GetSliderValue(UIScaleSlider, 0.5f));
+		SetBoolPropertyValue(SaveGame, TEXT("ReduceCameraShake"), GetCheckBoxValue(ReduceCameraShakeCheckBox, false));
+		UGameplayStatics::SaveGameToSlot(SaveGame, SettingsSaveSlot, 0);
+	}
+
 	GConfig->SetBool(SettingsSection, TEXT("bInvertLook"), GetCheckBoxValue(InvertLookCheckBox, false), GGameUserSettingsIni);
 	GConfig->SetFloat(SettingsSection, TEXT("MouseSensitivity"), GetSliderValue(MouseSensitivitySlider, 0.5f), GGameUserSettingsIni);
 	GConfig->SetBool(SettingsSection, TEXT("bHoldActNatural"), GetCheckBoxValue(HoldActNaturalCheckBox, false), GGameUserSettingsIni);
@@ -400,13 +625,72 @@ void UVNHSettingsDialogWidget::UpdateControlLabels()
 
 void UVNHSettingsDialogWidget::ApplyAudioSettings()
 {
+	const float MasterVolume = FMath::Clamp(GetSliderValue(MasterVolumeSlider, 0.8f), 0.0f, 1.0f);
+	const float MusicVolume = FMath::Clamp(GetSliderValue(MusicVolumeSlider, 0.8f), 0.0f, 1.0f);
+	const float SfxVolume = FMath::Clamp(GetSliderValue(SfxVolumeSlider, 0.8f), 0.0f, 1.0f);
+	const float EffectiveMusicVolume = MasterVolume * MusicVolume;
+	const float EffectiveSfxVolume = MasterVolume * SfxVolume;
+
+	EnsureAudioFocusTicker();
+	ApplyPrimaryVolumeForFocus();
+
+	UWorld* World = GetWorld();
+	USoundMix* RuntimeSoundMix = GetVNHSettingsSoundMix();
+	if (!World || !RuntimeSoundMix)
+	{
+		return;
+	}
+
+	if (USoundClass* MasterClass = LoadSoundClass(TEXT("/Engine/EngineSounds/Master.Master")))
+	{
+		UGameplayStatics::SetSoundMixClassOverride(World, RuntimeSoundMix, MasterClass, 1.0f, 1.0f, 0.0f, true);
+	}
+	if (USoundClass* MusicClass = LoadSoundClass(TEXT("/Engine/EngineSounds/Music.Music")))
+	{
+		UGameplayStatics::SetSoundMixClassOverride(World, RuntimeSoundMix, MusicClass, EffectiveMusicVolume, 1.0f, 0.0f, true);
+	}
+	if (USoundClass* SfxClass = LoadSoundClass(TEXT("/Engine/EngineSounds/SFX.SFX")))
+	{
+		UGameplayStatics::SetSoundMixClassOverride(World, RuntimeSoundMix, SfxClass, EffectiveSfxVolume, 1.0f, 0.0f, true);
+	}
+	UGameplayStatics::PushSoundMixModifier(World, RuntimeSoundMix);
+
+	UE_LOG(LogVNH, Display, TEXT("SettingsAudio: Master=%.2f Music=%.2f SFX=%.2f EffectiveMusic=%.2f EffectiveSFX=%.2f"),
+		MasterVolume,
+		MusicVolume,
+		SfxVolume,
+		EffectiveMusicVolume,
+		EffectiveSfxVolume);
+}
+
+void UVNHSettingsDialogWidget::ApplyBrightnessSettings()
+{
+	const float Brightness = FMath::Clamp(GetSliderValue(BrightnessSlider, 0.5f), 0.0f, 1.0f);
+	const float DisplayGamma = BrightnessToDisplayGamma(Brightness);
+
 	if (GEngine)
 	{
-		if (FAudioDeviceHandle AudioDevice = GEngine->GetMainAudioDevice())
+		GEngine->DisplayGamma = DisplayGamma;
+	}
+
+	if (APlayerController* PlayerController = GetOwningPlayer())
+	{
+		PlayerController->ConsoleCommand(FString::Printf(TEXT("Gamma %.3f"), DisplayGamma), true);
+	}
+	else if (UWorld* World = GetWorld())
+	{
+		if (APlayerController* FirstPlayerController = World->GetFirstPlayerController())
 		{
-			AudioDevice->SetTransientPrimaryVolume(GetSliderValue(MasterVolumeSlider, 0.8f));
+			FirstPlayerController->ConsoleCommand(FString::Printf(TEXT("Gamma %.3f"), DisplayGamma), true);
 		}
 	}
+}
+
+void UVNHSettingsDialogWidget::ApplyMuteWhenUnfocusedSettings()
+{
+	bCachedMuteWhenUnfocused = GetCheckBoxValue(MuteWhenUnfocusedCheckBox, true);
+	EnsureAudioFocusTicker();
+	ApplyPrimaryVolumeForFocus();
 }
 
 void UVNHSettingsDialogWidget::ApplyVideoSettings()
@@ -461,6 +745,30 @@ void UVNHSettingsDialogWidget::HandleControlsTabClicked()
 void UVNHSettingsDialogWidget::HandleAccessibilityTabClicked()
 {
 	SetTab(4, NSLOCTEXT("VNH", "SettingsAccessibilityTab", "Accessibility settings."));
+}
+
+void UVNHSettingsDialogWidget::HandleAudioSliderChanged(float Value)
+{
+	ApplyAudioSettings();
+}
+
+void UVNHSettingsDialogWidget::HandleBrightnessSliderChanged(float Value)
+{
+	ApplyBrightnessSettings();
+}
+
+void UVNHSettingsDialogWidget::HandleResetBrightnessClicked()
+{
+	if (BrightnessSlider)
+	{
+		BrightnessSlider->SetValue(0.5f);
+	}
+	ApplyBrightnessSettings();
+}
+
+void UVNHSettingsDialogWidget::HandleMuteWhenUnfocusedChanged(bool bIsChecked)
+{
+	ApplyMuteWhenUnfocusedSettings();
 }
 
 void UVNHSettingsDialogWidget::HandleApplyClicked()

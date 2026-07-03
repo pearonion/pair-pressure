@@ -12,9 +12,9 @@
 
 namespace
 {
-const TCHAR* DefaultBodyMeshPath = TEXT("/Game/Creative_Characters/Skeleton_Meshes/SK_Body_009.SK_Body_009");
-const TCHAR* CreativeAnimClassPath = TEXT("/Game/Creative_Characters/Animations/ABP_CreativeCharacter.ABP_CreativeCharacter_C");
-const TCHAR* CreativeIdleAnimPath = TEXT("/Game/TNG/Characters/Animations/ANIM_TNG_Idle_Breathing.ANIM_TNG_Idle_Breathing");
+const TCHAR* PreviewDefaultBodyMeshPath = TEXT("/Game/Creative_Characters/Skeleton_Meshes/SK_Body_009.SK_Body_009");
+const TCHAR* PreviewCreativeAnimClassPath = TEXT("/Game/Creative_Characters/Animations/ABP_CreativeCharacter.ABP_CreativeCharacter_C");
+const TCHAR* PreviewCreativeIdleAnimPath = TEXT("/Game/TNG/Characters/Animations/ANIM_TNG_Idle_Breathing.ANIM_TNG_Idle_Breathing");
 constexpr int32 PreviewRenderTargetWidth = 768;
 constexpr int32 PreviewRenderTargetHeight = 1184;
 }
@@ -110,7 +110,7 @@ void AVNHCustomizationPreviewActor::ApplyCustomization(const FVNHCharacterCustom
 	EnsureRenderTarget();
 
 	ApplySlotMesh(BodyMeshComponent, Customization.BodyMesh.IsNull()
-		? TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(DefaultBodyMeshPath))
+		? TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(PreviewDefaultBodyMeshPath))
 		: Customization.BodyMesh);
 	ApplySlotMesh(HairMeshComponent, Customization.HairMesh);
 	ApplySlotMesh(FaceMeshComponent, Customization.FaceMesh, Customization.bNoFace);
@@ -197,12 +197,12 @@ void AVNHCustomizationPreviewActor::ConfigureMeshComponent(USkeletalMeshComponen
 	MeshComponent->GlobalAnimRateScale = 1.0f;
 	MeshComponent->SetCastShadow(true);
 
-	if (UClass* CreativeAnimClass = LoadClass<UAnimInstance>(nullptr, CreativeAnimClassPath))
+	if (UClass* CreativeAnimClass = LoadClass<UAnimInstance>(nullptr, PreviewCreativeAnimClassPath))
 	{
 		MeshComponent->SetAnimationMode(EAnimationMode::AnimationBlueprint);
 		MeshComponent->SetAnimInstanceClass(CreativeAnimClass);
 	}
-	else if (UAnimationAsset* IdleAnimation = LoadObject<UAnimationAsset>(nullptr, CreativeIdleAnimPath))
+	else if (UAnimationAsset* IdleAnimation = LoadObject<UAnimationAsset>(nullptr, PreviewCreativeIdleAnimPath))
 	{
 		MeshComponent->SetAnimationMode(EAnimationMode::AnimationSingleNode);
 		MeshComponent->SetAnimation(IdleAnimation);

@@ -15,11 +15,14 @@
 #include "Components/VerticalBox.h"
 #include "Components/Widget.h"
 #include "Engine/DataTable.h"
+#include "GameFramework/SaveGame.h"
 #include "Engine/Scene.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "InputCoreTypes.h"
+#include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInterface.h"
+#include "Misc/ConfigCacheIni.h"
 #include "UObject/UnrealType.h"
 #include "EngineUtils.h"
 #include "VNHGameMode.h"
@@ -83,6 +86,91 @@ constexpr float HumanDrillCooldownSeconds = 30.0f;
 constexpr float HumanDrillPromptSeconds = 5.0f;
 constexpr float EveryonePointCooldownSeconds = 60.0f;
 constexpr int32 EveryonePointMaxUsesPerRound = 2;
+constexpr const TCHAR* VNHSettingsSection = TEXT("/Script/VNHSimulator.VNHSettings");
+constexpr const TCHAR* VNHSettingsSaveSlot = TEXT("PlayerSettings");
+
+struct FVNHRuntimeSettingsValues
+{
+	bool bInvertLook = false;
+	float MouseSensitivity = 0.5f;
+};
+
+float GetFloatPropertyValue(const UObject* Object, const FName PropertyName, float DefaultValue)
+{
+	if (!Object)
+	{
+		return DefaultValue;
+	}
+
+	if (const FFloatProperty* Property = FindFProperty<FFloatProperty>(Object->GetClass(), PropertyName))
+	{
+		return Property->GetPropertyValue_InContainer(Object);
+	}
+
+	return DefaultValue;
+}
+
+bool GetBoolPropertyValue(const UObject* Object, const FName PropertyName, bool DefaultValue)
+{
+	if (!Object)
+	{
+		return DefaultValue;
+	}
+
+	if (const FBoolProperty* Property = FindFProperty<FBoolProperty>(Object->GetClass(), PropertyName))
+	{
+		return Property->GetPropertyValue_InContainer(Object);
+	}
+
+	return DefaultValue;
+}
+
+FVNHRuntimeSettingsValues LoadSavedRuntimeSettings()
+{
+	FVNHRuntimeSettingsValues Values;
+	if (GConfig)
+	{
+		GConfig->GetBool(VNHSettingsSection, TEXT("bInvertLook"), Values.bInvertLook, GGameUserSettingsIni);
+		GConfig->GetFloat(VNHSettingsSection, TEXT("MouseSensitivity"), Values.MouseSensitivity, GGameUserSettingsIni);
+	}
+
+	if (UGameplayStatics::DoesSaveGameExist(VNHSettingsSaveSlot, 0))
+	{
+		if (USaveGame* SaveGame = UGameplayStatics::LoadGameFromSlot(VNHSettingsSaveSlot, 0))
+		{
+			Values.bInvertLook = GetBoolPropertyValue(SaveGame, TEXT("InvertLook"), Values.bInvertLook);
+			Values.MouseSensitivity = GetFloatPropertyValue(SaveGame, TEXT("MouseSensitivity"), Values.MouseSensitivity);
+		}
+	}
+
+	Values.MouseSensitivity = FMath::Clamp(Values.MouseSensitivity, 0.0f, 1.0f);
+	return Values;
+}
+
+const FVNHRuntimeSettingsValues& GetCachedSavedRuntimeSettings()
+{
+	static FVNHRuntimeSettingsValues CachedValues;
+	static double LastLoadSeconds = -1.0;
+
+	const double CurrentSeconds = FPlatformTime::Seconds();
+	if (LastLoadSeconds < 0.0 || CurrentSeconds - LastLoadSeconds > 0.25)
+	{
+		CachedValues = LoadSavedRuntimeSettings();
+		LastLoadSeconds = CurrentSeconds;
+	}
+
+	return CachedValues;
+}
+
+float GetSavedLookSensitivityMultiplier()
+{
+	return FMath::Lerp(0.2f, 2.0f, GetCachedSavedRuntimeSettings().MouseSensitivity);
+}
+
+bool GetSavedInvertLook()
+{
+	return GetCachedSavedRuntimeSettings().bInvertLook;
+}
 
 const TCHAR* ToUniversalActionText(EVNHUniversalAction Action)
 {
@@ -1635,7 +1723,7 @@ void AVNHPlayerController::HandleTurnAxis(float Value)
 		return;
 	}
 
-	AddYawInput(Value);
+	AddYawInput(Value * GetSavedLookSensitivityMultiplier());
 }
 
 void AVNHPlayerController::HandleLookUpAxis(float Value)
@@ -1645,7 +1733,8 @@ void AVNHPlayerController::HandleLookUpAxis(float Value)
 		return;
 	}
 
-	AddPitchInput(Value);
+	const float InvertMultiplier = GetSavedInvertLook() ? -1.0f : 1.0f;
+	AddPitchInput(Value * GetSavedLookSensitivityMultiplier() * InvertMultiplier);
 }
 
 void AVNHPlayerController::HandleTargetFocusPressed()

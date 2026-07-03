@@ -28,6 +28,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Settings")
 	void SaveSettings();
 
+	UFUNCTION(BlueprintCallable, Category = "VNH|Settings")
+	void ApplyBrightnessSettings();
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Settings")
+	void ApplyMuteWhenUnfocusedSettings();
+
 protected:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
 	TObjectPtr<UWidgetSwitcher> SettingsSwitcher;
@@ -55,6 +61,9 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
 	TObjectPtr<UButton> CloseSettingsButton;
+
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
+	TObjectPtr<UButton> ResetBrightnessButton;
 
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
 	TObjectPtr<UCheckBox> InvertLookCheckBox;
@@ -136,6 +145,18 @@ private:
 	void ApplyAudioSettings();
 	void ApplyVideoSettings();
 	void StyleComboBox(UComboBoxString* ComboBox) const;
+
+	UFUNCTION()
+	void HandleAudioSliderChanged(float Value);
+
+	UFUNCTION()
+	void HandleBrightnessSliderChanged(float Value);
+
+	UFUNCTION()
+	void HandleResetBrightnessClicked();
+
+	UFUNCTION()
+	void HandleMuteWhenUnfocusedChanged(bool bIsChecked);
 
 	UFUNCTION()
 	void HandleGameplayTabClicked();
