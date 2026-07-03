@@ -1,7 +1,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/DataTable.h"
 #include "Engine/SkeletalMesh.h"
+#include "Engine/Texture2D.h"
 #include "VNHGameplayTypes.generated.h"
 
 class APlayerState;
@@ -199,6 +201,30 @@ struct FVNHHumanDrillPrompt
 
 	UPROPERTY(BlueprintReadOnly, Category = "Human Drill")
 	int32 Serial = 0;
+};
+
+USTRUCT(BlueprintType)
+struct FVNHCustomizationItem : public FTableRowBase
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Customization")
+	EVNHCustomizationSlot Category = EVNHCustomizationSlot::Outfit;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Customization")
+	FText DisplayName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Customization")
+	TSoftObjectPtr<USkeletalMesh> Mesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Customization")
+	TSoftObjectPtr<UTexture2D> Icon;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Customization")
+	int32 SortOrder = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Customization")
+	bool bEnabled = true;
 };
 
 USTRUCT(BlueprintType)

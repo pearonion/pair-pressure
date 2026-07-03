@@ -1,0 +1,4 @@
+interface:
+  display_name: "VNH Project Dev"
+  short_description: "Disciplined Unreal development guidance for VNHSimulator."
+  default_prompt: "Use $vnh-project-dev before changing VNHSimulator gameplay, UI, assets, maps, or repository state."

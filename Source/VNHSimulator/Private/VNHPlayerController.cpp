@@ -254,6 +254,12 @@ bool IsCustomizationPhase(const AVNHGameState* VNHGameState)
 	return RoundPhase == EVNHRoundPhase::WaitingForPlayers
 		|| RoundPhase == EVNHRoundPhase::AssigningRoles;
 }
+
+bool IsCharacterCustomizerScreenOpen(const APlayerController* PlayerController)
+{
+	const UVNHGameInstance* VNHGameInstance = PlayerController ? PlayerController->GetGameInstance<UVNHGameInstance>() : nullptr;
+	return VNHGameInstance && VNHGameInstance->IsCharacterCustomizerOpen();
+}
 }
 
 AVNHPlayerController::AVNHPlayerController()
@@ -2395,6 +2401,15 @@ void AVNHPlayerController::PollAlienKeyboardInput()
 		return;
 	}
 
+	if (IsCharacterCustomizerScreenOpen(this))
+	{
+		LastPolledAlienMoveInput = FVector2D::ZeroVector;
+		bLastPolledFastWalkRequested = false;
+		bWasPolledActNaturalDown = IsInputKeyDown(EKeys::Q);
+		bWasPolledInteractDown = IsInputKeyDown(EKeys::E);
+		return;
+	}
+
 	UVNHAlienLocomotionComponent* AlienLocomotionComponent = GetAlienLocomotionComponent();
 	if (!AlienLocomotionComponent)
 	{
@@ -2454,6 +2469,17 @@ void AVNHPlayerController::PollInteractionInput()
 		return;
 	}
 
+	if (IsCharacterCustomizerScreenOpen(this))
+	{
+		bWasPolledTargetFocusDown = IsInputKeyDown(EKeys::RightMouseButton);
+		bWasPolledInteractDown = IsInputKeyDown(EKeys::E);
+		bWasPolledMarkDown = IsInputKeyDown(EKeys::R);
+		bWasPolledFakeAccuseDown = IsInputKeyDown(EKeys::F);
+		bWasPolledAccuseDown = IsInputKeyDown(EKeys::X);
+		bWasPolledCancelTargetDown = IsInputKeyDown(EKeys::LeftMouseButton);
+		return;
+	}
+
 	const bool bTargetFocusDown = IsInputKeyDown(EKeys::RightMouseButton);
 	const bool bInteractDown = IsInputKeyDown(EKeys::E);
 	const bool bMarkDown = IsInputKeyDown(EKeys::R);
@@ -2507,7 +2533,11 @@ void AVNHPlayerController::UpdateGameplayCursor()
 	}
 
 	EMouseCursor::Type DesiredCursor = EMouseCursor::Default;
-	if (IsAssignedHunter() && FocusedShopper.IsValid())
+	if (IsCharacterCustomizerScreenOpen(this))
+	{
+		DesiredCursor = EMouseCursor::Default;
+	}
+	else if (IsAssignedHunter() && FocusedShopper.IsValid())
 	{
 		DesiredCursor = EMouseCursor::Crosshairs;
 	}
@@ -2722,6 +2752,17 @@ void AVNHPlayerController::UpdateFocusedShopper()
 	FocusedShopper.Reset();
 	FocusedLobbyPlayButton.Reset();
 	FocusedInteractable.Reset();
+
+	if (IsCharacterCustomizerScreenOpen(this))
+	{
+		if (PreviousFocusedShopper)
+		{
+			RefreshShopperOutline(PreviousFocusedShopper, false);
+		}
+		SetInteractableOutline(PreviousFocusedInteractable, false);
+		CurrentMouseCursor = EMouseCursor::Default;
+		return;
+	}
 
 	if (!PlayerCameraManager || !GetWorld())
 	{

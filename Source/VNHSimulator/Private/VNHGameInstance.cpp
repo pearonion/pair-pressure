@@ -5,6 +5,7 @@
 #include "Components/Button.h"
 #include "Components/EditableTextBox.h"
 #include "Components/TextBlock.h"
+#include "Engine/DataTable.h"
 #include "Engine/Engine.h"
 #include "Engine/SkeletalMesh.h"
 #include "Kismet/GameplayStatics.h"
@@ -45,6 +46,19 @@ TSoftObjectPtr<USkeletalMesh> MeshRef(const FSoftObjectPath& Path)
 FString MeshLabel(const TSoftObjectPtr<USkeletalMesh>& Mesh)
 {
 	return Mesh.IsNull() ? FString(TEXT("NONE")) : Mesh.ToSoftObjectPath().GetAssetName();
+}
+
+FString OptionLabel(const FSoftObjectPath& Path)
+{
+	if (Path.IsNull())
+	{
+		return FString(TEXT("None"));
+	}
+
+	FString Name = Path.GetAssetName();
+	Name.RemoveFromStart(TEXT("SK_"));
+	Name.ReplaceInline(TEXT("_"), TEXT(" "));
+	return Name;
 }
 
 bool NameStartsWithAny(const FString& Name, std::initializer_list<const TCHAR*> Prefixes)
@@ -177,6 +191,64 @@ void CycleMesh(TSoftObjectPtr<USkeletalMesh>& Mesh, const TArray<FSoftObjectPath
 	Mesh = MeshRef(Options[NextIndex]);
 }
 
+void ApplyMeshToCustomizationSlot(FVNHCharacterCustomization& Customization, EVNHCustomizationSlot CustomizationSlot, const FSoftObjectPath& Option)
+{
+	switch (CustomizationSlot)
+	{
+	case EVNHCustomizationSlot::Body:
+		if (!Option.IsNull())
+		{
+			Customization.BodyMesh = MeshRef(Option);
+		}
+		break;
+	case EVNHCustomizationSlot::Hair:
+		Customization.HairMesh = MeshRef(Option);
+		break;
+	case EVNHCustomizationSlot::Face:
+		Customization.FaceMesh = MeshRef(Option);
+		Customization.bNoFace = Option.IsNull();
+		break;
+	case EVNHCustomizationSlot::Hat:
+		Customization.HatMesh = MeshRef(Option);
+		break;
+	case EVNHCustomizationSlot::Mustache:
+		Customization.MustacheMesh = MeshRef(Option);
+		break;
+	case EVNHCustomizationSlot::Outfit:
+		Customization.OutfitMesh = MeshRef(Option);
+		break;
+	case EVNHCustomizationSlot::Outwear:
+		Customization.OutwearMesh = MeshRef(Option);
+		break;
+	case EVNHCustomizationSlot::Pants:
+		Customization.PantsMesh = MeshRef(Option);
+		break;
+	case EVNHCustomizationSlot::Shoes:
+		Customization.ShoesMesh = MeshRef(Option);
+		break;
+	case EVNHCustomizationSlot::Accessory:
+		Customization.AccessoryMesh = MeshRef(Option);
+		break;
+	default:
+		break;
+	}
+}
+
+bool AllowsNoneOption(EVNHCustomizationSlot CustomizationSlot)
+{
+	return CustomizationSlot != EVNHCustomizationSlot::Body;
+}
+
+FVNHCustomizationItem MakeNoneCustomizationItem(EVNHCustomizationSlot CustomizationSlot)
+{
+	FVNHCustomizationItem Item;
+	Item.Category = CustomizationSlot;
+	Item.DisplayName = NSLOCTEXT("VNH", "CustomizerNoneOption", "None");
+	Item.SortOrder = MIN_int32;
+	Item.bEnabled = true;
+	return Item;
+}
+
 void ResetPIETransactionBuffer()
 {
 #if WITH_EDITOR
@@ -220,6 +292,11 @@ void UVNHGameInstance::Init()
 	if (!MainMenuWidgetClass)
 	{
 		MainMenuWidgetClass = LoadClass<UUserWidget>(nullptr, TEXT("/Game/UI/WBP_VNHMainMenu.WBP_VNHMainMenu_C"));
+	}
+
+	if (CustomizationItemsTable.IsNull())
+	{
+		CustomizationItemsTable = TSoftObjectPtr<UDataTable>(FSoftObjectPath(TEXT("/Game/UI/Customizer/DT_VNHCustomizationItems.DT_VNHCustomizationItems")));
 	}
 }
 
@@ -516,6 +593,55 @@ void UVNHGameInstance::SelectCharacterPreset(int32 PresetIndex)
 	PreviewActiveCustomizationOnLocalPawn();
 }
 
+void UVNHGameInstance::SaveActiveCharacterPreset()
+{
+	EnsureCharacterProfileLoaded();
+	if (!CharacterProfile || !CharacterProfile->Presets.IsValidIndex(CharacterProfile->ActivePresetIndex))
+	{
+		return;
+	}
+
+	CharacterProfile->Presets[CharacterProfile->ActivePresetIndex].PresetIndex = CharacterProfile->ActivePresetIndex;
+	SaveCharacterProfile();
+	PreviewActiveCustomizationOnLocalPawn();
+}
+
+void UVNHGameInstance::LoadActiveCharacterPreset()
+{
+	EnsureCharacterProfileLoaded();
+	if (!CharacterProfile)
+	{
+		return;
+	}
+
+	SelectCharacterPreset(CharacterProfile->ActivePresetIndex);
+}
+
+void UVNHGameInstance::ClearActiveCustomizationCosmetics()
+{
+	EnsureCharacterProfileLoaded();
+	if (!CharacterProfile || !CharacterProfile->Presets.IsValidIndex(CharacterProfile->ActivePresetIndex))
+	{
+		return;
+	}
+
+	FVNHCharacterCustomization& Customization = CharacterProfile->Presets[CharacterProfile->ActivePresetIndex];
+	Customization.HairMesh = TSoftObjectPtr<USkeletalMesh>();
+	Customization.FaceMesh = TSoftObjectPtr<USkeletalMesh>();
+	Customization.HatMesh = TSoftObjectPtr<USkeletalMesh>();
+	Customization.MustacheMesh = TSoftObjectPtr<USkeletalMesh>();
+	Customization.OutfitMesh = TSoftObjectPtr<USkeletalMesh>();
+	Customization.OutwearMesh = TSoftObjectPtr<USkeletalMesh>();
+	Customization.PantsMesh = TSoftObjectPtr<USkeletalMesh>();
+	Customization.ShoesMesh = TSoftObjectPtr<USkeletalMesh>();
+	Customization.AccessoryMesh = TSoftObjectPtr<USkeletalMesh>();
+	Customization.bNoFace = true;
+	Customization.PresetIndex = CharacterProfile->ActivePresetIndex;
+
+	SaveCharacterProfile();
+	PreviewActiveCustomizationOnLocalPawn();
+}
+
 void UVNHGameInstance::CycleCustomizationSlot(EVNHCustomizationSlot CustomizationSlot, int32 Direction)
 {
 	EnsureCharacterProfileLoaded();
@@ -566,6 +692,53 @@ void UVNHGameInstance::CycleCustomizationSlot(EVNHCustomizationSlot Customizatio
 	PreviewActiveCustomizationOnLocalPawn();
 }
 
+void UVNHGameInstance::SelectCustomizationSlotOption(EVNHCustomizationSlot CustomizationSlot, int32 OptionIndex)
+{
+	EnsureCharacterProfileLoaded();
+	if (!CharacterProfile || !CharacterProfile->Presets.IsValidIndex(CharacterProfile->ActivePresetIndex))
+	{
+		return;
+	}
+
+	const TArray<FVNHCustomizationItem> Options = GetCustomizationItemsForSlot(CustomizationSlot);
+	if (!Options.IsValidIndex(OptionIndex))
+	{
+		return;
+	}
+
+	FVNHCharacterCustomization& Customization = CharacterProfile->Presets[CharacterProfile->ActivePresetIndex];
+	ApplyMeshToCustomizationSlot(Customization, CustomizationSlot, Options[OptionIndex].Mesh.ToSoftObjectPath());
+	SaveCharacterProfile();
+	PreviewActiveCustomizationOnLocalPawn();
+}
+
+int32 UVNHGameInstance::GetCustomizationSlotOptionCount(EVNHCustomizationSlot CustomizationSlot) const
+{
+	return GetCustomizationItemsForSlot(CustomizationSlot).Num();
+}
+
+FString UVNHGameInstance::GetCustomizationSlotOptionLabel(EVNHCustomizationSlot CustomizationSlot, int32 OptionIndex) const
+{
+	const TArray<FVNHCustomizationItem> Options = GetCustomizationItemsForSlot(CustomizationSlot);
+	if (!Options.IsValidIndex(OptionIndex))
+	{
+		return FString();
+	}
+
+	if (!Options[OptionIndex].DisplayName.IsEmpty())
+	{
+		return Options[OptionIndex].DisplayName.ToString();
+	}
+
+	return OptionLabel(Options[OptionIndex].Mesh.ToSoftObjectPath());
+}
+
+TSoftObjectPtr<UTexture2D> UVNHGameInstance::GetCustomizationSlotOptionIcon(EVNHCustomizationSlot CustomizationSlot, int32 OptionIndex) const
+{
+	const TArray<FVNHCustomizationItem> Options = GetCustomizationItemsForSlot(CustomizationSlot);
+	return Options.IsValidIndex(OptionIndex) ? Options[OptionIndex].Icon : TSoftObjectPtr<UTexture2D>();
+}
+
 void UVNHGameInstance::RandomizeActiveCustomization()
 {
 	EnsureCharacterProfileLoaded();
@@ -576,10 +749,10 @@ void UVNHGameInstance::RandomizeActiveCustomization()
 
 	FVNHCharacterCustomization& Customization = CharacterProfile->Presets[CharacterProfile->ActivePresetIndex];
 	const int32 PresetIndex = CharacterProfile->ActivePresetIndex;
-	auto PickRandomMesh = [](EVNHCustomizationSlot CustomizationSlot)
+	auto PickRandomMesh = [this](EVNHCustomizationSlot CustomizationSlot)
 	{
-		const TArray<FSoftObjectPath>& Options = CreativeCharacterOptions(CustomizationSlot);
-		return Options.IsEmpty() ? TSoftObjectPtr<USkeletalMesh>() : MeshRef(Options[FMath::RandRange(0, Options.Num() - 1)]);
+		const TArray<FVNHCustomizationItem> Options = GetCustomizationItemsForSlot(CustomizationSlot);
+		return Options.IsEmpty() ? TSoftObjectPtr<USkeletalMesh>() : Options[FMath::RandRange(0, Options.Num() - 1)].Mesh;
 	};
 
 	Customization.BodyMesh = PickRandomMesh(EVNHCustomizationSlot::Body);
@@ -697,4 +870,65 @@ FVNHCharacterCustomization UVNHGameInstance::MakeDefaultCustomization(int32 Pres
 	Customization.OutfitColor = PresetIndex == 0 ? FLinearColor(0.05f, 0.58f, 0.82f, 1.0f) : PresetIndex == 1 ? FLinearColor(0.90f, 0.18f, 0.30f, 1.0f) : FLinearColor(0.95f, 0.76f, 0.10f, 1.0f);
 	Customization.Nickname = PresetIndex == 0 ? TEXT("Greg Adjacent") : PresetIndex == 1 ? TEXT("Mall Cryptid") : TEXT("No Notes");
 	return Customization;
+}
+
+UDataTable* UVNHGameInstance::GetCustomizationItemsTable() const
+{
+	return CustomizationItemsTable.IsNull() ? nullptr : CustomizationItemsTable.LoadSynchronous();
+}
+
+TArray<FVNHCustomizationItem> UVNHGameInstance::GetCustomizationItemsForSlot(EVNHCustomizationSlot CustomizationSlot) const
+{
+	TArray<FVNHCustomizationItem> Items;
+	if (const UDataTable* DataTable = GetCustomizationItemsTable())
+	{
+		TArray<FVNHCustomizationItem*> Rows;
+		DataTable->GetAllRows<FVNHCustomizationItem>(TEXT("VNHCustomizationItems"), Rows);
+		for (const FVNHCustomizationItem* Row : Rows)
+		{
+			if (!Row || !Row->bEnabled || Row->Category != CustomizationSlot)
+			{
+				continue;
+			}
+
+			FVNHCustomizationItem Item = *Row;
+			if (Item.DisplayName.IsEmpty())
+			{
+				Item.DisplayName = FText::FromString(OptionLabel(Item.Mesh.ToSoftObjectPath()));
+			}
+			Items.Add(Item);
+		}
+
+		Items.Sort([](const FVNHCustomizationItem& Left, const FVNHCustomizationItem& Right)
+		{
+			if (Left.SortOrder != Right.SortOrder)
+			{
+				return Left.SortOrder < Right.SortOrder;
+			}
+			return Left.DisplayName.ToString() < Right.DisplayName.ToString();
+		});
+
+		if (!Items.IsEmpty())
+		{
+			if (AllowsNoneOption(CustomizationSlot))
+			{
+				Items.Insert(MakeNoneCustomizationItem(CustomizationSlot), 0);
+			}
+			return Items;
+		}
+	}
+
+	const TArray<FSoftObjectPath>& FallbackOptions = CreativeCharacterOptions(CustomizationSlot);
+	for (int32 Index = 0; Index < FallbackOptions.Num(); ++Index)
+	{
+		FVNHCustomizationItem Item;
+		Item.Category = CustomizationSlot;
+		Item.DisplayName = FText::FromString(OptionLabel(FallbackOptions[Index]));
+		Item.Mesh = MeshRef(FallbackOptions[Index]);
+		Item.SortOrder = Index;
+		Item.bEnabled = true;
+		Items.Add(Item);
+	}
+
+	return Items;
 }

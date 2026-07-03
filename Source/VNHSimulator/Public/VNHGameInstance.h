@@ -8,8 +8,10 @@
 class UVNHMainMenuWidget;
 class UVNHCharacterCustomizerWidget;
 class UUserWidget;
+class UDataTable;
 class UEditableTextBox;
 class UTextBlock;
+class UTexture2D;
 
 UCLASS()
 class VNHSIMULATOR_API UVNHGameInstance : public UGameInstance
@@ -47,11 +49,35 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Customization")
 	void HideCharacterCustomizer();
 
+	UFUNCTION(BlueprintPure, Category = "VNH|Customization")
+	bool IsCharacterCustomizerOpen() const { return ActiveCustomizer != nullptr; }
+
 	UFUNCTION(BlueprintCallable, Category = "VNH|Customization")
 	void SelectCharacterPreset(int32 PresetIndex);
 
 	UFUNCTION(BlueprintCallable, Category = "VNH|Customization")
+	void SaveActiveCharacterPreset();
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Customization")
+	void LoadActiveCharacterPreset();
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Customization")
+	void ClearActiveCustomizationCosmetics();
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Customization")
 	void CycleCustomizationSlot(EVNHCustomizationSlot CustomizationSlot, int32 Direction);
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Customization")
+	void SelectCustomizationSlotOption(EVNHCustomizationSlot CustomizationSlot, int32 OptionIndex);
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Customization")
+	int32 GetCustomizationSlotOptionCount(EVNHCustomizationSlot CustomizationSlot) const;
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Customization")
+	FString GetCustomizationSlotOptionLabel(EVNHCustomizationSlot CustomizationSlot, int32 OptionIndex) const;
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Customization")
+	TSoftObjectPtr<UTexture2D> GetCustomizationSlotOptionIcon(EVNHCustomizationSlot CustomizationSlot, int32 OptionIndex) const;
 
 	UFUNCTION(BlueprintCallable, Category = "VNH|Customization")
 	void RandomizeActiveCustomization();
@@ -80,6 +106,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Lobby")
 	FString DefaultJoinAddress = TEXT("127.0.0.1");
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Customization")
+	TSoftObjectPtr<UDataTable> CustomizationItemsTable;
+
 private:
 	UPROPERTY(Transient, NonTransactional)
 	TObjectPtr<UUserWidget> ActiveMainMenu;
@@ -97,6 +126,8 @@ private:
 	void EnsureCharacterProfileLoaded();
 	void SaveCharacterProfile();
 	FVNHCharacterCustomization MakeDefaultCustomization(int32 PresetIndex) const;
+	UDataTable* GetCustomizationItemsTable() const;
+	TArray<FVNHCustomizationItem> GetCustomizationItemsForSlot(EVNHCustomizationSlot CustomizationSlot) const;
 
 	UFUNCTION()
 	void HandleMenuHostPrivateClicked();

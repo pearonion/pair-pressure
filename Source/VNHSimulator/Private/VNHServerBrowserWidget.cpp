@@ -25,11 +25,11 @@
 
 namespace
 {
-const FName SessionKeyServerName(TEXT("SERVER_NAME"));
-const FName SessionKeyIsPrivate(TEXT("IS_PRIVATE"));
-const FName SessionKeyMaxPlayers(TEXT("MAX_PLAYERS"));
-const FName SessionKeyRegion(TEXT("REGION"));
-const FName SessionKeyMapName(TEXT("MAP_NAME"));
+const FName BrowserSessionKeyServerName(TEXT("SERVER_NAME"));
+const FName BrowserSessionKeyIsPrivate(TEXT("IS_PRIVATE"));
+const FName BrowserSessionKeyMaxPlayers(TEXT("MAX_PLAYERS"));
+const FName BrowserSessionKeyRegion(TEXT("REGION"));
+const FName BrowserSessionKeyMapName(TEXT("MAP_NAME"));
 
 const FString DefaultMapName(TEXT("MVP_Clothing Store"));
 const FString DefaultRegion(TEXT("USEAST"));
@@ -632,22 +632,22 @@ void UVNHServerBrowserWidget::HandleFindSessionsComplete(const bool bWasSuccessf
 	{
 		for (const FOnlineSessionSearchResult& Result : ActiveSearch->SearchResults)
 		{
-			const int32 AdvertisedMaxPlayers = GetSessionInt(Result, SessionKeyMaxPlayers, Result.Session.SessionSettings.NumPublicConnections);
+			const int32 AdvertisedMaxPlayers = GetSessionInt(Result, BrowserSessionKeyMaxPlayers, Result.Session.SessionSettings.NumPublicConnections);
 			const int32 OpenSlots = FMath::Clamp(Result.Session.NumOpenPublicConnections, 0, AdvertisedMaxPlayers);
 
 			FVNHServerBrowserEntry Entry;
-			Entry.ServerName = GetSessionString(Result, SessionKeyServerName, Result.Session.OwningUserName);
+			Entry.ServerName = GetSessionString(Result, BrowserSessionKeyServerName, Result.Session.OwningUserName);
 			if (Entry.ServerName.IsEmpty())
 			{
 				Entry.ServerName = Result.GetSessionIdStr();
 			}
-			Entry.MapName = GetSessionString(Result, SessionKeyMapName, DefaultMapName);
-			Entry.Region = GetSessionString(Result, SessionKeyRegion, DefaultRegion).ToUpper();
+			Entry.MapName = GetSessionString(Result, BrowserSessionKeyMapName, DefaultMapName);
+			Entry.Region = GetSessionString(Result, BrowserSessionKeyRegion, DefaultRegion).ToUpper();
 			Entry.MaxPlayers = FMath::Max(AdvertisedMaxPlayers, 1);
 			Entry.OpenSlots = OpenSlots;
 			Entry.CurrentPlayers = FMath::Clamp(Entry.MaxPlayers - OpenSlots, 0, Entry.MaxPlayers);
 			Entry.Ping = Result.PingInMs >= 0 ? Result.PingInMs : 999;
-			Entry.bPrivate = GetSessionBool(Result, SessionKeyIsPrivate, false);
+			Entry.bPrivate = GetSessionBool(Result, BrowserSessionKeyIsPrivate, false);
 			Entry.SearchResult = Result;
 			AllEntries.Add(MoveTemp(Entry));
 		}
@@ -694,15 +694,15 @@ void UVNHServerBrowserWidget::HandleJoinSessionComplete(FName SessionName, EOnJo
 
 void UVNHServerBrowserWidget::PopulateExampleServers()
 {
-	auto AddExample = [this](const TCHAR* ServerName, const int32 CurrentPlayers, const int32 MaxPlayers, const TCHAR* Region, const int32 Ping, const bool bPrivate = false)
+	auto AddExample = [this](const TCHAR* ServerName, const int32 CurrentPlayers, const int32 ExampleMaxPlayers, const TCHAR* Region, const int32 Ping, const bool bPrivate = false)
 	{
 		FVNHServerBrowserEntry Entry;
 		Entry.ServerName = ServerName;
 		Entry.MapName = DefaultMapName;
 		Entry.Region = Region;
-		Entry.CurrentPlayers = FMath::Clamp(CurrentPlayers, 0, MaxPlayers);
-		Entry.MaxPlayers = MaxPlayers;
-		Entry.OpenSlots = FMath::Max(MaxPlayers - Entry.CurrentPlayers, 0);
+		Entry.CurrentPlayers = FMath::Clamp(CurrentPlayers, 0, ExampleMaxPlayers);
+		Entry.MaxPlayers = ExampleMaxPlayers;
+		Entry.OpenSlots = FMath::Max(ExampleMaxPlayers - Entry.CurrentPlayers, 0);
 		Entry.Ping = Ping;
 		Entry.bPrivate = bPrivate;
 		Entry.bExample = true;
@@ -1041,8 +1041,8 @@ bool UVNHServerBrowserWidget::PassesFilters(const FVNHServerBrowserEntry& Entry)
 		}
 	}
 
-	const int32 MinPlayers = GetComboNumber(MinPlayersComboBox);
-	if (MinPlayers > 0 && Entry.CurrentPlayers < MinPlayers)
+	const int32 MinPlayersFilter = GetComboNumber(MinPlayersComboBox);
+	if (MinPlayersFilter > 0 && Entry.CurrentPlayers < MinPlayersFilter)
 	{
 		return false;
 	}

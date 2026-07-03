@@ -6,12 +6,19 @@
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
+#include "Components/Image.h"
 #include "Components/ScrollBox.h"
 #include "Components/TextBlock.h"
 #include "Components/UniformGridPanel.h"
 #include "Components/UniformGridSlot.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "Engine/Font.h"
+#include "Engine/Texture2D.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "InputCoreTypes.h"
+#include "VNHCustomizationPreviewActor.h"
 #include "VNHGameState.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "VNHGameInstance.h"
@@ -20,9 +27,12 @@
 
 namespace
 {
+constexpr int32 ItemsPerPage = 20;
+
 FSlateFontInfo Font(int32 Size, FName Typeface = TEXT("Bold"))
 {
 	FSlateFontInfo Result;
+	Result.FontObject = LoadObject<UObject>(nullptr, TEXT("/Engine/EngineFonts/Roboto.Roboto"));
 	Result.Size = Size;
 	Result.TypefaceFontName = Typeface;
 	return Result;
@@ -78,18 +88,32 @@ void UVNHCharacterCustomizerWidget::SetLobbyMode(bool bInLobbyMode)
 void UVNHCharacterCustomizerWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+	SetIsFocusable(true);
+	ActiveSlot = EVNHCustomizationSlot::Outfit;
+	ActivePage = 0;
 	bUsingDesignerWidget = BindDesignerWidgets();
 	if (bUsingDesignerWidget)
 	{
 		BindDesignerEvents();
 		ApplyModeText();
 		RefreshLabels();
+		RefreshItemGrid();
 		RefreshLobbyCountdown();
 	}
 	else
 	{
 		Rebuild();
 	}
+
+	EnsurePreviewActor();
+	RefreshPreviewActor();
+	BindPreviewRenderTarget();
+}
+
+void UVNHCharacterCustomizerWidget::NativeDestruct()
+{
+	DestroyPreviewActor();
+	Super::NativeDestruct();
 }
 
 void UVNHCharacterCustomizerWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
@@ -100,6 +124,53 @@ void UVNHCharacterCustomizerWidget::NativeTick(const FGeometry& MyGeometry, floa
 	{
 		RefreshLobbyCountdown();
 	}
+}
+
+FReply UVNHCharacterCustomizerWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	const FKey EffectingButton = InMouseEvent.GetEffectingButton();
+	if ((EffectingButton == EKeys::RightMouseButton || EffectingButton == EKeys::LeftMouseButton) && PreviewRenderImage)
+	{
+		const FGeometry PreviewGeometry = PreviewRenderImage->GetCachedGeometry();
+		if (PreviewGeometry.IsUnderLocation(InMouseEvent.GetScreenSpacePosition()))
+		{
+			bDraggingPreview = true;
+			LastPreviewDragScreenPosition = InMouseEvent.GetScreenSpacePosition();
+			if (PreviewActor)
+			{
+				PreviewActor->SetAutoRotate(false);
+			}
+			return FReply::Handled().CaptureMouse(TakeWidget());
+		}
+	}
+
+	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+}
+
+FReply UVNHCharacterCustomizerWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	const FKey EffectingButton = InMouseEvent.GetEffectingButton();
+	if (bDraggingPreview && (EffectingButton == EKeys::RightMouseButton || EffectingButton == EKeys::LeftMouseButton))
+	{
+		bDraggingPreview = false;
+		return FReply::Handled().ReleaseMouseCapture();
+	}
+
+	return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
+}
+
+FReply UVNHCharacterCustomizerWidget::NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	if (bDraggingPreview && PreviewActor)
+	{
+		const FVector2D CurrentPosition = InMouseEvent.GetScreenSpacePosition();
+		const float DeltaX = CurrentPosition.X - LastPreviewDragScreenPosition.X;
+		LastPreviewDragScreenPosition = CurrentPosition;
+		PreviewActor->AddYawInput(DeltaX * 0.45f);
+		return FReply::Handled();
+	}
+
+	return Super::NativeOnMouseMove(InGeometry, InMouseEvent);
 }
 
 void UVNHCharacterCustomizerWidget::Rebuild()
@@ -228,9 +299,13 @@ bool UVNHCharacterCustomizerWidget::BindDesignerWidgets()
 	TitleText = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("TitleText")));
 	PreviewText = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("PreviewText")));
 	StatusText = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("StatusText")));
+	PreviewRenderImage = Cast<UImage>(WidgetTree->FindWidget(TEXT("PreviewRenderImage")));
 	PresetOneButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("PresetOneButton")));
 	PresetTwoButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("PresetTwoButton")));
 	PresetThreeButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("PresetThreeButton")));
+	SavePresetButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("SavePresetButton")));
+	LoadPresetButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("LoadPresetButton")));
+	BlankCanvasButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("BlankCanvasButton")));
 	RandomButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("RandomButton")));
 	BodyButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("BodyButton")));
 	HairButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("HairButton")));
@@ -246,7 +321,178 @@ bool UVNHCharacterCustomizerWidget::BindDesignerWidgets()
 	NextButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("NextButton")));
 	BackReadyButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("BackReadyButton")));
 	CloseButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("CloseButton")));
+
+	if (!PreviewRenderImage)
+	{
+		if (UVerticalBox* RightPanel = Cast<UVerticalBox>(WidgetTree->FindWidget(TEXT("RightPanel"))))
+		{
+			PreviewRenderImage = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("PreviewRenderImage_Runtime"));
+			PreviewRenderImage->SetDesiredSizeOverride(FVector2D(480.0f, 520.0f));
+			PreviewRenderImage->SetVisibility(ESlateVisibility::HitTestInvisible);
+			if (UVerticalBoxSlot* PreviewSlot = RightPanel->AddChildToVerticalBox(PreviewRenderImage))
+			{
+				PreviewSlot->SetHorizontalAlignment(HAlign_Fill);
+				PreviewSlot->SetVerticalAlignment(VAlign_Fill);
+				PreviewSlot->SetPadding(FMargin(22.0f, 8.0f, 22.0f, 8.0f));
+				FSlateChildSize FillSize;
+				FillSize.SizeRule = ESlateSizeRule::Fill;
+				FillSize.Value = 1.0f;
+				PreviewSlot->SetSize(FillSize);
+			}
+		}
+	}
+
+	ItemSlotButtons.Reset();
+	ItemSlotImages.Reset();
+	ItemSlotLabels.Reset();
+	for (int32 Index = 1; Index <= ItemsPerPage; ++Index)
+	{
+		UButton* Button = Cast<UButton>(WidgetTree->FindWidget(*FString::Printf(TEXT("LookItemSlot_%d"), Index)));
+		UImage* Icon = Cast<UImage>(WidgetTree->FindWidget(*FString::Printf(TEXT("LookItemSlot_%d_Icon"), Index)));
+		UTextBlock* Label = Cast<UTextBlock>(WidgetTree->FindWidget(*FString::Printf(TEXT("LookItemSlot_%d_Label"), Index)));
+		if (Button && (!Icon || !Label))
+		{
+			UVerticalBox* ItemStack = WidgetTree->ConstructWidget<UVerticalBox>();
+			Icon = WidgetTree->ConstructWidget<UImage>();
+			Icon->SetDesiredSizeOverride(FVector2D(118.0f, 82.0f));
+
+			Label = WidgetTree->ConstructWidget<UTextBlock>();
+			Label->SetFont(Font(12));
+			Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+			Label->SetJustification(ETextJustify::Center);
+			Label->SetAutoWrapText(true);
+			Label->SetWrapTextAt(126.0f);
+
+			ItemStack->AddChildToVerticalBox(Icon);
+			ItemStack->AddChildToVerticalBox(Label);
+			Button->SetContent(ItemStack);
+		}
+
+		ItemSlotButtons.Add(Button);
+		ItemSlotImages.Add(Icon);
+		ItemSlotLabels.Add(Label);
+	}
+
+	EnsurePresetControlBar();
+	NormalizeItemGridSlots();
 	return TitleText && PreviewText && StatusText && PreviousButton && NextButton && BackReadyButton;
+}
+
+void UVNHCharacterCustomizerWidget::EnsurePresetControlBar()
+{
+	if (!WidgetTree)
+	{
+		return;
+	}
+
+	UVerticalBox* CenterPanel = Cast<UVerticalBox>(WidgetTree->FindWidget(TEXT("CenterPanel")));
+	if (!CenterPanel)
+	{
+		return;
+	}
+
+	UHorizontalBox* PresetControlsBar = Cast<UHorizontalBox>(WidgetTree->FindWidget(TEXT("PresetControlsBar_Runtime")));
+	if (!PresetControlsBar)
+	{
+		PresetControlsBar = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("PresetControlsBar_Runtime"));
+		if (UVerticalBoxSlot* BarSlot = CenterPanel->AddChildToVerticalBox(PresetControlsBar))
+		{
+			BarSlot->SetHorizontalAlignment(HAlign_Fill);
+			BarSlot->SetVerticalAlignment(VAlign_Center);
+			BarSlot->SetPadding(FMargin(8.0f, 8.0f, 8.0f, 0.0f));
+			FSlateChildSize BarSize;
+			BarSize.SizeRule = ESlateSizeRule::Automatic;
+			BarSlot->SetSize(BarSize);
+		}
+	}
+
+	auto AddButtonToPresetBar = [PresetControlsBar](UButton* Button, float FillValue)
+	{
+		if (!Button || !PresetControlsBar)
+		{
+			return;
+		}
+
+		Button->RemoveFromParent();
+		if (UHorizontalBoxSlot* ButtonSlot = PresetControlsBar->AddChildToHorizontalBox(Button))
+		{
+			ButtonSlot->SetPadding(FMargin(4.0f));
+			ButtonSlot->SetHorizontalAlignment(HAlign_Fill);
+			ButtonSlot->SetVerticalAlignment(VAlign_Fill);
+			FSlateChildSize ButtonSize;
+			ButtonSize.SizeRule = ESlateSizeRule::Fill;
+			ButtonSize.Value = FillValue;
+			ButtonSlot->SetSize(ButtonSize);
+		}
+	};
+
+	AddButtonToPresetBar(PresetOneButton, 1.0f);
+	AddButtonToPresetBar(PresetTwoButton, 1.0f);
+	AddButtonToPresetBar(PresetThreeButton, 1.0f);
+
+	auto MakePresetActionButton = [this](FName WidgetName, const FText& Label)
+	{
+		UButton* Button = WidgetTree ? WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), WidgetName) : nullptr;
+		if (!Button)
+		{
+			return Button;
+		}
+
+		Button->SetBackgroundColor(FLinearColor(0.03f, 0.78f, 0.72f, 1.0f));
+		Button->SetContent(MakeLabel(WidgetTree, Label, 13, FLinearColor::Black));
+		return Button;
+	};
+
+	if (!SavePresetButton)
+	{
+		SavePresetButton = MakePresetActionButton(FName(TEXT("SavePresetButton")), NSLOCTEXT("VNH", "CustomizerSavePreset", "SAVE PRESET"));
+		AddButtonToPresetBar(SavePresetButton, 1.15f);
+	}
+	else
+	{
+		AddButtonToPresetBar(SavePresetButton, 1.15f);
+	}
+
+	if (!LoadPresetButton)
+	{
+		LoadPresetButton = MakePresetActionButton(FName(TEXT("LoadPresetButton")), NSLOCTEXT("VNH", "CustomizerLoadPreset", "LOAD PRESET"));
+		AddButtonToPresetBar(LoadPresetButton, 1.15f);
+	}
+	else
+	{
+		AddButtonToPresetBar(LoadPresetButton, 1.15f);
+	}
+
+	if (!BlankCanvasButton)
+	{
+		BlankCanvasButton = MakePresetActionButton(FName(TEXT("BlankCanvasButton")), NSLOCTEXT("VNH", "CustomizerBlankCanvas", "BLANK CANVAS"));
+		AddButtonToPresetBar(BlankCanvasButton, 1.2f);
+	}
+	else
+	{
+		AddButtonToPresetBar(BlankCanvasButton, 1.2f);
+	}
+}
+
+void UVNHCharacterCustomizerWidget::NormalizeItemGridSlots()
+{
+	constexpr int32 GridColumns = 5;
+	for (int32 Index = 0; Index < ItemSlotButtons.Num(); ++Index)
+	{
+		UButton* Button = ItemSlotButtons[Index];
+		if (!Button)
+		{
+			continue;
+		}
+
+		if (UUniformGridSlot* GridSlot = Cast<UUniformGridSlot>(Button->Slot))
+		{
+			GridSlot->SetColumn(Index % GridColumns);
+			GridSlot->SetRow(Index / GridColumns);
+			GridSlot->SetHorizontalAlignment(HAlign_Fill);
+			GridSlot->SetVerticalAlignment(VAlign_Fill);
+		}
+	}
 }
 
 void UVNHCharacterCustomizerWidget::BindDesignerEvents()
@@ -262,6 +508,18 @@ void UVNHCharacterCustomizerWidget::BindDesignerEvents()
 	if (PresetThreeButton)
 	{
 		PresetThreeButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandlePresetThreeClicked);
+	}
+	if (SavePresetButton)
+	{
+		SavePresetButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleSavePresetClicked);
+	}
+	if (LoadPresetButton)
+	{
+		LoadPresetButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleLoadPresetClicked);
+	}
+	if (BlankCanvasButton)
+	{
+		BlankCanvasButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleBlankCanvasClicked);
 	}
 	if (RandomButton)
 	{
@@ -322,6 +580,86 @@ void UVNHCharacterCustomizerWidget::BindDesignerEvents()
 	if (CloseButton)
 	{
 		CloseButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleBackClicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(0) && ItemSlotButtons[0])
+	{
+		ItemSlotButtons[0]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot1Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(1) && ItemSlotButtons[1])
+	{
+		ItemSlotButtons[1]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot2Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(2) && ItemSlotButtons[2])
+	{
+		ItemSlotButtons[2]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot3Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(3) && ItemSlotButtons[3])
+	{
+		ItemSlotButtons[3]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot4Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(4) && ItemSlotButtons[4])
+	{
+		ItemSlotButtons[4]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot5Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(5) && ItemSlotButtons[5])
+	{
+		ItemSlotButtons[5]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot6Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(6) && ItemSlotButtons[6])
+	{
+		ItemSlotButtons[6]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot7Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(7) && ItemSlotButtons[7])
+	{
+		ItemSlotButtons[7]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot8Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(8) && ItemSlotButtons[8])
+	{
+		ItemSlotButtons[8]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot9Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(9) && ItemSlotButtons[9])
+	{
+		ItemSlotButtons[9]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot10Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(10) && ItemSlotButtons[10])
+	{
+		ItemSlotButtons[10]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot11Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(11) && ItemSlotButtons[11])
+	{
+		ItemSlotButtons[11]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot12Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(12) && ItemSlotButtons[12])
+	{
+		ItemSlotButtons[12]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot13Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(13) && ItemSlotButtons[13])
+	{
+		ItemSlotButtons[13]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot14Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(14) && ItemSlotButtons[14])
+	{
+		ItemSlotButtons[14]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot15Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(15) && ItemSlotButtons[15])
+	{
+		ItemSlotButtons[15]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot16Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(16) && ItemSlotButtons[16])
+	{
+		ItemSlotButtons[16]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot17Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(17) && ItemSlotButtons[17])
+	{
+		ItemSlotButtons[17]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot18Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(18) && ItemSlotButtons[18])
+	{
+		ItemSlotButtons[18]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot19Clicked);
+	}
+	if (ItemSlotButtons.IsValidIndex(19) && ItemSlotButtons[19])
+	{
+		ItemSlotButtons[19]->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleItemSlot20Clicked);
 	}
 }
 
@@ -446,11 +784,135 @@ void UVNHCharacterCustomizerWidget::AddOptionButton(UUniformGridPanel* Parent, c
 
 void UVNHCharacterCustomizerWidget::RefreshLabels()
 {
+	if (TitleText)
+	{
+		switch (ActiveSlot)
+		{
+		case EVNHCustomizationSlot::Body:
+			TitleText->SetText(NSLOCTEXT("VNH", "CustomizerSlotBody", "BODY COLOR"));
+			break;
+		case EVNHCustomizationSlot::Hair:
+			TitleText->SetText(NSLOCTEXT("VNH", "CustomizerSlotHair", "HEAD"));
+			break;
+		case EVNHCustomizationSlot::Face:
+			TitleText->SetText(NSLOCTEXT("VNH", "CustomizerSlotFace", "FACE"));
+			break;
+		case EVNHCustomizationSlot::Hat:
+			TitleText->SetText(NSLOCTEXT("VNH", "CustomizerSlotHat", "HAT"));
+			break;
+		case EVNHCustomizationSlot::Mustache:
+			TitleText->SetText(NSLOCTEXT("VNH", "CustomizerSlotMustache", "STACHE"));
+			break;
+		case EVNHCustomizationSlot::Outfit:
+			TitleText->SetText(NSLOCTEXT("VNH", "CustomizerSlotOutfit", "SHIRT"));
+			break;
+		case EVNHCustomizationSlot::Outwear:
+			TitleText->SetText(NSLOCTEXT("VNH", "CustomizerSlotOutwear", "OUTERWEAR"));
+			break;
+		case EVNHCustomizationSlot::Pants:
+			TitleText->SetText(NSLOCTEXT("VNH", "CustomizerSlotPants", "PANTS"));
+			break;
+		case EVNHCustomizationSlot::Shoes:
+			TitleText->SetText(NSLOCTEXT("VNH", "CustomizerSlotShoes", "SHOES"));
+			break;
+		case EVNHCustomizationSlot::Accessory:
+			TitleText->SetText(NSLOCTEXT("VNH", "CustomizerSlotAccessory", "PROPS"));
+			break;
+		default:
+			break;
+		}
+	}
+
+	RefreshItemGrid();
+}
+
+void UVNHCharacterCustomizerWidget::RefreshItemGrid()
+{
+	UVNHGameInstance* VNHGameInstance = GetVNHGameInstance();
+	if (!VNHGameInstance)
+	{
+		return;
+	}
+
+	const int32 OptionCount = VNHGameInstance->GetCustomizationSlotOptionCount(ActiveSlot);
+	const int32 PageCount = FMath::Max(1, FMath::DivideAndRoundUp(OptionCount, ItemsPerPage));
+	ActivePage = FMath::Clamp(ActivePage, 0, PageCount - 1);
+
 	if (PreviewText)
 	{
-		if (UVNHGameInstance* VNHGameInstance = GetVNHGameInstance())
+		PreviewText->SetText(FText::FromString(FString::Printf(TEXT("%d / %d"), ActivePage + 1, PageCount)));
+	}
+
+	const bool bMultiplePages = PageCount > 1;
+	if (PreviousButton)
+	{
+		PreviousButton->SetVisibility(bMultiplePages ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		PreviousButton->SetIsEnabled(bMultiplePages);
+	}
+	if (NextButton)
+	{
+		NextButton->SetVisibility(bMultiplePages ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		NextButton->SetIsEnabled(bMultiplePages);
+	}
+
+	for (int32 LocalIndex = 0; LocalIndex < ItemSlotButtons.Num(); ++LocalIndex)
+	{
+		UButton* Button = ItemSlotButtons[LocalIndex];
+		if (!Button)
 		{
-			PreviewText->SetText(FText::FromString(VNHGameInstance->GetActiveCustomizationSummary()));
+			continue;
+		}
+
+		const int32 OptionIndex = (ActivePage * ItemsPerPage) + LocalIndex;
+		const bool bHasOption = OptionIndex < OptionCount;
+		Button->SetVisibility(bHasOption ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		Button->SetIsEnabled(bHasOption);
+
+		UTextBlock* Label = ItemSlotLabels.IsValidIndex(LocalIndex) ? ItemSlotLabels[LocalIndex].Get() : nullptr;
+		if (!Label && WidgetTree)
+		{
+			Label = Cast<UTextBlock>(WidgetTree->FindWidget(*FString::Printf(TEXT("LookItemSlot_%d_Label"), LocalIndex + 1)));
+		}
+		if (Label)
+		{
+			Label->SetFont(Font(15));
+			Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+			Label->SetJustification(ETextJustify::Center);
+			Label->SetAutoWrapText(true);
+			Label->SetWrapTextAt(190.0f);
+			Label->SetVisibility(ESlateVisibility::HitTestInvisible);
+			Label->SetText(bHasOption
+				? FText::FromString(VNHGameInstance->GetCustomizationSlotOptionLabel(ActiveSlot, OptionIndex))
+				: FText::GetEmpty());
+		}
+
+		UImage* Icon = ItemSlotImages.IsValidIndex(LocalIndex) ? ItemSlotImages[LocalIndex].Get() : nullptr;
+		if (!Icon && WidgetTree)
+		{
+			Icon = Cast<UImage>(WidgetTree->FindWidget(*FString::Printf(TEXT("LookItemSlot_%d_Icon"), LocalIndex + 1)));
+		}
+		if (Icon)
+		{
+			TSoftObjectPtr<UTexture2D> IconAsset;
+			if (bHasOption)
+			{
+				IconAsset = VNHGameInstance->GetCustomizationSlotOptionIcon(ActiveSlot, OptionIndex);
+			}
+
+			if (!IconAsset.IsNull())
+			{
+				if (UTexture2D* Texture = IconAsset.LoadSynchronous())
+				{
+					Icon->SetBrushFromTexture(Texture, true);
+					Icon->SetVisibility(ESlateVisibility::HitTestInvisible);
+					Icon->SetRenderOpacity(1.0f);
+				}
+			}
+			else
+			{
+				Icon->SetVisibility(ESlateVisibility::Collapsed);
+				Icon->SetRenderOpacity(0.0f);
+			}
 		}
 	}
 }
@@ -482,26 +944,109 @@ void UVNHCharacterCustomizerWidget::RefreshLobbyCountdown()
 		}
 	}
 
-	if (TitleText)
-	{
-		TitleText->SetText(FText::FromString(FString::Printf(TEXT("DRIP CHECK // %02d // READY %d/%d"), DisplaySeconds, ReadyPlayers, TotalPlayers)));
-	}
-
 	if (StatusText)
 	{
-		const FText Status = DisplaySeconds <= 5
-			? NSLOCTEXT("VNH", "LobbyCustomizerPanicStatus", "FINAL FIT PANIC. READY or get launched as-is.")
-			: NSLOCTEXT("VNH", "LobbyCustomizerReadyStatus", "READY locks your look. The round starts when the timer hits zero.");
-		StatusText->SetText(Status);
+		const FString Status = DisplaySeconds <= 5
+			? FString::Printf(TEXT("FINAL FIT PANIC // %02d // READY %d/%d"), DisplaySeconds, ReadyPlayers, TotalPlayers)
+			: FString::Printf(TEXT("READY locks your look // %02d // READY %d/%d"), DisplaySeconds, ReadyPlayers, TotalPlayers);
+		StatusText->SetText(FText::FromString(Status));
 	}
+}
+
+void UVNHCharacterCustomizerWidget::EnsurePreviewActor()
+{
+	if (PreviewActor || !GetWorld())
+	{
+		return;
+	}
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.Owner = GetOwningPlayer();
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	SpawnParameters.ObjectFlags |= RF_Transient;
+
+	PreviewActor = GetWorld()->SpawnActor<AVNHCustomizationPreviewActor>(
+		AVNHCustomizationPreviewActor::StaticClass(),
+		FVector(0.0f, 0.0f, -50000.0f),
+		FRotator::ZeroRotator,
+		SpawnParameters);
+}
+
+void UVNHCharacterCustomizerWidget::DestroyPreviewActor()
+{
+	if (PreviewActor)
+	{
+		PreviewActor->Destroy();
+		PreviewActor = nullptr;
+	}
+}
+
+void UVNHCharacterCustomizerWidget::RefreshPreviewActor()
+{
+	EnsurePreviewActor();
+	if (PreviewActor)
+	{
+		if (UVNHGameInstance* VNHGameInstance = GetVNHGameInstance())
+		{
+			PreviewActor->ApplyCustomization(VNHGameInstance->GetActiveCustomization());
+		}
+	}
+}
+
+void UVNHCharacterCustomizerWidget::BindPreviewRenderTarget()
+{
+	if (!PreviewRenderImage || !PreviewActor || !PreviewActor->GetOrCreateRenderTarget())
+	{
+		return;
+	}
+
+	FSlateBrush PreviewBrush = PreviewRenderImage->GetBrush();
+	PreviewBrush.SetResourceObject(PreviewActor->GetOrCreateRenderTarget());
+	PreviewBrush.ImageSize = FVector2D(768.0f, 1184.0f);
+	PreviewRenderImage->SetBrush(PreviewBrush);
+	PreviewRenderImage->SetVisibility(ESlateVisibility::Visible);
+	PreviewRenderImage->SetRenderOpacity(1.0f);
+
+	RefreshPreviewActor();
 }
 
 void UVNHCharacterCustomizerWidget::ApplyAndPreview(int32 Direction)
 {
 	if (UVNHGameInstance* VNHGameInstance = GetVNHGameInstance())
 	{
-		VNHGameInstance->CycleCustomizationSlot(ActiveSlot, Direction);
+		const int32 OptionCount = VNHGameInstance->GetCustomizationSlotOptionCount(ActiveSlot);
+		const int32 PageCount = FMath::Max(1, FMath::DivideAndRoundUp(OptionCount, ItemsPerPage));
+		if (PageCount <= 1)
+		{
+			ActivePage = 0;
+			RefreshLabels();
+			return;
+		}
+
+		ActivePage = (ActivePage + Direction + PageCount) % PageCount;
 	}
+	else
+	{
+		ActivePage += Direction;
+	}
+	RefreshLabels();
+}
+
+void UVNHCharacterCustomizerWidget::SelectCategory(EVNHCustomizationSlot NewActiveSlot)
+{
+	ActiveSlot = NewActiveSlot;
+	ActivePage = 0;
+	RefreshLabels();
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlotClicked(int32 LocalSlotIndex)
+{
+	if (UVNHGameInstance* VNHGameInstance = GetVNHGameInstance())
+	{
+		const int32 OptionIndex = (ActivePage * ItemsPerPage) + LocalSlotIndex;
+		VNHGameInstance->SelectCustomizationSlotOption(ActiveSlot, OptionIndex);
+	}
+	RefreshPreviewActor();
 	RefreshLabels();
 }
 
@@ -551,6 +1096,7 @@ void UVNHCharacterCustomizerWidget::HandleRandomClicked()
 	{
 		VNHGameInstance->RandomizeActiveCustomization();
 	}
+	RefreshPreviewActor();
 	RefreshLabels();
 }
 
@@ -566,62 +1112,152 @@ void UVNHCharacterCustomizerWidget::HandleNextClicked()
 
 void UVNHCharacterCustomizerWidget::HandleBodyClicked()
 {
-	ActiveSlot = EVNHCustomizationSlot::Body;
-	ApplyAndPreview();
+	SelectCategory(EVNHCustomizationSlot::Body);
 }
 
 void UVNHCharacterCustomizerWidget::HandleHairClicked()
 {
-	ActiveSlot = EVNHCustomizationSlot::Hair;
-	ApplyAndPreview();
+	SelectCategory(EVNHCustomizationSlot::Hair);
 }
 
 void UVNHCharacterCustomizerWidget::HandleFaceClicked()
 {
-	ActiveSlot = EVNHCustomizationSlot::Face;
-	ApplyAndPreview();
+	SelectCategory(EVNHCustomizationSlot::Face);
 }
 
 void UVNHCharacterCustomizerWidget::HandleHatClicked()
 {
-	ActiveSlot = EVNHCustomizationSlot::Hat;
-	ApplyAndPreview();
+	SelectCategory(EVNHCustomizationSlot::Hat);
 }
 
 void UVNHCharacterCustomizerWidget::HandleMustacheClicked()
 {
-	ActiveSlot = EVNHCustomizationSlot::Mustache;
-	ApplyAndPreview();
+	SelectCategory(EVNHCustomizationSlot::Mustache);
 }
 
 void UVNHCharacterCustomizerWidget::HandleOutfitClicked()
 {
-	ActiveSlot = EVNHCustomizationSlot::Outfit;
-	ApplyAndPreview();
+	SelectCategory(EVNHCustomizationSlot::Outfit);
 }
 
 void UVNHCharacterCustomizerWidget::HandleOutwearClicked()
 {
-	ActiveSlot = EVNHCustomizationSlot::Outwear;
-	ApplyAndPreview();
+	SelectCategory(EVNHCustomizationSlot::Outwear);
 }
 
 void UVNHCharacterCustomizerWidget::HandlePantsClicked()
 {
-	ActiveSlot = EVNHCustomizationSlot::Pants;
-	ApplyAndPreview();
+	SelectCategory(EVNHCustomizationSlot::Pants);
 }
 
 void UVNHCharacterCustomizerWidget::HandleShoesClicked()
 {
-	ActiveSlot = EVNHCustomizationSlot::Shoes;
-	ApplyAndPreview();
+	SelectCategory(EVNHCustomizationSlot::Shoes);
 }
 
 void UVNHCharacterCustomizerWidget::HandleAccessoryClicked()
 {
-	ActiveSlot = EVNHCustomizationSlot::Accessory;
-	ApplyAndPreview();
+	SelectCategory(EVNHCustomizationSlot::Accessory);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot1Clicked()
+{
+	HandleItemSlotClicked(0);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot2Clicked()
+{
+	HandleItemSlotClicked(1);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot3Clicked()
+{
+	HandleItemSlotClicked(2);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot4Clicked()
+{
+	HandleItemSlotClicked(3);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot5Clicked()
+{
+	HandleItemSlotClicked(4);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot6Clicked()
+{
+	HandleItemSlotClicked(5);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot7Clicked()
+{
+	HandleItemSlotClicked(6);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot8Clicked()
+{
+	HandleItemSlotClicked(7);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot9Clicked()
+{
+	HandleItemSlotClicked(8);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot10Clicked()
+{
+	HandleItemSlotClicked(9);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot11Clicked()
+{
+	HandleItemSlotClicked(10);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot12Clicked()
+{
+	HandleItemSlotClicked(11);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot13Clicked()
+{
+	HandleItemSlotClicked(12);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot14Clicked()
+{
+	HandleItemSlotClicked(13);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot15Clicked()
+{
+	HandleItemSlotClicked(14);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot16Clicked()
+{
+	HandleItemSlotClicked(15);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot17Clicked()
+{
+	HandleItemSlotClicked(16);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot18Clicked()
+{
+	HandleItemSlotClicked(17);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot19Clicked()
+{
+	HandleItemSlotClicked(18);
+}
+
+void UVNHCharacterCustomizerWidget::HandleItemSlot20Clicked()
+{
+	HandleItemSlotClicked(19);
 }
 
 void UVNHCharacterCustomizerWidget::HandlePresetOneClicked()
@@ -630,6 +1266,8 @@ void UVNHCharacterCustomizerWidget::HandlePresetOneClicked()
 	{
 		VNHGameInstance->SelectCharacterPreset(0);
 	}
+	ActivePage = 0;
+	RefreshPreviewActor();
 	RefreshLabels();
 }
 
@@ -639,6 +1277,8 @@ void UVNHCharacterCustomizerWidget::HandlePresetTwoClicked()
 	{
 		VNHGameInstance->SelectCharacterPreset(1);
 	}
+	ActivePage = 0;
+	RefreshPreviewActor();
 	RefreshLabels();
 }
 
@@ -648,5 +1288,51 @@ void UVNHCharacterCustomizerWidget::HandlePresetThreeClicked()
 	{
 		VNHGameInstance->SelectCharacterPreset(2);
 	}
+	ActivePage = 0;
+	RefreshPreviewActor();
+	RefreshLabels();
+}
+
+void UVNHCharacterCustomizerWidget::HandleSavePresetClicked()
+{
+	if (UVNHGameInstance* VNHGameInstance = GetVNHGameInstance())
+	{
+		VNHGameInstance->SaveActiveCharacterPreset();
+	}
+	if (StatusText)
+	{
+		StatusText->SetText(NSLOCTEXT("VNH", "CustomizerPresetSaved", "PRESET SAVED // your current fit is locked into this preset."));
+	}
+	RefreshPreviewActor();
+	RefreshLabels();
+}
+
+void UVNHCharacterCustomizerWidget::HandleLoadPresetClicked()
+{
+	if (UVNHGameInstance* VNHGameInstance = GetVNHGameInstance())
+	{
+		VNHGameInstance->LoadActiveCharacterPreset();
+	}
+	if (StatusText)
+	{
+		StatusText->SetText(NSLOCTEXT("VNH", "CustomizerPresetLoaded", "PRESET LOADED // previous decisions have consequences."));
+	}
+	ActivePage = 0;
+	RefreshPreviewActor();
+	RefreshLabels();
+}
+
+void UVNHCharacterCustomizerWidget::HandleBlankCanvasClicked()
+{
+	if (UVNHGameInstance* VNHGameInstance = GetVNHGameInstance())
+	{
+		VNHGameInstance->ClearActiveCustomizationCosmetics();
+	}
+	if (StatusText)
+	{
+		StatusText->SetText(NSLOCTEXT("VNH", "CustomizerBlankCanvasApplied", "BLANK CANVAS // base body only."));
+	}
+	ActivePage = 0;
+	RefreshPreviewActor();
 	RefreshLabels();
 }
