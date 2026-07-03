@@ -739,6 +739,12 @@ TSoftObjectPtr<UTexture2D> UVNHGameInstance::GetCustomizationSlotOptionIcon(EVNH
 	return Options.IsValidIndex(OptionIndex) ? Options[OptionIndex].Icon : TSoftObjectPtr<UTexture2D>();
 }
 
+bool UVNHGameInstance::IsCustomizationSlotOptionEmpty(EVNHCustomizationSlot CustomizationSlot, int32 OptionIndex) const
+{
+	const TArray<FVNHCustomizationItem> Options = GetCustomizationItemsForSlot(CustomizationSlot);
+	return Options.IsValidIndex(OptionIndex) && Options[OptionIndex].Mesh.IsNull();
+}
+
 void UVNHGameInstance::RandomizeActiveCustomization()
 {
 	EnsureCharacterProfileLoaded();

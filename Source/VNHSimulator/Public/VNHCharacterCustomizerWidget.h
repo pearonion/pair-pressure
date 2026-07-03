@@ -6,6 +6,7 @@
 #include "VNHCharacterCustomizerWidget.generated.h"
 
 class UButton;
+class UCheckBox;
 class UImage;
 class UTextBlock;
 class UUniformGridPanel;
@@ -38,17 +39,20 @@ private:
 	void AddPresetButton(UVerticalBox* Parent, int32 PresetIndex);
 	void AddOptionButton(UUniformGridPanel* Parent, const FText& Label, int32 Direction, int32 Column, int32 Row);
 	void RefreshLabels();
+	void RefreshPresetButtonStyles();
 	void RefreshItemGrid();
 	void RefreshLobbyCountdown();
 	void EnsurePreviewActor();
 	void DestroyPreviewActor();
 	void RefreshPreviewActor();
 	void BindPreviewRenderTarget();
+	void EnsurePreviewAnimationToggle();
 	void ApplyAndPreview(int32 Direction = 1);
 	void EnsurePresetControlBar();
 	void NormalizeItemGridSlots();
 	void SelectCategory(EVNHCustomizationSlot NewActiveSlot);
 	void HandleItemSlotClicked(int32 LocalSlotIndex);
+	void PlayPreviewChangeAnimation(EVNHCustomizationSlot CustomizationSlot, bool bRemovingItem);
 	UVNHGameInstance* GetVNHGameInstance() const;
 
 	UFUNCTION()
@@ -177,6 +181,9 @@ private:
 	UFUNCTION()
 	void HandleBlankCanvasClicked();
 
+	UFUNCTION()
+	void HandlePreviewFemaleAnimationsChanged(bool bIsChecked);
+
 	bool bLobbyMode = false;
 	bool bUsingDesignerWidget = false;
 	EVNHCustomizationSlot ActiveSlot = EVNHCustomizationSlot::Body;
@@ -193,6 +200,12 @@ private:
 
 	UPROPERTY(Transient, meta = (BindWidgetOptional))
 	TObjectPtr<UImage> PreviewRenderImage;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UCheckBox> PreviewFemaleAnimationsCheckBox;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> PreviewFemaleAnimationsLabel;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UButton> PresetOneButton;
@@ -270,5 +283,6 @@ private:
 	TObjectPtr<AVNHCustomizationPreviewActor> PreviewActor;
 
 	bool bDraggingPreview = false;
+	bool bUseFemalePreviewAnimations = false;
 	FVector2D LastPreviewDragScreenPosition = FVector2D::ZeroVector;
 };

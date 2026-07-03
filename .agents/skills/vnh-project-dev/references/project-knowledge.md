@@ -189,7 +189,10 @@ Target behavior:
 - The designer widget currently stores preset buttons in `ItemGrid`, but `UVNHCharacterCustomizerWidget` moves them into a runtime bottom `PresetControlsBar_Runtime` and then normalizes `LookItemSlot_1..20` to a 5-column grid starting at row 0, column 0.
 - Pagination arrows are hidden/disabled when a category has only one page.
 - Preview rotation accepts right-click drag over `PreviewRenderImage` while preserving left-click drag as a fallback.
-- Runtime preset actions include `SAVE PRESET`, `LOAD PRESET`, and `BLANK CANVAS`; blank canvas clears all cosmetic meshes and face/hair while keeping the selected body mesh/body color.
+- Runtime preset edits are immediate: selecting a preset makes it active, and item changes auto-save to that active preset. Preset buttons should visibly show the active selection. `SAVE PRESET` and `LOAD PRESET` are intentionally hidden/removed from the current UX. `BLANK CANVAS` remains and clears all cosmetic meshes and face/hair while keeping the selected body mesh/body color.
+- Preview rotation must rotate the character mesh rig only, not the camera/lights. `AVNHCustomizationPreviewActor` uses a fixed capture/light root plus a nested `CharacterRoot` for yaw.
+- Preview animations should use the manually retargeted assets in `/Game/TNG/Characters/Animations/TryingOnClothesAnims/Male` and `/Game/TNG/Characters/Animations/TryingOnClothesAnims/Female`. The customizer exposes a Female Preview Anims checkbox under the preview panel to choose which set is preferred; if the selected set has no compatible clip, fall back to the other set/procedural try-on flourish.
+- As of inspection, all 47 AnimSequences in `/Game/TNG/Characters/Animations/TryingOnClothesAnims` still report Skeleton `/Game/Creative_Characters/Animations/SKEL_Skeleton`, while `/Game/TNG/Characters/BaseBodies/SK_TNG_Body_*` report `/Game/TNG/Characters/Animations/TryingOnClothesAnims/Female/SKEL_TNG_CreativeCharacter`. If the active preview body is a TNG body, these animation clips will be rejected by the compatibility check unless they are truly retargeted to the TNG skeleton.
 
 Disciplined next step for item-grid wiring:
 1. Add per-slot click handlers or one handler that maps button name to visible item index.

@@ -5,9 +5,12 @@
 #include "Components/Button.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
+#include "Components/CheckBox.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/Image.h"
+#include "Components/PanelSlot.h"
+#include "Components/PanelWidget.h"
 #include "Components/ScrollBox.h"
 #include "Components/TextBlock.h"
 #include "Components/UniformGridPanel.h"
@@ -246,6 +249,12 @@ void UVNHCharacterCustomizerWidget::Rebuild()
 	RightPanel->AddChild(PreviewText);
 	Pad(PreviewText, FMargin(40.0f, 24.0f, 0.0f, 24.0f));
 
+	PreviewRenderImage = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("PreviewRenderImage_Runtime"));
+	PreviewRenderImage->SetDesiredSizeOverride(FVector2D(480.0f, 520.0f));
+	RightPanel->AddChild(PreviewRenderImage);
+	Pad(PreviewRenderImage, FMargin(40.0f, 0.0f, 0.0f, 10.0f));
+	EnsurePreviewAnimationToggle();
+
 	StatusText = MakeLabel(
 		WidgetTree,
 		bLobbyMode
@@ -300,6 +309,8 @@ bool UVNHCharacterCustomizerWidget::BindDesignerWidgets()
 	PreviewText = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("PreviewText")));
 	StatusText = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("StatusText")));
 	PreviewRenderImage = Cast<UImage>(WidgetTree->FindWidget(TEXT("PreviewRenderImage")));
+	PreviewFemaleAnimationsCheckBox = Cast<UCheckBox>(WidgetTree->FindWidget(TEXT("PreviewFemaleAnimationsCheckBox")));
+	PreviewFemaleAnimationsLabel = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("PreviewFemaleAnimationsLabel")));
 	PresetOneButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("PresetOneButton")));
 	PresetTwoButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("PresetTwoButton")));
 	PresetThreeButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("PresetThreeButton")));
@@ -342,6 +353,7 @@ bool UVNHCharacterCustomizerWidget::BindDesignerWidgets()
 		}
 	}
 
+	EnsurePreviewAnimationToggle();
 	ItemSlotButtons.Reset();
 	ItemSlotImages.Reset();
 	ItemSlotLabels.Reset();
@@ -376,6 +388,75 @@ bool UVNHCharacterCustomizerWidget::BindDesignerWidgets()
 	EnsurePresetControlBar();
 	NormalizeItemGridSlots();
 	return TitleText && PreviewText && StatusText && PreviousButton && NextButton && BackReadyButton;
+}
+
+void UVNHCharacterCustomizerWidget::EnsurePreviewAnimationToggle()
+{
+	if (!WidgetTree)
+	{
+		return;
+	}
+	if (PreviewFemaleAnimationsCheckBox)
+	{
+		PreviewFemaleAnimationsCheckBox->SetIsChecked(bUseFemalePreviewAnimations);
+		PreviewFemaleAnimationsCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandlePreviewFemaleAnimationsChanged);
+		return;
+	}
+
+	UHorizontalBox* ToggleRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("PreviewAnimationToggleRow_Runtime"));
+	PreviewFemaleAnimationsCheckBox = WidgetTree->ConstructWidget<UCheckBox>(UCheckBox::StaticClass(), TEXT("PreviewFemaleAnimationsCheckBox"));
+	PreviewFemaleAnimationsCheckBox->SetIsChecked(bUseFemalePreviewAnimations);
+	PreviewFemaleAnimationsCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandlePreviewFemaleAnimationsChanged);
+
+	PreviewFemaleAnimationsLabel = MakeLabel(
+		WidgetTree,
+		NSLOCTEXT("VNH", "CustomizerFemalePreviewAnimations", "FEMALE PREVIEW ANIMS"),
+		13,
+		FLinearColor(0.05f, 1.0f, 0.92f, 1.0f));
+
+	if (UHorizontalBoxSlot* CheckSlot = ToggleRow->AddChildToHorizontalBox(PreviewFemaleAnimationsCheckBox))
+	{
+		CheckSlot->SetPadding(FMargin(0.0f, 0.0f, 8.0f, 0.0f));
+		CheckSlot->SetHorizontalAlignment(HAlign_Center);
+		CheckSlot->SetVerticalAlignment(VAlign_Center);
+	}
+	if (UHorizontalBoxSlot* LabelSlot = ToggleRow->AddChildToHorizontalBox(PreviewFemaleAnimationsLabel))
+	{
+		LabelSlot->SetHorizontalAlignment(HAlign_Left);
+		LabelSlot->SetVerticalAlignment(VAlign_Center);
+	}
+
+	UPanelWidget* ParentPanel = nullptr;
+	int32 InsertIndex = INDEX_NONE;
+	if (PreviewRenderImage)
+	{
+		ParentPanel = PreviewRenderImage->GetParent();
+		if (ParentPanel)
+		{
+			InsertIndex = ParentPanel->GetChildIndex(PreviewRenderImage) + 1;
+		}
+	}
+	if (!ParentPanel)
+	{
+		ParentPanel = Cast<UPanelWidget>(WidgetTree->FindWidget(TEXT("RightPanel")));
+	}
+	if (!ParentPanel)
+	{
+		ParentPanel = Cast<UPanelWidget>(WidgetTree->FindWidget(TEXT("CustomizerRightPanel")));
+	}
+
+	if (ParentPanel)
+	{
+		UPanelSlot* AddedSlot = InsertIndex > 0
+			? ParentPanel->InsertChildAt(InsertIndex, ToggleRow)
+			: ParentPanel->AddChild(ToggleRow);
+		if (UVerticalBoxSlot* VerticalSlot = Cast<UVerticalBoxSlot>(AddedSlot))
+		{
+			VerticalSlot->SetPadding(FMargin(22.0f, 0.0f, 22.0f, 10.0f));
+			VerticalSlot->SetHorizontalAlignment(HAlign_Center);
+			VerticalSlot->SetVerticalAlignment(VAlign_Center);
+		}
+	}
 }
 
 void UVNHCharacterCustomizerWidget::EnsurePresetControlBar()
@@ -430,6 +511,20 @@ void UVNHCharacterCustomizerWidget::EnsurePresetControlBar()
 	AddButtonToPresetBar(PresetTwoButton, 1.0f);
 	AddButtonToPresetBar(PresetThreeButton, 1.0f);
 
+	if (SavePresetButton)
+	{
+		SavePresetButton->SetVisibility(ESlateVisibility::Collapsed);
+		SavePresetButton->SetIsEnabled(false);
+		SavePresetButton->RemoveFromParent();
+	}
+
+	if (LoadPresetButton)
+	{
+		LoadPresetButton->SetVisibility(ESlateVisibility::Collapsed);
+		LoadPresetButton->SetIsEnabled(false);
+		LoadPresetButton->RemoveFromParent();
+	}
+
 	auto MakePresetActionButton = [this](FName WidgetName, const FText& Label)
 	{
 		UButton* Button = WidgetTree ? WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), WidgetName) : nullptr;
@@ -442,26 +537,6 @@ void UVNHCharacterCustomizerWidget::EnsurePresetControlBar()
 		Button->SetContent(MakeLabel(WidgetTree, Label, 13, FLinearColor::Black));
 		return Button;
 	};
-
-	if (!SavePresetButton)
-	{
-		SavePresetButton = MakePresetActionButton(FName(TEXT("SavePresetButton")), NSLOCTEXT("VNH", "CustomizerSavePreset", "SAVE PRESET"));
-		AddButtonToPresetBar(SavePresetButton, 1.15f);
-	}
-	else
-	{
-		AddButtonToPresetBar(SavePresetButton, 1.15f);
-	}
-
-	if (!LoadPresetButton)
-	{
-		LoadPresetButton = MakePresetActionButton(FName(TEXT("LoadPresetButton")), NSLOCTEXT("VNH", "CustomizerLoadPreset", "LOAD PRESET"));
-		AddButtonToPresetBar(LoadPresetButton, 1.15f);
-	}
-	else
-	{
-		AddButtonToPresetBar(LoadPresetButton, 1.15f);
-	}
 
 	if (!BlankCanvasButton)
 	{
@@ -511,11 +586,13 @@ void UVNHCharacterCustomizerWidget::BindDesignerEvents()
 	}
 	if (SavePresetButton)
 	{
-		SavePresetButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleSavePresetClicked);
+		SavePresetButton->SetVisibility(ESlateVisibility::Collapsed);
+		SavePresetButton->SetIsEnabled(false);
 	}
 	if (LoadPresetButton)
 	{
-		LoadPresetButton->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandleLoadPresetClicked);
+		LoadPresetButton->SetVisibility(ESlateVisibility::Collapsed);
+		LoadPresetButton->SetIsEnabled(false);
 	}
 	if (BlankCanvasButton)
 	{
@@ -744,14 +821,17 @@ void UVNHCharacterCustomizerWidget::AddPresetButton(UVerticalBox* Parent, int32 
 	UButton* Button = MakeButton(WidgetTree, FText::FromString(FString::Printf(TEXT("PRESET %d"), PresetIndex + 1)), 16);
 	if (PresetIndex == 0)
 	{
+		PresetOneButton = Button;
 		Button->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandlePresetOneClicked);
 	}
 	else if (PresetIndex == 1)
 	{
+		PresetTwoButton = Button;
 		Button->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandlePresetTwoClicked);
 	}
 	else
 	{
+		PresetThreeButton = Button;
 		Button->OnClicked.AddUniqueDynamic(this, &UVNHCharacterCustomizerWidget::HandlePresetThreeClicked);
 	}
 	Parent->AddChild(Button);
@@ -784,6 +864,8 @@ void UVNHCharacterCustomizerWidget::AddOptionButton(UUniformGridPanel* Parent, c
 
 void UVNHCharacterCustomizerWidget::RefreshLabels()
 {
+	RefreshPresetButtonStyles();
+
 	if (TitleText)
 	{
 		switch (ActiveSlot)
@@ -824,6 +906,32 @@ void UVNHCharacterCustomizerWidget::RefreshLabels()
 	}
 
 	RefreshItemGrid();
+}
+
+void UVNHCharacterCustomizerWidget::RefreshPresetButtonStyles()
+{
+	UVNHGameInstance* VNHGameInstance = GetVNHGameInstance();
+	const int32 ActivePresetIndex = VNHGameInstance ? VNHGameInstance->GetActiveCustomization().PresetIndex : 0;
+	auto ApplyPresetStyle = [ActivePresetIndex](UButton* Button, int32 PresetIndex)
+	{
+		if (!Button)
+		{
+			return;
+		}
+
+		const bool bSelected = ActivePresetIndex == PresetIndex;
+		Button->SetBackgroundColor(bSelected
+			? FLinearColor(0.0f, 0.92f, 0.82f, 1.0f)
+			: FLinearColor(0.04f, 0.18f, 0.20f, 0.92f));
+		if (UTextBlock* ButtonText = Cast<UTextBlock>(Button->GetContent()))
+		{
+			ButtonText->SetColorAndOpacity(FSlateColor(bSelected ? FLinearColor::Black : FLinearColor::White));
+		}
+	};
+
+	ApplyPresetStyle(PresetOneButton, 0);
+	ApplyPresetStyle(PresetTwoButton, 1);
+	ApplyPresetStyle(PresetThreeButton, 2);
 }
 
 void UVNHCharacterCustomizerWidget::RefreshItemGrid()
@@ -970,6 +1078,10 @@ void UVNHCharacterCustomizerWidget::EnsurePreviewActor()
 		FVector(0.0f, 0.0f, -50000.0f),
 		FRotator::ZeroRotator,
 		SpawnParameters);
+	if (PreviewActor)
+	{
+		PreviewActor->SetUseFemalePreviewAnimations(bUseFemalePreviewAnimations);
+	}
 }
 
 void UVNHCharacterCustomizerWidget::DestroyPreviewActor()
@@ -986,6 +1098,7 @@ void UVNHCharacterCustomizerWidget::RefreshPreviewActor()
 	EnsurePreviewActor();
 	if (PreviewActor)
 	{
+		PreviewActor->SetUseFemalePreviewAnimations(bUseFemalePreviewAnimations);
 		if (UVNHGameInstance* VNHGameInstance = GetVNHGameInstance())
 		{
 			PreviewActor->ApplyCustomization(VNHGameInstance->GetActiveCustomization());
@@ -1041,13 +1154,24 @@ void UVNHCharacterCustomizerWidget::SelectCategory(EVNHCustomizationSlot NewActi
 
 void UVNHCharacterCustomizerWidget::HandleItemSlotClicked(int32 LocalSlotIndex)
 {
+	bool bRemovingItem = false;
 	if (UVNHGameInstance* VNHGameInstance = GetVNHGameInstance())
 	{
 		const int32 OptionIndex = (ActivePage * ItemsPerPage) + LocalSlotIndex;
+		bRemovingItem = VNHGameInstance->IsCustomizationSlotOptionEmpty(ActiveSlot, OptionIndex);
 		VNHGameInstance->SelectCustomizationSlotOption(ActiveSlot, OptionIndex);
 	}
 	RefreshPreviewActor();
+	PlayPreviewChangeAnimation(ActiveSlot, bRemovingItem);
 	RefreshLabels();
+}
+
+void UVNHCharacterCustomizerWidget::PlayPreviewChangeAnimation(EVNHCustomizationSlot CustomizationSlot, bool bRemovingItem)
+{
+	if (PreviewActor)
+	{
+		PreviewActor->PlaySlotChangeAnimation(CustomizationSlot, bRemovingItem);
+	}
 }
 
 UVNHGameInstance* UVNHCharacterCustomizerWidget::GetVNHGameInstance() const
@@ -1097,6 +1221,7 @@ void UVNHCharacterCustomizerWidget::HandleRandomClicked()
 		VNHGameInstance->RandomizeActiveCustomization();
 	}
 	RefreshPreviewActor();
+	PlayPreviewChangeAnimation(EVNHCustomizationSlot::Outfit, false);
 	RefreshLabels();
 }
 
@@ -1334,5 +1459,15 @@ void UVNHCharacterCustomizerWidget::HandleBlankCanvasClicked()
 	}
 	ActivePage = 0;
 	RefreshPreviewActor();
+	PlayPreviewChangeAnimation(EVNHCustomizationSlot::Outfit, true);
 	RefreshLabels();
+}
+
+void UVNHCharacterCustomizerWidget::HandlePreviewFemaleAnimationsChanged(bool bIsChecked)
+{
+	bUseFemalePreviewAnimations = bIsChecked;
+	if (PreviewActor)
+	{
+		PreviewActor->SetUseFemalePreviewAnimations(bUseFemalePreviewAnimations);
+	}
 }

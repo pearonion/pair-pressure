@@ -79,6 +79,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "VNH|Customization")
 	TSoftObjectPtr<UTexture2D> GetCustomizationSlotOptionIcon(EVNHCustomizationSlot CustomizationSlot, int32 OptionIndex) const;
 
+	UFUNCTION(BlueprintPure, Category = "VNH|Customization")
+	bool IsCustomizationSlotOptionEmpty(EVNHCustomizationSlot CustomizationSlot, int32 OptionIndex) const;
+
 	UFUNCTION(BlueprintCallable, Category = "VNH|Customization")
 	void RandomizeActiveCustomization();
 

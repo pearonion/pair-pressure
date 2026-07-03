@@ -2,11 +2,13 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "TimerManager.h"
 #include "VNHGameplayTypes.h"
 #include "VNHCustomizationPreviewActor.generated.h"
 
 class USceneCaptureComponent2D;
 class USceneComponent;
+class UAnimationAsset;
 class USkeletalMesh;
 class USkeletalMeshComponent;
 class UTextureRenderTarget2D;
@@ -24,6 +26,8 @@ public:
 	UTextureRenderTarget2D* GetOrCreateRenderTarget();
 	void ApplyCustomization(const FVNHCharacterCustomization& Customization);
 	void AddYawInput(float DeltaYaw);
+	void PlaySlotChangeAnimation(EVNHCustomizationSlot CustomizationSlot, bool bRemovingItem);
+	void SetUseFemalePreviewAnimations(bool bInUseFemalePreviewAnimations);
 	void SetAutoRotate(bool bEnabled) { bAutoRotate = bEnabled; }
 
 protected:
@@ -33,6 +37,9 @@ protected:
 private:
 	UPROPERTY(VisibleAnywhere, Category = "VNH|Preview")
 	TObjectPtr<USceneComponent> PreviewRoot;
+
+	UPROPERTY(VisibleAnywhere, Category = "VNH|Preview")
+	TObjectPtr<USceneComponent> CharacterRoot;
 
 	UPROPERTY(VisibleAnywhere, Category = "VNH|Preview")
 	TObjectPtr<USkeletalMeshComponent> BodyMeshComponent;
@@ -71,11 +78,25 @@ private:
 	TObjectPtr<UTextureRenderTarget2D> RenderTarget;
 
 	bool bAutoRotate = false;
+	bool bUseFemalePreviewAnimations = false;
 	float PreviewYaw = 0.0f;
+	FTimerHandle ReturnToIdleTimerHandle;
+	float ProceduralChangeElapsed = 0.0f;
+	float ProceduralChangeDuration = 0.0f;
+	bool bProceduralChangeRemovingItem = false;
+	EVNHCustomizationSlot ProceduralChangeSlot = EVNHCustomizationSlot::Outfit;
 
 	void EnsureRenderTarget();
 	USkeletalMeshComponent* CreateCosmeticComponent(const TCHAR* ComponentName);
 	void ConfigureMeshComponent(USkeletalMeshComponent* MeshComponent);
 	void ApplySlotMesh(USkeletalMeshComponent* SlotComponent, const TSoftObjectPtr<USkeletalMesh>& MeshAsset, bool bHideSlot = false);
 	void ApplyColorToMesh(USkeletalMeshComponent* MeshComponent, const FLinearColor& Color);
+	UAnimationAsset* LoadCompatibleAnimation(const TArray<FString>& CandidatePaths) const;
+	UAnimationAsset* LoadPreferredAnimation(const TCHAR* MalePath, const TCHAR* FemalePath) const;
+	UAnimationAsset* LoadPreferredAnimation(const TCHAR* MalePath, const TCHAR* FemalePath, const TCHAR* MaleFallbackPath, const TCHAR* FemaleFallbackPath) const;
+	void PlayAnimationAsset(UAnimationAsset* AnimationAsset, bool bLooping);
+	void PlayIdleAnimation();
+	void StartProceduralChangeAnimation(EVNHCustomizationSlot CustomizationSlot, bool bRemovingItem);
+	void UpdateProceduralChangeAnimation(float DeltaSeconds);
+	void ResetBodyPreviewPose();
 };
