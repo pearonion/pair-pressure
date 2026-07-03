@@ -5,6 +5,7 @@
 #include "Components/TextBlock.h"
 #include "GameFramework/PlayerController.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
+#include "Blueprint/UserWidget.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "VNHLog.h"
 #include "VNHGameInstance.h"
@@ -101,12 +102,26 @@ void UVNHMainMenuWidget::HandleHostPublicClicked()
 
 void UVNHMainMenuWidget::HandleJoinClicked()
 {
-	if (UVNHGameInstance* VNHGameInstance = GetVNHGameInstance())
+	if (APlayerController* PlayerController = GetOwningPlayer())
 	{
-		const FString Address = JoinAddressTextBox ? JoinAddressTextBox->GetText().ToString() : FString();
-		SetStatus(FText::FromString(FString::Printf(TEXT("Joining %s..."), Address.IsEmpty() ? *VNHGameInstance->GetDefaultJoinAddress() : *Address)));
-		VNHGameInstance->JoinGameByAddress(Address);
+		if (TSubclassOf<UUserWidget> ServerBrowserClass = LoadClass<UUserWidget>(nullptr, TEXT("/Game/UI/WBP_ServerBrowser.WBP_ServerBrowser_C")))
+		{
+			if (UUserWidget* ServerBrowser = CreateWidget<UUserWidget>(PlayerController, ServerBrowserClass))
+			{
+				ServerBrowser->AddToViewport(9500);
+				FInputModeGameAndUI InputMode;
+				InputMode.SetWidgetToFocus(ServerBrowser->TakeWidget());
+				InputMode.SetHideCursorDuringCapture(false);
+				InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+				PlayerController->SetInputMode(InputMode);
+				PlayerController->bShowMouseCursor = true;
+				SetStatus(NSLOCTEXT("VNH", "MainMenuStatusServerBrowser", "Opening server browser..."));
+				return;
+			}
+		}
 	}
+
+	SetStatus(NSLOCTEXT("VNH", "MainMenuStatusServerBrowserMissing", "Server browser is not available."));
 }
 
 void UVNHMainMenuWidget::HandleQuitClicked()

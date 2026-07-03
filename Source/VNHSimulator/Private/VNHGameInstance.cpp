@@ -311,9 +311,26 @@ void UVNHGameInstance::HandleMenuHostPublicClicked()
 
 void UVNHGameInstance::HandleMenuJoinClicked()
 {
-	const FString Address = GetJoinAddressFromMenu();
-	SetMainMenuStatus(FText::FromString(FString::Printf(TEXT("Joining %s..."), Address.IsEmpty() ? *DefaultJoinAddress : *Address)));
-	JoinGameByAddress(Address);
+	if (APlayerController* PlayerController = GetFirstLocalPlayerController())
+	{
+		if (TSubclassOf<UUserWidget> ServerBrowserClass = LoadClass<UUserWidget>(nullptr, TEXT("/Game/UI/WBP_ServerBrowser.WBP_ServerBrowser_C")))
+		{
+			if (UUserWidget* ServerBrowser = CreateWidget<UUserWidget>(PlayerController, ServerBrowserClass))
+			{
+				ServerBrowser->AddToViewport(9500);
+				FInputModeGameAndUI InputMode;
+				InputMode.SetWidgetToFocus(ServerBrowser->TakeWidget());
+				InputMode.SetHideCursorDuringCapture(false);
+				InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+				PlayerController->SetInputMode(InputMode);
+				PlayerController->bShowMouseCursor = true;
+				SetMainMenuStatus(NSLOCTEXT("VNH", "MainMenuStatusServerBrowser", "Opening server browser..."));
+				return;
+			}
+		}
+	}
+
+	SetMainMenuStatus(NSLOCTEXT("VNH", "MainMenuStatusServerBrowserMissing", "Server browser is not available."));
 }
 
 void UVNHGameInstance::HandleMenuQuitClicked()

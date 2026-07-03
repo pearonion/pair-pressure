@@ -25,6 +25,8 @@ const FName SessionKeyIsPrivate(TEXT("IS_PRIVATE"));
 const FName SessionKeyPassword(TEXT("PASSWORD"));
 const FName SessionKeyRoundSeconds(TEXT("ROUND_SECONDS"));
 const FName SessionKeyMaxPlayers(TEXT("MAX_PLAYERS"));
+const FName SessionKeyRegion(TEXT("REGION"));
+const FName SessionKeyMapName(TEXT("MAP_NAME"));
 }
 
 void UVNHCreateServerWidget::NativeConstruct()
@@ -166,7 +168,7 @@ void UVNHCreateServerWidget::HandleCreateGameClicked()
 	FOnlineSessionSettings SessionSettings;
 	SessionSettings.NumPublicConnections = ClampedPlayers;
 	SessionSettings.NumPrivateConnections = 0;
-	SessionSettings.bShouldAdvertise = !bPrivateMode;
+	SessionSettings.bShouldAdvertise = true;
 	SessionSettings.bAllowInvites = true;
 	SessionSettings.bAllowJoinInProgress = true;
 	SessionSettings.bIsLANMatch = false;
@@ -174,13 +176,15 @@ void UVNHCreateServerWidget::HandleCreateGameClicked()
 	SessionSettings.bUsesPresence = true;
 	SessionSettings.bUseLobbiesIfAvailable = true;
 	SessionSettings.bAllowJoinViaPresence = true;
-	SessionSettings.bAllowJoinViaPresenceFriendsOnly = bPrivateMode;
+	SessionSettings.bAllowJoinViaPresenceFriendsOnly = false;
 	SessionSettings.bUseLobbiesVoiceChatIfAvailable = false;
 	SessionSettings.Set(SessionKeyServerName, ServerName, EOnlineDataAdvertisementType::ViaOnlineService);
 	SessionSettings.Set(SessionKeyIsPrivate, bPrivateMode, EOnlineDataAdvertisementType::ViaOnlineService);
 	SessionSettings.Set(SessionKeyPassword, bPrivateMode ? Password : FString(), EOnlineDataAdvertisementType::ViaOnlineService);
 	SessionSettings.Set(SessionKeyRoundSeconds, RoundSeconds, EOnlineDataAdvertisementType::ViaOnlineService);
 	SessionSettings.Set(SessionKeyMaxPlayers, ClampedPlayers, EOnlineDataAdvertisementType::ViaOnlineService);
+	SessionSettings.Set(SessionKeyRegion, FString(TEXT("USEAST")), EOnlineDataAdvertisementType::ViaOnlineService);
+	SessionSettings.Set(SessionKeyMapName, FString(TEXT("MVP_Clothing Store")), EOnlineDataAdvertisementType::ViaOnlineService);
 
 	CreateSessionCompleteHandle = ActiveSessionInterface->AddOnCreateSessionCompleteDelegate_Handle(
 		FOnCreateSessionCompleteDelegate::CreateUObject(this, &UVNHCreateServerWidget::HandleSessionCreated));
