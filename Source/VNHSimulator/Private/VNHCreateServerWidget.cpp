@@ -184,7 +184,7 @@ void UVNHCreateServerWidget::HandleCreateGameClicked()
 	SessionSettings.Set(SessionKeyRoundSeconds, RoundSeconds, EOnlineDataAdvertisementType::ViaOnlineService);
 	SessionSettings.Set(SessionKeyMaxPlayers, ClampedPlayers, EOnlineDataAdvertisementType::ViaOnlineService);
 	SessionSettings.Set(SessionKeyRegion, FString(TEXT("USEAST")), EOnlineDataAdvertisementType::ViaOnlineService);
-	SessionSettings.Set(SessionKeyMapName, FString(TEXT("MVP_Clothing Store")), EOnlineDataAdvertisementType::ViaOnlineService);
+	SessionSettings.Set(SessionKeyMapName, LobbyMapName.ToString(), EOnlineDataAdvertisementType::ViaOnlineService);
 
 	CreateSessionCompleteHandle = ActiveSessionInterface->AddOnCreateSessionCompleteDelegate_Handle(
 		FOnCreateSessionCompleteDelegate::CreateUObject(this, &UVNHCreateServerWidget::HandleSessionCreated));
@@ -218,10 +218,10 @@ void UVNHCreateServerWidget::HandleSessionCreated(FName SessionName, bool bWasSu
 		return;
 	}
 
-	const FString TravelURL = FString::Printf(TEXT("%s?listen%s"), *LobbyMapName.ToString(), *BuildTravelOptions());
+	const FString TravelOptions = FString::Printf(TEXT("listen%s"), *BuildTravelOptions());
 	SetStatus(NSLOCTEXT("VNH", "CreateServerOpeningLobby", "Session created. Opening lobby..."));
-	UGameplayStatics::OpenLevel(this, FName(*TravelURL), true);
-	UE_LOG(LogVNH, Display, TEXT("CreateServer: created Advanced Steam session and opening %s."), *TravelURL);
+	UGameplayStatics::OpenLevel(this, LobbyMapName, true, TravelOptions);
+	UE_LOG(LogVNH, Display, TEXT("CreateServer: created Advanced Steam session and opening %s?%s."), *LobbyMapName.ToString(), *TravelOptions);
 }
 
 void UVNHCreateServerWidget::SetPrivateMode(bool bInPrivateMode)

@@ -15,6 +15,8 @@
 #include "Components/VerticalBox.h"
 #include "Components/Widget.h"
 #include "Engine/DataTable.h"
+#include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
 #include "GameFramework/SaveGame.h"
 #include "Engine/Scene.h"
 #include "InputAction.h"
@@ -31,6 +33,7 @@
 #include "VNHDebugHUD.h"
 #include "VNHGameInstance.h"
 #include "VNHLobbyPlayButton.h"
+#include "VNHLobbyMenuWidget.h"
 #include "VNHLog.h"
 #include "VNHPlayerState.h"
 #include "VNHShopperCharacter.h"
@@ -1934,14 +1937,14 @@ void AVNHPlayerController::ShowLobbyMenu()
 		return;
 	}
 
-	UClass* LobbyWidgetClass = LoadClass<UUserWidget>(nullptr, TEXT("/Game/UI/WBP_LobbyMenu.WBP_LobbyMenu_C"));
+	UClass* LobbyWidgetClass = LoadClass<UVNHLobbyMenuWidget>(nullptr, TEXT("/Game/UI/WBP_LobbyMenu.WBP_LobbyMenu_C"));
 	if (!LobbyWidgetClass)
 	{
-		UE_LOG(LogVNH, Warning, TEXT("LobbyMenu: could not load /Game/UI/WBP_LobbyMenu."));
-		return;
+		LobbyWidgetClass = UVNHLobbyMenuWidget::StaticClass();
+		UE_LOG(LogVNH, Warning, TEXT("LobbyMenu: /Game/UI/WBP_LobbyMenu is unavailable; falling back to native class."));
 	}
 
-	UUserWidget* NewLobbyMenu = CreateWidget<UUserWidget>(this, LobbyWidgetClass);
+	UVNHLobbyMenuWidget* NewLobbyMenu = CreateWidget<UVNHLobbyMenuWidget>(this, LobbyWidgetClass);
 	if (!NewLobbyMenu)
 	{
 		UE_LOG(LogVNH, Warning, TEXT("LobbyMenu: CreateWidget failed."));
@@ -1949,23 +1952,21 @@ void AVNHPlayerController::ShowLobbyMenu()
 	}
 
 	NewLobbyMenu->AddToViewport(7500);
-	NewLobbyMenu->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	LobbyMenuWidget = NewLobbyMenu;
-
-	if (UVerticalBox* Stack = Cast<UVerticalBox>(NewLobbyMenu->GetWidgetFromName(TEXT("Stack"))))
+	NewLobbyMenu->SetAnchorsInViewport(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
+	NewLobbyMenu->SetAlignmentInViewport(FVector2D::ZeroVector);
+	NewLobbyMenu->SetPositionInViewport(FVector2D::ZeroVector, false);
+	FVector2D ViewportSize(1920.0f, 1080.0f);
+	if (GEngine && GEngine->GameViewport && GEngine->GameViewport->Viewport)
 	{
-		UButton* CustomizeButton = NewObject<UButton>(NewLobbyMenu, TEXT("LobbyCustomizeButton"));
-		UTextBlock* Label = NewObject<UTextBlock>(CustomizeButton, TEXT("LobbyCustomizeButton_Label"));
-		if (CustomizeButton && Label)
+		const FIntPoint SizeXY = GEngine->GameViewport->Viewport->GetSizeXY();
+		if (SizeXY.X > 0 && SizeXY.Y > 0)
 		{
-			Label->SetText(NSLOCTEXT("VNH", "LobbyCustomizeButton", "QUICK CUSTOMIZE"));
-			Label->SetJustification(ETextJustify::Center);
-			CustomizeButton->SetBackgroundColor(FLinearColor(0.93f, 0.05f, 0.38f, 1.0f));
-			CustomizeButton->SetContent(Label);
-			CustomizeButton->OnClicked.AddUniqueDynamic(this, &AVNHPlayerController::HandleLobbyCustomizeClicked);
-			Stack->AddChildToVerticalBox(CustomizeButton);
+			ViewportSize = FVector2D(static_cast<float>(SizeXY.X), static_cast<float>(SizeXY.Y));
 		}
 	}
+	NewLobbyMenu->SetDesiredSizeInViewport(ViewportSize);
+	NewLobbyMenu->SetVisibility(ESlateVisibility::Visible);
+	LobbyMenuWidget = NewLobbyMenu;
 
 	bShowMouseCursor = true;
 	bEnableClickEvents = true;
@@ -1973,9 +1974,12 @@ void AVNHPlayerController::ShowLobbyMenu()
 	DefaultMouseCursor = EMouseCursor::Default;
 	UpdateGameplayCursor();
 	FInputModeGameAndUI InputMode;
+	InputMode.SetWidgetToFocus(NewLobbyMenu->TakeWidget());
 	InputMode.SetHideCursorDuringCapture(false);
 	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	SetInputMode(InputMode);
+	NewLobbyMenu->SetKeyboardFocus();
+	NewLobbyMenu->SetUserFocus(this);
 
 	UE_LOG(LogVNH, Display, TEXT("LobbyMenu: shown as non-blocking overlay."));
 }

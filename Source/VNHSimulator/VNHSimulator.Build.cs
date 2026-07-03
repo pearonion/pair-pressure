@@ -21,7 +21,8 @@ public class VNHSimulator : ModuleRules
 			"AssetRegistry",
 			"OnlineSubsystem",
 			"OnlineSubsystemUtils",
-			"AdvancedSessions"
+			"AdvancedSessions",
+			"AdvancedSteamSessions"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
