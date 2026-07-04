@@ -604,22 +604,52 @@ void UVNHSettingsDialogWidget::UpdateControlLabels()
 	const FString KeyboardLayout = GetSelectedOption(KeyboardLayoutCombo, TEXT("WASD"));
 	const FString ControllerLayout = GetSelectedOption(ControllerLayoutCombo, TEXT("Default"));
 	const bool bController = InputPreset == TEXT("Controller");
+	auto ResolveTextBlock = [this](TObjectPtr<UTextBlock>& CachedTextBlock, const FName WidgetName) -> UTextBlock*
+	{
+		if (!CachedTextBlock)
+		{
+			CachedTextBlock = Cast<UTextBlock>(GetWidgetFromName(WidgetName));
+		}
+		return CachedTextBlock.Get();
+	};
 
-	if (RowValue_Move)
+	if (UTextBlock* TextBlock = ResolveTextBlock(RowValue_Move, TEXT("RowValue_Move")))
 	{
-		RowValue_Move->SetText(FText::FromString(bController ? (ControllerLayout == TEXT("Southpaw") ? TEXT("Right Stick") : TEXT("Left Stick")) : (KeyboardLayout == TEXT("Arrow Keys") ? TEXT("Arrow Keys") : KeyboardLayout == TEXT("Left-Handed") ? TEXT("IJKL") : TEXT("WASD"))));
+		TextBlock->SetText(FText::FromString(bController ? (ControllerLayout == TEXT("Southpaw") ? TEXT("Right Stick") : TEXT("Left Stick")) : (KeyboardLayout == TEXT("Arrow Keys") ? TEXT("Arrow Keys") : KeyboardLayout == TEXT("Left-Handed") ? TEXT("IJKL") : TEXT("WASD"))));
 	}
-	if (RowValue_Interact)
+	if (UTextBlock* TextBlock = ResolveTextBlock(RowValue_Interact, TEXT("RowValue_Interact")))
 	{
-		RowValue_Interact->SetText(FText::FromString(bController ? TEXT("Face Button Bottom") : TEXT("E")));
+		TextBlock->SetText(FText::FromString(bController ? TEXT("Xbox A / PS5 Cross") : TEXT("E")));
 	}
-	if (RowValue_QuickChatKey)
+	if (UTextBlock* TextBlock = ResolveTextBlock(RowValue_QuickChatKey, TEXT("RowValue_QuickChatKey")))
 	{
-		RowValue_QuickChatKey->SetText(FText::FromString(bController ? TEXT("D-Pad") : TEXT("Q / D-Pad UI")));
+		TextBlock->SetText(FText::FromString(bController ? TEXT("D-Pad") : TEXT("Q / D-Pad UI")));
 	}
-	if (RowValue_ActNatural)
+	if (UTextBlock* TextBlock = ResolveTextBlock(RowValue_HumanActions, TEXT("RowValue_HumanActions")))
 	{
-		RowValue_ActNatural->SetText(FText::FromString(bController ? TEXT("Right Shoulder") : TEXT("F")));
+		const FString HumanActionsText = bController
+			? FString(TEXT("Inspect - L3\nWave - R3\nPoint - Xbox Y / PS5 Triangle\nLaugh - Xbox X / PS5 Square\nFart - Xbox View / PS5 Create"))
+			: FString(TEXT("Inspect - 1\nWave - 2\nPoint - 3\nLaugh - 4\nFart - 5"));
+		TextBlock->SetText(FText::FromString(HumanActionsText));
+	}
+	if (UTextBlock* TextBlock = ResolveTextBlock(RowValue_AlienActions, TEXT("RowValue_AlienActions")))
+	{
+		const FString AlienActionsText = bController
+			? FString(TEXT("Inspect - L3\nWave - R3\nPoint - Xbox Y / PS5 Triangle\nLaugh - Xbox X / PS5 Square\nFart - Xbox View / PS5 Create\nPlace Decoy - Xbox Menu / PS5 Options"))
+			: FString(TEXT("Inspect - 1\nWave - 2\nPoint - 3\nLaugh - 4\nFart - 5\nPlace Decoy - 6"));
+		TextBlock->SetText(FText::FromString(AlienActionsText));
+	}
+	if (UTextBlock* TextBlock = ResolveTextBlock(RowValue_ActNatural, TEXT("RowValue_ActNatural")))
+	{
+		TextBlock->SetText(FText::FromString(bController ? TEXT("Xbox RB / PS5 R1") : TEXT("F")));
+	}
+	if (UTextBlock* TextBlock = ResolveTextBlock(RowValue_Jump, TEXT("RowValue_Jump")))
+	{
+		TextBlock->SetText(FText::FromString(bController ? FString(TEXT("Xbox A / PS5 Cross")) : FString(TEXT("SPACEBAR"))));
+	}
+	if (UTextBlock* TextBlock = ResolveTextBlock(RowValue_Crouch, TEXT("RowValue_Crouch")))
+	{
+		TextBlock->SetText(FText::FromString(bController ? FString(TEXT("Xbox B / PS5 Circle")) : FString(TEXT("CTRL"))));
 	}
 }
 

@@ -220,6 +220,16 @@ private:
 	void HandleLaughPressed();
 	void HandleFartPressed();
 	void HandlePlaceDecoyPressed();
+	void HandleJumpPressed();
+	void HandleJumpReleased();
+	void HandleCrouchPressed();
+	void HandleCrouchReleased();
+	void HandleRoleHudActionSlot1Pressed();
+	void HandleRoleHudActionSlot2Pressed();
+	void HandleRoleHudActionSlot3Pressed();
+	void HandleRoleHudActionSlot4Pressed();
+	void HandleRoleHudActionSlot5Pressed();
+	void HandleRoleHudActionSlot6Pressed();
 	void HandlePickUpPressed();
 	void HandleDropPressed();
 	void HandleInteractPressed();
@@ -239,6 +249,8 @@ private:
 	void BindRoleHudActionButtons();
 	void BindRoleHudActionButton(FName ButtonName, FName HandlerName);
 	void BindComposureWidgetButtons();
+	void ExecuteRoleHudActionSlot(int32 SlotIndex);
+	void UpdateRoleHudActionHotkeyLabels();
 	UFUNCTION()
 	void HandleHudCustomizeClicked();
 	UFUNCTION()
@@ -347,6 +359,9 @@ private:
 	TWeakObjectPtr<UTextBlock> RoleHudHumanDrillCooldownTextBlock;
 	TWeakObjectPtr<UWidget> RoleHudEveryonePointCooldownPanelWidget;
 	TWeakObjectPtr<UTextBlock> RoleHudEveryonePointCooldownTextBlock;
+	TWeakObjectPtr<UTextBlock> RoleHudActionHotkeyTextBlocks[6];
+	TWeakObjectPtr<UWidget> RoleHudFartCooldownPanelWidget;
+	TWeakObjectPtr<UTextBlock> RoleHudFartCooldownTextBlock;
 	TArray<TWeakObjectPtr<AVNHShopperCharacter>> MarkedSuspects;
 	TWeakObjectPtr<UUserWidget> MarkedSuspectsWidget;
 	TWeakObjectPtr<UTextBlock> MarkedSuspectsListTextBlock;
@@ -365,6 +380,8 @@ private:
 	float TimeUntilDebugDeckLabelLookup = 0.0f;
 	float TimeUntilMarkedWidgetLookup = 0.0f;
 	float TimeUntilComposureWidgetLookup = 0.0f;
+	float RoleHudDisplayedFartCooldownRemaining = 0.0f;
+	float RoleHudLastReplicatedFartCooldownRemaining = 0.0f;
 	EVNHPlayerRole ActiveRoleHudRole = EVNHPlayerRole::Unassigned;
 	int32 DismissedHunterCommandPromptSerial = INDEX_NONE;
 	int32 LastMarkedRoundNumber = INDEX_NONE;

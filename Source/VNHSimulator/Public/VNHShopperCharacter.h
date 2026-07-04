@@ -239,6 +239,7 @@ private:
 
 	FTimerHandle FreezeTestTimerHandle;
 	FTimerHandle PublicTestReactionTimerHandle;
+	FTimerHandle UniversalActionMovementLockTimerHandle;
 	bool bFirstPersonViewEnabled = false;
 	bool bStandingStillPenaltyApplied = false;
 	bool bWasWatchedByHunter = false;
@@ -246,6 +247,9 @@ private:
 	float LastSuspiciousEventTime = -100.0f;
 	float LastUniversalActionTime = -100.0f;
 	float LastInspectTime = -100.0f;
+	float LastManualFartActionTime = -100.0f;
+	float LastManualFartCooldownSeconds = 0.0f;
+	int32 ManualFartSpamStreak = 0;
 	FVector LastMeaningfulLocation = FVector::ZeroVector;
 	FRotator LastMeaningfulControlRotation = FRotator::ZeroRotator;
 	TWeakObjectPtr<AActor> LastInspectedActor;
@@ -278,6 +282,8 @@ private:
 	void ApplyComposureVisualState();
 	void ClearPublicTestFreeze();
 	void ApplyFrozenVisualState();
+	void StartUniversalActionMovementLock(float DurationSeconds);
+	void ClearUniversalActionMovementLock();
 	void ApplyLookToEntranceReaction();
 	void ApplyClearAisleReaction();
 	void ResumeRoutineMovement();

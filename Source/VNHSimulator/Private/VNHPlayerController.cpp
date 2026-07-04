@@ -18,6 +18,7 @@
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "GameFramework/SaveGame.h"
+#include "GameFramework/Character.h"
 #include "Engine/Scene.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
@@ -89,8 +90,40 @@ constexpr float HumanDrillCooldownSeconds = 30.0f;
 constexpr float HumanDrillPromptSeconds = 5.0f;
 constexpr float EveryonePointCooldownSeconds = 60.0f;
 constexpr int32 EveryonePointMaxUsesPerRound = 2;
+constexpr int32 RoleHudActionSlotCount = 6;
+constexpr float RoleHudFartCooldownDisplayTolerance = 0.05f;
 constexpr const TCHAR* VNHSettingsSection = TEXT("/Script/VNHSimulator.VNHSettings");
 constexpr const TCHAR* VNHSettingsSaveSlot = TEXT("PlayerSettings");
+
+const TCHAR* const RoleHudActionSuffixes[RoleHudActionSlotCount] =
+{
+	TEXT("Inspect"),
+	TEXT("Wave"),
+	TEXT("Point"),
+	TEXT("Laugh"),
+	TEXT("Fart"),
+	TEXT("PlaceDecoy")
+};
+
+const TCHAR* const RoleHudKeyboardHotkeyLabels[RoleHudActionSlotCount] =
+{
+	TEXT("1"),
+	TEXT("2"),
+	TEXT("3"),
+	TEXT("4"),
+	TEXT("5"),
+	TEXT("6")
+};
+
+const TCHAR* const RoleHudControllerHotkeyLabels[RoleHudActionSlotCount] =
+{
+	TEXT("L3"),
+	TEXT("R3"),
+	TEXT("Y/TR"),
+	TEXT("X/SQ"),
+	TEXT("VW/CR"),
+	TEXT("MN/OP")
+};
 
 struct FVNHRuntimeSettingsValues
 {
@@ -175,6 +208,17 @@ bool GetSavedInvertLook()
 	return GetCachedSavedRuntimeSettings().bInvertLook;
 }
 
+bool IsControllerInputPresetSelected()
+{
+	FString InputPreset;
+	if (GConfig)
+	{
+		GConfig->GetString(VNHSettingsSection, TEXT("InputPreset"), InputPreset, GGameUserSettingsIni);
+	}
+
+	return InputPreset == TEXT("Controller");
+}
+
 const TCHAR* ToUniversalActionText(EVNHUniversalAction Action)
 {
 	switch (Action)
@@ -257,6 +301,21 @@ FName ToUniversalActionRowName(EVNHUniversalAction Action)
 		return TEXT("Drop");
 	default:
 		return NAME_None;
+	}
+}
+
+bool IsRoleAnimationAction(EVNHUniversalAction Action)
+{
+	switch (Action)
+	{
+	case EVNHUniversalAction::Inspect:
+	case EVNHUniversalAction::Point:
+	case EVNHUniversalAction::Wave:
+	case EVNHUniversalAction::Laugh:
+	case EVNHUniversalAction::PlaceDecoy:
+		return true;
+	default:
+		return false;
 	}
 }
 
@@ -475,6 +534,14 @@ void AVNHPlayerController::EnsureRoleHudWidget()
 			RoleHudHumanDrillCooldownTextBlock.Reset();
 			RoleHudEveryonePointCooldownPanelWidget.Reset();
 			RoleHudEveryonePointCooldownTextBlock.Reset();
+			for (int32 SlotIndex = 0; SlotIndex < RoleHudActionSlotCount; ++SlotIndex)
+			{
+				RoleHudActionHotkeyTextBlocks[SlotIndex].Reset();
+			}
+			RoleHudFartCooldownPanelWidget.Reset();
+			RoleHudFartCooldownTextBlock.Reset();
+			RoleHudDisplayedFartCooldownRemaining = 0.0f;
+			RoleHudLastReplicatedFartCooldownRemaining = 0.0f;
 		}
 		ActiveRoleHudRole = EVNHPlayerRole::Unassigned;
 		return;
@@ -499,6 +566,14 @@ void AVNHPlayerController::EnsureRoleHudWidget()
 		RoleHudHumanDrillCooldownTextBlock.Reset();
 		RoleHudEveryonePointCooldownPanelWidget.Reset();
 		RoleHudEveryonePointCooldownTextBlock.Reset();
+		for (int32 SlotIndex = 0; SlotIndex < RoleHudActionSlotCount; ++SlotIndex)
+		{
+			RoleHudActionHotkeyTextBlocks[SlotIndex].Reset();
+		}
+		RoleHudFartCooldownPanelWidget.Reset();
+		RoleHudFartCooldownTextBlock.Reset();
+		RoleHudDisplayedFartCooldownRemaining = 0.0f;
+		RoleHudLastReplicatedFartCooldownRemaining = 0.0f;
 	}
 
 	UClass* WidgetClass = LoadClass<UUserWidget>(nullptr, WidgetPath);
@@ -661,8 +736,22 @@ void AVNHPlayerController::SetupInputComponent()
 	InputComponent->BindAction(TEXT("VNH_AlienActNatural"), IE_Pressed, this, &AVNHPlayerController::RequestActNatural);
 	InputComponent->BindAction(TEXT("VNH_TargetFocus"), IE_Pressed, this, &AVNHPlayerController::HandleTargetFocusPressed);
 	InputComponent->BindAction(TEXT("VNH_Interact"), IE_Pressed, this, &AVNHPlayerController::HandleInteractPressed);
-	InputComponent->BindAction(TEXT("VNH_Point"), IE_Pressed, this, &AVNHPlayerController::HandlePointPressed);
-	InputComponent->BindAction(TEXT("VNH_Wave"), IE_Pressed, this, &AVNHPlayerController::HandleWavePressed);
+	InputComponent->BindAction(TEXT("Jump"), IE_Pressed, this, &AVNHPlayerController::HandleJumpPressed);
+	InputComponent->BindAction(TEXT("Jump"), IE_Released, this, &AVNHPlayerController::HandleJumpReleased);
+	InputComponent->BindAction(TEXT("Crouch"), IE_Pressed, this, &AVNHPlayerController::HandleCrouchPressed);
+	InputComponent->BindAction(TEXT("Crouch"), IE_Released, this, &AVNHPlayerController::HandleCrouchReleased);
+	InputComponent->BindKey(EKeys::One, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot1Pressed);
+	InputComponent->BindKey(EKeys::Gamepad_LeftThumbstick, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot1Pressed);
+	InputComponent->BindKey(EKeys::Two, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot2Pressed);
+	InputComponent->BindKey(EKeys::Gamepad_RightThumbstick, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot2Pressed);
+	InputComponent->BindKey(EKeys::Three, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot3Pressed);
+	InputComponent->BindKey(EKeys::Gamepad_FaceButton_Top, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot3Pressed);
+	InputComponent->BindKey(EKeys::Four, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot4Pressed);
+	InputComponent->BindKey(EKeys::Gamepad_FaceButton_Left, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot4Pressed);
+	InputComponent->BindKey(EKeys::Five, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot5Pressed);
+	InputComponent->BindKey(EKeys::Gamepad_Special_Left, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot5Pressed);
+	InputComponent->BindKey(EKeys::Six, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot6Pressed);
+	InputComponent->BindKey(EKeys::Gamepad_Special_Right, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot6Pressed);
 	InputComponent->BindAction(TEXT("VNH_PickUp"), IE_Pressed, this, &AVNHPlayerController::HandlePickUpPressed);
 	InputComponent->BindAction(TEXT("VNH_Drop"), IE_Pressed, this, &AVNHPlayerController::HandleDropPressed);
 	InputComponent->BindAction(TEXT("VNH_MarkSuspect"), IE_Pressed, this, &AVNHPlayerController::MarkFocusedShopper);
@@ -745,6 +834,78 @@ void AVNHPlayerController::BindRoleHudActionButton(FName ButtonName, FName Handl
 	FScriptDelegate Delegate;
 	Delegate.BindUFunction(this, HandlerName);
 	Button->OnClicked.AddUnique(Delegate);
+}
+
+void AVNHPlayerController::ExecuteRoleHudActionSlot(int32 SlotIndex)
+{
+	const AVNHPlayerState* VNHPlayerState = GetPlayerState<AVNHPlayerState>();
+	const EVNHPlayerRole AssignedRole = VNHPlayerState ? VNHPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
+	if (AssignedRole != EVNHPlayerRole::Human && AssignedRole != EVNHPlayerRole::Alien)
+	{
+		return;
+	}
+
+	switch (SlotIndex)
+	{
+	case 0:
+		HandleInspectPressed();
+		break;
+	case 1:
+		HandleWavePressed();
+		break;
+	case 2:
+		HandlePointPressed();
+		break;
+	case 3:
+		HandleLaughPressed();
+		break;
+	case 4:
+		HandleFartPressed();
+		break;
+	case 5:
+		if (AssignedRole == EVNHPlayerRole::Alien)
+		{
+			HandlePlaceDecoyPressed();
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+void AVNHPlayerController::UpdateRoleHudActionHotkeyLabels()
+{
+	UUserWidget* Widget = RoleHudWidget.Get();
+	if (!Widget)
+	{
+		return;
+	}
+
+	const AVNHPlayerState* VNHPlayerState = GetPlayerState<AVNHPlayerState>();
+	const EVNHPlayerRole AssignedRole = VNHPlayerState ? VNHPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
+	const bool bController = IsControllerInputPresetSelected();
+	const int32 VisibleSlotCount = AssignedRole == EVNHPlayerRole::Alien ? RoleHudActionSlotCount : 5;
+
+	for (int32 SlotIndex = 0; SlotIndex < RoleHudActionSlotCount; ++SlotIndex)
+	{
+		if (!RoleHudActionHotkeyTextBlocks[SlotIndex].IsValid())
+		{
+			RoleHudActionHotkeyTextBlocks[SlotIndex] = Cast<UTextBlock>(Widget->GetWidgetFromName(
+				FName(FString::Printf(TEXT("ActionHotkeyText_%s"), RoleHudActionSuffixes[SlotIndex]))));
+		}
+
+		if (UTextBlock* HotkeyText = RoleHudActionHotkeyTextBlocks[SlotIndex].Get())
+		{
+			const bool bShowSlot = SlotIndex < VisibleSlotCount;
+			HotkeyText->SetVisibility(bShowSlot ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+			const TCHAR* HotkeyLabel = RoleHudKeyboardHotkeyLabels[SlotIndex];
+			if (bController)
+			{
+				HotkeyLabel = RoleHudControllerHotkeyLabels[SlotIndex];
+			}
+			HotkeyText->SetText(FText::FromString(FString(HotkeyLabel)));
+		}
+	}
 }
 
 void AVNHPlayerController::HandleHudInspectClicked()
@@ -1402,30 +1563,38 @@ void AVNHPlayerController::ServerPerformUniversalAction_Implementation(EVNHUnive
 		ClientReceiveInteractionText(TEXT("Only the Alien can place a decoy."));
 		return;
 	}
-	if ((Action == EVNHUniversalAction::Laugh || Action == EVNHUniversalAction::Fart) && AssignedRole == EVNHPlayerRole::Hunter)
+	const bool bRoleAnimationAction = IsRoleAnimationAction(Action);
+	if ((bRoleAnimationAction || Action == EVNHUniversalAction::Fart) && AssignedRole == EVNHPlayerRole::Hunter)
 	{
 		ClientReceiveInteractionText(TEXT("That action is unavailable for the Hunter."));
 		return;
 	}
 
 	const bool bRepeatedAction = Shopper->WasActionRepeatedRecently(Action);
-	const bool bTargetInRange = !Target
-		|| FVector::DistSquared(Target->GetActorLocation(), Shopper->GetActorLocation()) <= FMath::Square(Action == EVNHUniversalAction::Point ? 2000.0f : 350.0f);
+	AActor* EffectiveTarget = Target;
+	const bool bTargetInRange = !EffectiveTarget
+		|| FVector::DistSquared(EffectiveTarget->GetActorLocation(), Shopper->GetActorLocation()) <= FMath::Square(Action == EVNHUniversalAction::Point ? 2000.0f : 350.0f);
 	if (!bTargetInRange)
 	{
-		ClientReceiveInteractionText(TEXT("That target is out of reach."));
-		return;
+		if (bRoleAnimationAction)
+		{
+			EffectiveTarget = nullptr;
+		}
+		else
+		{
+			ClientReceiveInteractionText(TEXT("That target is out of reach."));
+			return;
+		}
 	}
 
 	switch (Action)
 	{
 	case EVNHUniversalAction::Inspect:
-		if (!Target)
+		if (!EffectiveTarget)
 		{
-			ClientReceiveInteractionText(TEXT("Nothing under the cursor to inspect."));
-			return;
+			break;
 		}
-		if (IsVNHSuspicious(Target))
+		if (IsVNHSuspicious(EffectiveTarget))
 		{
 			if (Shopper->IsBeingWatchedByHunter())
 			{
@@ -1439,17 +1608,17 @@ void AVNHPlayerController::ServerPerformUniversalAction_Implementation(EVNHUnive
 		break;
 
 	case EVNHUniversalAction::Point:
-		if (AVNHShopperCharacter* PointedShopper = Cast<AVNHShopperCharacter>(Target))
+		if (!EffectiveTarget)
+		{
+			break;
+		}
+		if (AVNHShopperCharacter* PointedShopper = Cast<AVNHShopperCharacter>(EffectiveTarget))
 		{
 			PointedShopper->ApplyComposureDelta(-8.0f, TEXT("PointedAt"));
 		}
-		else if (IsVNHSuspicious(Target))
+		else if (IsVNHSuspicious(EffectiveTarget))
 		{
 			Shopper->ApplyComposureDelta(5.0f, TEXT("PointedAtSuspiciousObject"));
-		}
-		else
-		{
-			Shopper->ApplyComposureDelta(-4.0f, TEXT("PointedAtNothing"));
 		}
 		if (bRepeatedAction)
 		{
@@ -1468,28 +1637,28 @@ void AVNHPlayerController::ServerPerformUniversalAction_Implementation(EVNHUnive
 	case EVNHUniversalAction::Fart:
 		if (!Shopper->TriggerFartFromAction())
 		{
-			ClientReceiveInteractionText(TEXT("Fart unavailable while the anti-camping fart is on cooldown."));
+			ClientReceiveInteractionText(TEXT("Fart action is on cooldown."));
 			return;
 		}
 		Shopper->RegisterMeaningfulAction(Action, nullptr);
-		ClientReceiveInteractionText(TEXT("FART // anti-camping pressure released."));
+		ClientReceiveInteractionText(FString::Printf(TEXT("FART // action cooldown %ds"), FMath::Max(1, FMath::CeilToInt(Shopper->GetFartCooldownRemaining()))));
 		return;
 
 	case EVNHUniversalAction::PlaceDecoy:
 		break;
 
 	case EVNHUniversalAction::PickUp:
-		if (!IsVNHInteractable(Target) || Shopper->GetHeldProp())
+		if (!IsVNHInteractable(EffectiveTarget) || Shopper->GetHeldProp())
 		{
 			ClientReceiveInteractionText(Shopper->GetHeldProp() ? TEXT("Drop the held prop first.") : TEXT("No prop under the cursor."));
 			return;
 		}
-		Shopper->ApplyComposureDelta(IsVNHSuspicious(Target) ? -12.0f : 3.0f, IsVNHSuspicious(Target) ? TEXT("SuspiciousPickup") : TEXT("NormalPickup"));
+		Shopper->ApplyComposureDelta(IsVNHSuspicious(EffectiveTarget) ? -12.0f : 3.0f, IsVNHSuspicious(EffectiveTarget) ? TEXT("SuspiciousPickup") : TEXT("NormalPickup"));
 		if (Shopper->IsBeingWatchedByHunter())
 		{
 			Shopper->ApplyComposureDelta(-5.0f, TEXT("WatchedPickup"));
 		}
-		PerformPickUp(Shopper, Target);
+		PerformPickUp(Shopper, EffectiveTarget);
 		break;
 
 	case EVNHUniversalAction::Drop:
@@ -1498,8 +1667,8 @@ void AVNHPlayerController::ServerPerformUniversalAction_Implementation(EVNHUnive
 			ClientReceiveInteractionText(TEXT("You are not holding a prop."));
 			return;
 		}
-		Target = Shopper->GetHeldProp();
-		if (IsVNHSuspicious(Target))
+		EffectiveTarget = Shopper->GetHeldProp();
+		if (IsVNHSuspicious(EffectiveTarget))
 		{
 			Shopper->ApplyComposureDelta(-15.0f, TEXT("SuspiciousDrop"));
 		}
@@ -1525,8 +1694,8 @@ void AVNHPlayerController::ServerPerformUniversalAction_Implementation(EVNHUnive
 	}
 
 	PlayRoleActionAnimation(AssignedRole, Shopper, Action);
-	Shopper->RegisterMeaningfulAction(Action, Target);
-	ClientReceiveInteractionText(FString::Printf(TEXT("%s // %s"), ToUniversalActionText(Action), Target ? *GetNameSafe(Target) : TEXT("NO TARGET")));
+	Shopper->RegisterMeaningfulAction(Action, EffectiveTarget);
+	ClientReceiveInteractionText(FString::Printf(TEXT("%s // %s"), ToUniversalActionText(Action), EffectiveTarget ? *GetNameSafe(EffectiveTarget) : TEXT("NO TARGET")));
 }
 
 void AVNHPlayerController::ClientReceiveInteractionText_Implementation(const FString& InteractionText)
@@ -1794,6 +1963,68 @@ void AVNHPlayerController::HandlePlaceDecoyPressed()
 	RequestUniversalAction(EVNHUniversalAction::PlaceDecoy);
 }
 
+void AVNHPlayerController::HandleJumpPressed()
+{
+	if (ACharacter* ControlledCharacter = Cast<ACharacter>(GetPawn()))
+	{
+		ControlledCharacter->Jump();
+	}
+}
+
+void AVNHPlayerController::HandleJumpReleased()
+{
+	if (ACharacter* ControlledCharacter = Cast<ACharacter>(GetPawn()))
+	{
+		ControlledCharacter->StopJumping();
+	}
+}
+
+void AVNHPlayerController::HandleCrouchPressed()
+{
+	if (ACharacter* ControlledCharacter = Cast<ACharacter>(GetPawn()))
+	{
+		ControlledCharacter->Crouch();
+	}
+}
+
+void AVNHPlayerController::HandleCrouchReleased()
+{
+	if (ACharacter* ControlledCharacter = Cast<ACharacter>(GetPawn()))
+	{
+		ControlledCharacter->UnCrouch();
+	}
+}
+
+void AVNHPlayerController::HandleRoleHudActionSlot1Pressed()
+{
+	ExecuteRoleHudActionSlot(0);
+}
+
+void AVNHPlayerController::HandleRoleHudActionSlot2Pressed()
+{
+	ExecuteRoleHudActionSlot(1);
+}
+
+void AVNHPlayerController::HandleRoleHudActionSlot3Pressed()
+{
+	ExecuteRoleHudActionSlot(2);
+}
+
+void AVNHPlayerController::HandleRoleHudActionSlot4Pressed()
+{
+	ExecuteRoleHudActionSlot(3);
+}
+
+void AVNHPlayerController::HandleRoleHudActionSlot5Pressed()
+{
+	ExecuteRoleHudActionSlot(4);
+}
+
+void AVNHPlayerController::HandleRoleHudActionSlot6Pressed()
+{
+	ExecuteRoleHudActionSlot(5);
+}
+
 void AVNHPlayerController::HandlePickUpPressed()
 {
 	RequestUniversalAction(EVNHUniversalAction::PickUp);
@@ -2007,7 +2238,9 @@ void AVNHPlayerController::UpdateRoleHudWidgetRuntimeLabels(float DeltaTime)
 		|| !RoleHudHumanDrillCooldownPanelWidget.IsValid()
 		|| !RoleHudHumanDrillCooldownTextBlock.IsValid()
 		|| !RoleHudEveryonePointCooldownPanelWidget.IsValid()
-		|| !RoleHudEveryonePointCooldownTextBlock.IsValid()) && TimeUntilRoleHudWidgetLookup <= 0.0f)
+		|| !RoleHudEveryonePointCooldownTextBlock.IsValid()
+		|| !RoleHudFartCooldownPanelWidget.IsValid()
+		|| !RoleHudFartCooldownTextBlock.IsValid()) && TimeUntilRoleHudWidgetLookup <= 0.0f)
 	{
 		TimeUntilRoleHudWidgetLookup = 0.5f;
 		UUserWidget* Widget = RoleHudWidget.Get();
@@ -2051,7 +2284,17 @@ void AVNHPlayerController::UpdateRoleHudWidgetRuntimeLabels(float DeltaTime)
 		{
 			RoleHudEveryonePointCooldownTextBlock = Widget ? Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("EveryonePointCooldownText"))) : nullptr;
 		}
+		if (!RoleHudFartCooldownPanelWidget.IsValid())
+		{
+			RoleHudFartCooldownPanelWidget = Widget ? Widget->GetWidgetFromName(TEXT("FartCooldownPanel")) : nullptr;
+		}
+		if (!RoleHudFartCooldownTextBlock.IsValid())
+		{
+			RoleHudFartCooldownTextBlock = Widget ? Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("FartCooldownText"))) : nullptr;
+		}
 	}
+
+	UpdateRoleHudActionHotkeyLabels();
 
 	const AVNHShopperCharacter* Shopper = Cast<AVNHShopperCharacter>(GetPawn());
 	const float ComposureValue = Shopper ? Shopper->GetComposure() : 0.0f;
@@ -2168,6 +2411,35 @@ void AVNHPlayerController::UpdateRoleHudWidgetRuntimeLabels(float DeltaTime)
 	if (UTextBlock* CooldownText = RoleHudEveryonePointCooldownTextBlock.Get())
 	{
 		CooldownText->SetText(FText::FromString(FString::Printf(TEXT("%.0fs"), EveryonePointCooldownRemaining)));
+	}
+
+	const float AuthoritativeFartCooldownRemaining = Shopper ? Shopper->GetFartCooldownRemaining() : 0.0f;
+	if (!Shopper || AuthoritativeFartCooldownRemaining <= RoleHudFartCooldownDisplayTolerance)
+	{
+		RoleHudDisplayedFartCooldownRemaining = 0.0f;
+	}
+	else if (RoleHudDisplayedFartCooldownRemaining <= 0.0f
+		|| AuthoritativeFartCooldownRemaining > RoleHudLastReplicatedFartCooldownRemaining + 0.25f)
+	{
+		RoleHudDisplayedFartCooldownRemaining = AuthoritativeFartCooldownRemaining;
+	}
+	else
+	{
+		RoleHudDisplayedFartCooldownRemaining = FMath::Max(0.0f, RoleHudDisplayedFartCooldownRemaining - DeltaTime);
+	}
+	RoleHudLastReplicatedFartCooldownRemaining = AuthoritativeFartCooldownRemaining;
+
+	const bool bShowFartCooldown = (AssignedRole == EVNHPlayerRole::Human || AssignedRole == EVNHPlayerRole::Alien)
+		&& RoleHudDisplayedFartCooldownRemaining > RoleHudFartCooldownDisplayTolerance;
+	if (UWidget* CooldownPanel = RoleHudFartCooldownPanelWidget.Get())
+	{
+		CooldownPanel->SetVisibility(bShowFartCooldown ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		CooldownPanel->SetRenderOpacity(bShowFartCooldown ? 1.0f : 0.0f);
+	}
+	if (UTextBlock* CooldownText = RoleHudFartCooldownTextBlock.Get())
+	{
+		const int32 CooldownSeconds = FMath::Max(1, FMath::CeilToInt(RoleHudDisplayedFartCooldownRemaining));
+		CooldownText->SetText(FText::FromString(FString::Printf(TEXT("%ds"), CooldownSeconds)));
 	}
 }
 
@@ -2430,8 +2702,9 @@ void AVNHPlayerController::UpdateComposureWidgetRuntimeLabels(float DeltaTime)
 	if (UTextBlock* FartText = FartRiskTextBlock.Get())
 	{
 		const float Remaining = FMath::Max(0.0f, Shopper->GetCurrentFartThreshold() - Shopper->GetInactivitySeconds());
-		const FString CooldownText = Shopper->GetFartCooldownRemaining() > 0.0f
-			? FString::Printf(TEXT("COOLDOWN %.0fs"), Shopper->GetFartCooldownRemaining())
+		const float FartCooldownRemaining = Shopper->GetFartCooldownRemaining();
+		const FString CooldownText = FartCooldownRemaining > RoleHudFartCooldownDisplayTolerance
+			? FString::Printf(TEXT("ACTION CD %ds // BREAK %.1fs"), FMath::Max(1, FMath::CeilToInt(FartCooldownRemaining)), Remaining)
 			: FString::Printf(TEXT("BREAK %.1fs"), Remaining);
 		FartText->SetText(FText::FromString(CooldownText));
 	}

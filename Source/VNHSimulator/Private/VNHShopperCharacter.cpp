@@ -45,6 +45,9 @@ constexpr float PanicFartInnerRadius = 700.0f;
 constexpr float FartCloudBackwardOffset = 58.0f;
 constexpr float FartCloudHeightOffset = 35.0f;
 constexpr float FartCloudKnockdownRadius = 700.0f;
+constexpr float ManualFartSpamWindowSeconds = 6.0f;
+constexpr float ManualFartCooldownReadyTolerance = 0.05f;
+constexpr float ManualFartCooldownSeconds[] = {3.0f, 3.0f, 5.0f, 8.0f, 12.0f, 18.0f};
 
 bool IsComposureLockedForRoundPhase(const UWorld* World)
 {
@@ -60,6 +63,12 @@ bool IsComposureLockedForRoundPhase(const UWorld* World)
 }
 constexpr float CalmFartFalloffDistance = 325.0f;
 constexpr float PanicFartFalloffDistance = 1100.0f;
+
+float GetManualFartCooldownForStreak(int32 StreakIndex)
+{
+	constexpr int32 MaxCooldownIndex = UE_ARRAY_COUNT(ManualFartCooldownSeconds) - 1;
+	return ManualFartCooldownSeconds[FMath::Clamp(StreakIndex, 0, MaxCooldownIndex)];
+}
 
 const FArrayProperty* FindFartKnockdownArrayFieldByPrefix(const UScriptStruct* RowStruct, const TCHAR* FieldPrefix)
 {
@@ -130,6 +139,7 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 		MovementComponent->MaxAcceleration = 420.0f;
 		MovementComponent->BrakingDecelerationWalking = 360.0f;
 		MovementComponent->GroundFriction = 6.0f;
+		MovementComponent->NavAgentProps.bCanCrouch = true;
 	}
 
 	RoutineComponent = CreateDefaultSubobject<UVNHRoutineComponent>(TEXT("RoutineComponent"));
@@ -449,6 +459,20 @@ bool AVNHShopperCharacter::WasActionRepeatedRecently(EVNHUniversalAction Action,
 
 void AVNHShopperCharacter::UpdateComposureSystem(float DeltaSeconds)
 {
+	if (FartCooldownRemaining > 0.0f)
+	{
+		const float PreviousFartCooldownRemaining = FartCooldownRemaining;
+		FartCooldownRemaining = FMath::Max(0.0f, FartCooldownRemaining - DeltaSeconds);
+		if (FartCooldownRemaining <= ManualFartCooldownReadyTolerance)
+		{
+			FartCooldownRemaining = 0.0f;
+		}
+		if (PreviousFartCooldownRemaining > 0.0f && FartCooldownRemaining <= 0.0f)
+		{
+			ForceNetUpdate();
+		}
+	}
+
 	if (IsComposureLockedForRoundPhase(GetWorld()))
 	{
 		ResetInactivity();
@@ -473,8 +497,6 @@ void AVNHShopperCharacter::UpdateComposureSystem(float DeltaSeconds)
 	{
 		InactivitySeconds += DeltaSeconds;
 	}
-
-	FartCooldownRemaining = FMath::Max(0.0f, FartCooldownRemaining - DeltaSeconds);
 
 	bool bHunterVeryClose = false;
 	const bool bWatchedByHunter = IsWatchedByHunter(bHunterVeryClose);
@@ -506,7 +528,7 @@ void AVNHShopperCharacter::UpdateComposureSystem(float DeltaSeconds)
 		ApplyComposureDelta(-5.0f, TEXT("StandingStill"));
 	}
 
-	if (InactivitySeconds >= CurrentFartThreshold && FartCooldownRemaining <= 0.0f)
+	if (InactivitySeconds >= CurrentFartThreshold)
 	{
 		TriggerFart();
 	}
@@ -556,7 +578,7 @@ void AVNHShopperCharacter::ResetInactivity()
 
 bool AVNHShopperCharacter::TriggerFart()
 {
-	if (!HasAuthority() || FartCooldownRemaining > 0.0f)
+	if (!HasAuthority())
 	{
 		return false;
 	}
@@ -564,7 +586,6 @@ bool AVNHShopperCharacter::TriggerFart()
 	const FVector CloudCenter = GetActorLocation() - GetActorForwardVector() * FartCloudBackwardOffset + FVector(0.0f, 0.0f, FartCloudHeightOffset);
 	MulticastTriggerFart();
 	ApplyComposureDelta(-20.0f, TEXT("PublicFart"));
-	FartCooldownRemaining = 30.0f;
 	ResetInactivity();
 
 	for (TActorIterator<AVNHShopperCharacter> It(GetWorld()); It; ++It)
@@ -591,7 +612,38 @@ bool AVNHShopperCharacter::TriggerFart()
 
 bool AVNHShopperCharacter::TriggerFartFromAction()
 {
-	return TriggerFart();
+	if (!HasAuthority())
+	{
+		return false;
+	}
+
+	if (FartCooldownRemaining <= ManualFartCooldownReadyTolerance)
+	{
+		FartCooldownRemaining = 0.0f;
+	}
+	else
+	{
+		return false;
+	}
+
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	const float LastManualFartReadyTime = LastManualFartActionTime + LastManualFartCooldownSeconds;
+	if (Now - LastManualFartReadyTime > ManualFartSpamWindowSeconds)
+	{
+		ManualFartSpamStreak = 0;
+	}
+
+	if (!TriggerFart())
+	{
+		return false;
+	}
+
+	FartCooldownRemaining = GetManualFartCooldownForStreak(ManualFartSpamStreak);
+	ManualFartSpamStreak = FMath::Min(ManualFartSpamStreak + 1, static_cast<int32>(UE_ARRAY_COUNT(ManualFartCooldownSeconds) - 1));
+	LastManualFartCooldownSeconds = FartCooldownRemaining;
+	LastManualFartActionTime = Now;
+	ForceNetUpdate();
+	return true;
 }
 
 void AVNHShopperCharacter::PlayUniversalActionMontage(UAnimMontage* Montage)
@@ -852,12 +904,19 @@ void AVNHShopperCharacter::MulticastPlayUniversalActionMontage_Implementation(UA
 		return;
 	}
 
+	float LockDurationSeconds = Montage->GetPlayLength();
 	USkeletalMeshComponent* MeshComponent = GetMesh();
 	UAnimInstance* AnimInstance = MeshComponent ? MeshComponent->GetAnimInstance() : nullptr;
 	if (AnimInstance)
 	{
-		AnimInstance->Montage_Play(Montage);
+		const float PlayedDurationSeconds = AnimInstance->Montage_Play(Montage);
+		if (PlayedDurationSeconds > 0.0f)
+		{
+			LockDurationSeconds = PlayedDurationSeconds;
+		}
 	}
+
+	StartUniversalActionMovementLock(LockDurationSeconds);
 }
 
 void AVNHShopperCharacter::OnRep_Composure()
@@ -962,6 +1021,44 @@ void AVNHShopperCharacter::ApplyFrozenVisualState()
 		{
 			CurrentController->StopMovement();
 		}
+	}
+}
+
+void AVNHShopperCharacter::StartUniversalActionMovementLock(float DurationSeconds)
+{
+	UWorld* World = GetWorld();
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!World || !MovementComponent || bFrozenByPublicTest)
+	{
+		return;
+	}
+
+	MovementComponent->StopMovementImmediately();
+	MovementComponent->DisableMovement();
+	if (AController* CurrentController = GetController())
+	{
+		CurrentController->StopMovement();
+	}
+
+	World->GetTimerManager().ClearTimer(UniversalActionMovementLockTimerHandle);
+	World->GetTimerManager().SetTimer(
+		UniversalActionMovementLockTimerHandle,
+		this,
+		&AVNHShopperCharacter::ClearUniversalActionMovementLock,
+		FMath::Max(0.15f, DurationSeconds),
+		false);
+}
+
+void AVNHShopperCharacter::ClearUniversalActionMovementLock()
+{
+	if (bFrozenByPublicTest)
+	{
+		return;
+	}
+
+	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	{
+		MovementComponent->SetMovementMode(MOVE_Walking);
 	}
 }
 
