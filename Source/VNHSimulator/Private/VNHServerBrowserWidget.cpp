@@ -30,9 +30,12 @@ const FName BrowserSessionKeyIsPrivate(TEXT("IS_PRIVATE"));
 const FName BrowserSessionKeyMaxPlayers(TEXT("MAX_PLAYERS"));
 const FName BrowserSessionKeyRegion(TEXT("REGION"));
 const FName BrowserSessionKeyMapName(TEXT("MAP_NAME"));
+const FName BrowserSessionKeyGameId(TEXT("VNH_GAME_ID"));
+const FName BrowserSearchKeyLobbies(TEXT("SEARCH_LOBBIES"));
 
 const FString DefaultMapName(TEXT("MVP_Clothing Store"));
 const FString DefaultRegion(TEXT("USEAST"));
+const FString BrowserSessionGameId(TEXT("VNHSimulator"));
 constexpr double DoubleClickWindowSeconds = 0.35;
 constexpr float ColumnServerNameWeight = 0.36f;
 constexpr float ColumnPlayersWeight = 0.12f;
@@ -605,6 +608,8 @@ void UVNHServerBrowserWidget::RefreshServerList()
 	ActiveSearch = MakeShared<FOnlineSessionSearch>();
 	ActiveSearch->MaxSearchResults = 100;
 	ActiveSearch->bIsLanQuery = false;
+	ActiveSearch->QuerySettings.Set(BrowserSearchKeyLobbies, true, EOnlineComparisonOp::Equals);
+	ActiveSearch->QuerySettings.Set(BrowserSessionKeyGameId, BrowserSessionGameId, EOnlineComparisonOp::Equals);
 
 	FindSessionsCompleteHandle = ActiveSessionInterface->AddOnFindSessionsCompleteDelegate_Handle(
 		FOnFindSessionsCompleteDelegate::CreateUObject(this, &UVNHServerBrowserWidget::HandleFindSessionsComplete));

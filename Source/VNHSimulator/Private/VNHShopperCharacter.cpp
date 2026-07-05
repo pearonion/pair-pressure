@@ -36,7 +36,6 @@
 namespace
 {
 const TCHAR* DefaultBodyMeshPath = TEXT("/Game/Creative_Characters/Skeleton_Meshes/SK_Body_009.SK_Body_009");
-const TCHAR* CreativeAnimClassPath = TEXT("/Game/Creative_Characters/Animations/ABP_CreativeCharacter.ABP_CreativeCharacter_C");
 const TCHAR* CreativeIdleAnimPath = TEXT("/Game/TNG/Characters/Animations/TryingOnClothesAnims/Female/ANIM_TNG_Idle_Breathing.ANIM_TNG_Idle_Breathing");
 constexpr float CalmFartVolume = 1.4f;
 constexpr float PanicFartVolume = 2.6f;
@@ -1243,12 +1242,7 @@ void AVNHShopperCharacter::ConfigureCreativeCharacterVisuals()
 	MeshComponent->bPauseAnims = false;
 	MeshComponent->GlobalAnimRateScale = 1.0f;
 
-	if (UClass* CreativeAnimClass = LoadClass<UAnimInstance>(nullptr, CreativeAnimClassPath))
-	{
-		MeshComponent->SetAnimationMode(EAnimationMode::AnimationBlueprint);
-		MeshComponent->SetAnimInstanceClass(CreativeAnimClass);
-	}
-	else if (!MeshComponent->GetAnimClass())
+	if (!MeshComponent->GetAnimClass())
 	{
 		if (UAnimationAsset* IdleAnimation = LoadObject<UAnimationAsset>(nullptr, CreativeIdleAnimPath))
 		{

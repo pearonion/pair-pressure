@@ -27,6 +27,8 @@ const FName SessionKeyRoundSeconds(TEXT("ROUND_SECONDS"));
 const FName SessionKeyMaxPlayers(TEXT("MAX_PLAYERS"));
 const FName SessionKeyRegion(TEXT("REGION"));
 const FName SessionKeyMapName(TEXT("MAP_NAME"));
+const FName SessionKeyGameId(TEXT("VNH_GAME_ID"));
+const FString SessionGameId(TEXT("VNHSimulator"));
 }
 
 void UVNHCreateServerWidget::NativeConstruct()
@@ -185,18 +187,26 @@ void UVNHCreateServerWidget::HandleCreateGameClicked()
 	SessionSettings.Set(SessionKeyMaxPlayers, ClampedPlayers, EOnlineDataAdvertisementType::ViaOnlineService);
 	SessionSettings.Set(SessionKeyRegion, FString(TEXT("USEAST")), EOnlineDataAdvertisementType::ViaOnlineService);
 	SessionSettings.Set(SessionKeyMapName, LobbyMapName.ToString(), EOnlineDataAdvertisementType::ViaOnlineService);
-
-	CreateSessionCompleteHandle = ActiveSessionInterface->AddOnCreateSessionCompleteDelegate_Handle(
-		FOnCreateSessionCompleteDelegate::CreateUObject(this, &UVNHCreateServerWidget::HandleSessionCreated));
+	SessionSettings.Set(SessionKeyGameId, SessionGameId, EOnlineDataAdvertisementType::ViaOnlineService);
 
 	bCreateSessionInFlight = true;
-	SetStatus(NSLOCTEXT("VNH", "CreateServerCreating", "Creating Steam session..."));
-	if (!ActiveSessionInterface->CreateSession(0, NAME_GameSession, SessionSettings))
+	if (ActiveSessionInterface->GetNamedSession(NAME_GameSession))
 	{
-		bCreateSessionInFlight = false;
-		ActiveSessionInterface->ClearOnCreateSessionCompleteDelegate_Handle(CreateSessionCompleteHandle);
-		SetStatus(NSLOCTEXT("VNH", "CreateServerStartFailed", "Could not start Steam session creation."));
+		PendingSessionSettings = SessionSettings;
+		DestroySessionCompleteHandle = ActiveSessionInterface->AddOnDestroySessionCompleteDelegate_Handle(
+			FOnDestroySessionCompleteDelegate::CreateUObject(this, &UVNHCreateServerWidget::HandleExistingSessionDestroyed));
+
+		SetStatus(NSLOCTEXT("VNH", "CreateServerClearingOldSession", "Clearing previous Steam session..."));
+		if (!ActiveSessionInterface->DestroySession(NAME_GameSession))
+		{
+			bCreateSessionInFlight = false;
+			ActiveSessionInterface->ClearOnDestroySessionCompleteDelegate_Handle(DestroySessionCompleteHandle);
+			SetStatus(NSLOCTEXT("VNH", "CreateServerDestroyFailed", "Could not clear the previous Steam session."));
+		}
+		return;
 	}
+
+	BeginCreateSession(SessionSettings);
 }
 
 void UVNHCreateServerWidget::HandleCancelClicked()
@@ -222,6 +232,44 @@ void UVNHCreateServerWidget::HandleSessionCreated(FName SessionName, bool bWasSu
 	SetStatus(NSLOCTEXT("VNH", "CreateServerOpeningLobby", "Session created. Opening lobby..."));
 	UGameplayStatics::OpenLevel(this, LobbyMapName, true, TravelOptions);
 	UE_LOG(LogVNH, Display, TEXT("CreateServer: created Advanced Steam session and opening %s?%s."), *LobbyMapName.ToString(), *TravelOptions);
+}
+
+void UVNHCreateServerWidget::HandleExistingSessionDestroyed(FName SessionName, bool bWasSuccessful)
+{
+	if (ActiveSessionInterface.IsValid())
+	{
+		ActiveSessionInterface->ClearOnDestroySessionCompleteDelegate_Handle(DestroySessionCompleteHandle);
+	}
+
+	if (!bWasSuccessful)
+	{
+		bCreateSessionInFlight = false;
+		SetStatus(NSLOCTEXT("VNH", "CreateServerDestroyCompleteFailed", "Could not clear the previous Steam session."));
+		return;
+	}
+
+	BeginCreateSession(PendingSessionSettings);
+}
+
+void UVNHCreateServerWidget::BeginCreateSession(const FOnlineSessionSettings& SessionSettings)
+{
+	if (!ActiveSessionInterface.IsValid())
+	{
+		bCreateSessionInFlight = false;
+		SetStatus(NSLOCTEXT("VNH", "CreateServerNoSessionsAfterDestroy", "Steam sessions are not available."));
+		return;
+	}
+
+	CreateSessionCompleteHandle = ActiveSessionInterface->AddOnCreateSessionCompleteDelegate_Handle(
+		FOnCreateSessionCompleteDelegate::CreateUObject(this, &UVNHCreateServerWidget::HandleSessionCreated));
+
+	SetStatus(NSLOCTEXT("VNH", "CreateServerCreating", "Creating Steam session..."));
+	if (!ActiveSessionInterface->CreateSession(0, NAME_GameSession, SessionSettings))
+	{
+		bCreateSessionInFlight = false;
+		ActiveSessionInterface->ClearOnCreateSessionCompleteDelegate_Handle(CreateSessionCompleteHandle);
+		SetStatus(NSLOCTEXT("VNH", "CreateServerStartFailed", "Could not start Steam session creation."));
+	}
 }
 
 void UVNHCreateServerWidget::SetPrivateMode(bool bInPrivateMode)

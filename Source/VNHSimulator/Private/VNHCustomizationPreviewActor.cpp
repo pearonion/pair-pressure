@@ -16,7 +16,6 @@
 namespace
 {
 const TCHAR* PreviewDefaultBodyMeshPath = TEXT("/Game/Creative_Characters/Skeleton_Meshes/SK_Body_009.SK_Body_009");
-const TCHAR* PreviewCreativeAnimClassPath = TEXT("/Game/Creative_Characters/Animations/ABP_CreativeCharacter.ABP_CreativeCharacter_C");
 const TCHAR* PreviewCreativeIdleAnimPath = TEXT("/Game/TNG/Characters/Animations/TryingOnClothesAnims/Female/ANIM_TNG_Idle_Breathing.ANIM_TNG_Idle_Breathing");
 const TCHAR* MaleIdleAnimPath = TEXT("/Game/TNG/Characters/Animations/TryingOnClothesAnims/Male/A_Male_Idle.A_Male_Idle");
 const TCHAR* FemaleIdleAnimPath = TEXT("/Game/TNG/Characters/Animations/TryingOnClothesAnims/Female/A_Female_Idle.A_Female_Idle");
@@ -456,12 +455,7 @@ void AVNHCustomizationPreviewActor::PlayIdleAnimation()
 		return;
 	}
 
-	if (UClass* CreativeAnimClass = LoadClass<UAnimInstance>(nullptr, PreviewCreativeAnimClassPath))
-	{
-		BodyMeshComponent->SetAnimationMode(EAnimationMode::AnimationBlueprint);
-		BodyMeshComponent->SetAnimInstanceClass(CreativeAnimClass);
-	}
-	else if (UAnimationAsset* FallbackIdle = LoadObject<UAnimationAsset>(nullptr, PreviewCreativeIdleAnimPath))
+	if (UAnimationAsset* FallbackIdle = LoadObject<UAnimationAsset>(nullptr, PreviewCreativeIdleAnimPath))
 	{
 		PlayAnimationAsset(FallbackIdle, true);
 	}

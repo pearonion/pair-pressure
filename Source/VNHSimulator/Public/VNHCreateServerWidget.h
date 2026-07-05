@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "Interfaces/OnlineSessionInterface.h"
+#include "OnlineSessionSettings.h"
 #include "VNHCreateServerWidget.generated.h"
 
 class UButton;
@@ -95,7 +96,9 @@ private:
 	void HandleCancelClicked();
 
 	void HandleSessionCreated(FName SessionName, bool bWasSuccessful);
+	void HandleExistingSessionDestroyed(FName SessionName, bool bWasSuccessful);
 
+	void BeginCreateSession(const FOnlineSessionSettings& SessionSettings);
 	void SetPrivateMode(bool bInPrivateMode);
 	void SetPasswordVisible(bool bInPasswordVisible);
 	int32 GetClampedMaxPlayers() const;
@@ -106,6 +109,8 @@ private:
 
 	IOnlineSessionPtr ActiveSessionInterface;
 	FDelegateHandle CreateSessionCompleteHandle;
+	FDelegateHandle DestroySessionCompleteHandle;
+	FOnlineSessionSettings PendingSessionSettings;
 	bool bCreateSessionInFlight = false;
 	bool bPrivateMode = false;
 	bool bPasswordVisible = false;
