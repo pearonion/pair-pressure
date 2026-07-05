@@ -4,12 +4,14 @@
 #include "Components/Button.h"
 #include "Components/ButtonSlot.h"
 #include "Components/Border.h"
+#include "Components/CanvasPanelSlot.h"
 #include "Components/CheckBox.h"
 #include "Components/ComboBoxString.h"
 #include "Components/ContentWidget.h"
 #include "Components/EditableTextBox.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
+#include "Components/PanelWidget.h"
 #include "Components/SizeBox.h"
 #include "Components/SizeBoxSlot.h"
 #include "Components/TextBlock.h"
@@ -66,6 +68,17 @@ bool GetSessionBool(const FOnlineSessionSearchResult& Result, const FName Key, c
 	bool Value = Fallback;
 	Result.Session.SessionSettings.Get(Key, Value);
 	return Value;
+}
+
+FString EncodeTravelOption(const FString& Value)
+{
+	FString Encoded = Value;
+	Encoded.ReplaceInline(TEXT("%"), TEXT("%25"));
+	Encoded.ReplaceInline(TEXT(" "), TEXT("%20"));
+	Encoded.ReplaceInline(TEXT("?"), TEXT("%3F"));
+	Encoded.ReplaceInline(TEXT("="), TEXT("%3D"));
+	Encoded.ReplaceInline(TEXT("&"), TEXT("%26"));
+	return Encoded;
 }
 
 int32 GetSessionInt(const FOnlineSessionSearchResult& Result, const FName Key, const int32 Fallback)
@@ -372,7 +385,11 @@ FReply UVNHServerBrowserWidget::NativeOnKeyDown(const FGeometry& InGeometry, con
 {
 	if (InKeyEvent.GetKey() == EKeys::Escape)
 	{
-		if (FilterOverlay && FilterOverlay->GetVisibility() == ESlateVisibility::Visible)
+		if (PasswordPromptOverlay.IsValid())
+		{
+			HidePasswordPrompt();
+		}
+		else if (FilterOverlay && FilterOverlay->GetVisibility() == ESlateVisibility::Visible)
 		{
 			SetFilterOverlayVisible(false);
 		}
@@ -568,6 +585,35 @@ void UVNHServerBrowserWidget::HandleCloseFiltersClicked()
 	SetFilterOverlayVisible(false);
 }
 
+void UVNHServerBrowserWidget::HandlePasswordConfirmClicked()
+{
+	if (!VisibleEntries.IsValidIndex(PendingPasswordJoinVisibleIndex))
+	{
+		HidePasswordPrompt();
+		SetStatus(NSLOCTEXT("VNH", "ServerBrowserPasswordNoSelection", "Select a private server first."));
+		return;
+	}
+
+	const FString SuppliedPassword = PasswordPromptTextBox.IsValid() ? PasswordPromptTextBox->GetText().ToString() : FString();
+	if (SuppliedPassword.IsEmpty())
+	{
+		SetStatus(NSLOCTEXT("VNH", "ServerBrowserPasswordRequired", "Enter the private server password."));
+		return;
+	}
+
+	SelectedVisibleIndex = PendingPasswordJoinVisibleIndex;
+	AcceptedPrivateJoinPassword = SuppliedPassword;
+	bAcceptedPasswordForPendingJoin = true;
+	HidePasswordPrompt();
+	JoinSelectedServer();
+}
+
+void UVNHServerBrowserWidget::HandlePasswordCancelClicked()
+{
+	HidePasswordPrompt();
+	SetStatus(NSLOCTEXT("VNH", "ServerBrowserPasswordCancelled", "Private join cancelled."));
+}
+
 void UVNHServerBrowserWidget::RefreshServerList()
 {
 	IOnlineSubsystem* OnlineSubsystem = Online::GetSubsystem(GetWorld());
@@ -692,6 +738,15 @@ void UVNHServerBrowserWidget::HandleJoinSessionComplete(FName SessionName, EOnJo
 
 	if (APlayerController* PlayerController = GetOwningPlayer())
 	{
+		if (VisibleEntries.IsValidIndex(SelectedVisibleIndex) && VisibleEntries[SelectedVisibleIndex].bPrivate)
+		{
+			const FString Password = AcceptedPrivateJoinPassword;
+			if (!Password.IsEmpty())
+			{
+				ConnectString += FString::Printf(TEXT("?Password=%s"), *EncodeTravelOption(Password));
+			}
+		}
+		AcceptedPrivateJoinPassword.Reset();
 		SetStatus(NSLOCTEXT("VNH", "ServerBrowserJoining", "Joining selected server..."));
 		PlayerController->ClientTravel(ConnectString, TRAVEL_Absolute);
 	}
@@ -855,6 +910,13 @@ void UVNHServerBrowserWidget::JoinSelectedServer()
 		return;
 	}
 
+	if (VisibleEntries[SelectedVisibleIndex].bPrivate && !bAcceptedPasswordForPendingJoin)
+	{
+		ShowPasswordPromptForSelectedServer();
+		return;
+	}
+	bAcceptedPasswordForPendingJoin = false;
+
 	IOnlineSubsystem* OnlineSubsystem = Online::GetSubsystem(GetWorld());
 	ActiveSessionInterface = OnlineSubsystem ? OnlineSubsystem->GetSessionInterface() : nullptr;
 	if (!ActiveSessionInterface.IsValid())
@@ -877,6 +939,81 @@ void UVNHServerBrowserWidget::JoinSelectedServer()
 		ActiveSessionInterface->ClearOnJoinSessionCompleteDelegate_Handle(JoinSessionCompleteHandle);
 		SetStatus(NSLOCTEXT("VNH", "ServerBrowserJoinStartFailed", "Could not start Steam join."));
 	}
+}
+
+void UVNHServerBrowserWidget::ShowPasswordPromptForSelectedServer()
+{
+	if (!VisibleEntries.IsValidIndex(SelectedVisibleIndex))
+	{
+		return;
+	}
+
+	PendingPasswordJoinVisibleIndex = SelectedVisibleIndex;
+
+	UWidget* RootWidget = WidgetTree ? WidgetTree->RootWidget : nullptr;
+	UPanelWidget* RootPanel = Cast<UPanelWidget>(RootWidget);
+	if (!RootPanel)
+	{
+		SetStatus(NSLOCTEXT("VNH", "ServerBrowserPasswordPromptUnavailable", "Password entry is unavailable for this server browser layout."));
+		return;
+	}
+
+	UBorder* Overlay = NewObject<UBorder>(this);
+	Overlay->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.82f));
+
+	UVerticalBox* Dialog = NewObject<UVerticalBox>(Overlay);
+	UTextBlock* Title = NewObject<UTextBlock>(Dialog);
+	Title->SetText(FText::FromString(FString::Printf(TEXT("PASSWORD // %s"), *VisibleEntries[SelectedVisibleIndex].ServerName)));
+	Title->SetFont(MakeServerBrowserFont(28));
+	Title->SetColorAndOpacity(FSlateColor(FLinearColor(0.0f, 1.0f, 0.92f, 1.0f)));
+	Dialog->AddChildToVerticalBox(Title)->SetPadding(FMargin(32.0f, 24.0f, 32.0f, 8.0f));
+
+	UEditableTextBox* PasswordBox = NewObject<UEditableTextBox>(Dialog);
+	PasswordBox->SetIsPassword(true);
+	PasswordBox->SetHintText(NSLOCTEXT("VNH", "ServerBrowserPasswordHint", "Server password"));
+	Dialog->AddChildToVerticalBox(PasswordBox)->SetPadding(FMargin(32.0f, 8.0f, 32.0f, 16.0f));
+
+	UHorizontalBox* ButtonRow = NewObject<UHorizontalBox>(Dialog);
+	UButton* JoinButton = NewObject<UButton>(ButtonRow);
+	UTextBlock* JoinLabel = NewObject<UTextBlock>(JoinButton);
+	JoinLabel->SetText(NSLOCTEXT("VNH", "ServerBrowserPasswordJoin", "JOIN"));
+	JoinLabel->SetFont(MakeServerBrowserFont(22));
+	JoinButton->AddChild(JoinLabel);
+	JoinButton->OnClicked.AddUniqueDynamic(this, &UVNHServerBrowserWidget::HandlePasswordConfirmClicked);
+	ButtonRow->AddChildToHorizontalBox(JoinButton)->SetPadding(FMargin(32.0f, 0.0f, 8.0f, 24.0f));
+
+	UButton* CancelButton = NewObject<UButton>(ButtonRow);
+	UTextBlock* CancelLabel = NewObject<UTextBlock>(CancelButton);
+	CancelLabel->SetText(NSLOCTEXT("VNH", "ServerBrowserPasswordCancel", "CANCEL"));
+	CancelLabel->SetFont(MakeServerBrowserFont(22));
+	CancelButton->AddChild(CancelLabel);
+	CancelButton->OnClicked.AddUniqueDynamic(this, &UVNHServerBrowserWidget::HandlePasswordCancelClicked);
+	ButtonRow->AddChildToHorizontalBox(CancelButton)->SetPadding(FMargin(8.0f, 0.0f, 32.0f, 24.0f));
+	Dialog->AddChildToVerticalBox(ButtonRow);
+
+	Overlay->AddChild(Dialog);
+	UPanelSlot* OverlaySlot = RootPanel->AddChild(Overlay);
+	if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(OverlaySlot))
+	{
+		CanvasSlot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
+		CanvasSlot->SetOffsets(FMargin(0.0f));
+		CanvasSlot->SetZOrder(10000);
+	}
+	PasswordPromptOverlay = Overlay;
+	PasswordPromptTextBox = PasswordBox;
+	SetStatus(NSLOCTEXT("VNH", "ServerBrowserPasswordRequired", "Enter the private server password."));
+}
+
+void UVNHServerBrowserWidget::HidePasswordPrompt()
+{
+	if (UBorder* Overlay = PasswordPromptOverlay.Get())
+	{
+		Overlay->RemoveFromParent();
+	}
+
+	PasswordPromptOverlay.Reset();
+	PasswordPromptTextBox.Reset();
+	PendingPasswordJoinVisibleIndex = INDEX_NONE;
 }
 
 void UVNHServerBrowserWidget::SetStatus(const FText& NewStatus)

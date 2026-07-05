@@ -54,6 +54,17 @@ bool HasDebugArena(UWorld* World)
 
 	return false;
 }
+
+FString DecodeTravelOption(const FString& Value)
+{
+	FString Decoded = Value;
+	Decoded.ReplaceInline(TEXT("%20"), TEXT(" "));
+	Decoded.ReplaceInline(TEXT("%3F"), TEXT("?"));
+	Decoded.ReplaceInline(TEXT("%3D"), TEXT("="));
+	Decoded.ReplaceInline(TEXT("%26"), TEXT("&"));
+	Decoded.ReplaceInline(TEXT("%25"), TEXT("%"));
+	return Decoded;
+}
 }
 
 AVNHGameMode::AVNHGameMode()
@@ -94,12 +105,29 @@ void AVNHGameMode::InitGame(const FString& MapName, const FString& Options, FStr
 
 	const int32 RequestedRoundSeconds = UGameplayStatics::GetIntOption(Options, TEXT("RoundSeconds"), FMath::RoundToInt(PhaseTiming.InvestigationSeconds));
 	PhaseTiming.InvestigationSeconds = FMath::Clamp(static_cast<float>(RequestedRoundSeconds), 60.0f, 600.0f);
-	ServerName = UGameplayStatics::ParseOption(Options, TEXT("ServerName"));
+	ServerName = DecodeTravelOption(UGameplayStatics::ParseOption(Options, TEXT("ServerName")));
 	if (ServerName.IsEmpty())
 	{
 		ServerName = TEXT("My Awesome Game");
 	}
 	bPrivateSession = UGameplayStatics::GetIntOption(Options, TEXT("Private"), 0) != 0;
+	ServerPassword = DecodeTravelOption(UGameplayStatics::ParseOption(Options, TEXT("Password")));
+}
+
+void AVNHGameMode::PreLogin(const FString& Options, const FString& Address, const FUniqueNetIdRepl& UniqueId, FString& ErrorMessage)
+{
+	Super::PreLogin(Options, Address, UniqueId, ErrorMessage);
+	if (!ErrorMessage.IsEmpty() || !bPrivateSession)
+	{
+		return;
+	}
+
+	const FString SuppliedPassword = DecodeTravelOption(UGameplayStatics::ParseOption(Options, TEXT("Password")));
+	if (!ServerPassword.IsEmpty() && SuppliedPassword != ServerPassword)
+	{
+		ErrorMessage = TEXT("Incorrect server password.");
+		UE_LOG(LogVNH, Warning, TEXT("PrivateLobby: rejected login from %s due to incorrect password."), *Address);
+	}
 }
 
 void AVNHGameMode::BeginPlay()

@@ -89,6 +89,7 @@ constexpr int32 MarkedShopperStencil = 200;
 constexpr float HumanDrillCooldownSeconds = 30.0f;
 constexpr float HumanDrillPromptSeconds = 5.0f;
 constexpr float EveryonePointCooldownSeconds = 60.0f;
+constexpr float LobbyStartHoldRequiredSeconds = 1.5f;
 constexpr int32 EveryonePointMaxUsesPerRound = 2;
 constexpr int32 RoleHudActionSlotCount = 6;
 constexpr float RoleHudFartCooldownDisplayTolerance = 0.05f;
@@ -794,6 +795,7 @@ void AVNHPlayerController::PlayerTick(float DeltaTime)
 	UpdateRoleCameraMode();
 	UpdateFocusedShopper();
 	UpdateGameplayCursor();
+	UpdateLobbyStartHold(DeltaTime);
 	PollAlienKeyboardInput();
 	PollInteractionInput();
 	UpdateRoleHudWidgetRuntimeLabels(DeltaTime);
@@ -1226,7 +1228,11 @@ void AVNHPlayerController::RequestInteract()
 {
 	if (FocusedLobbyPlayButton.IsValid())
 	{
-		RequestStartRoundFromLobby();
+		bLobbyStartHoldActive = true;
+		bLobbyStartRequestSent = false;
+		LobbyStartHoldSeconds = 0.0f;
+		LastInteractionText = TEXT("Hold E to start the round.");
+		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 		return;
 	}
 
@@ -2038,6 +2044,37 @@ void AVNHPlayerController::HandleDropPressed()
 void AVNHPlayerController::HandleInteractPressed()
 {
 	HandleInspectPressed();
+}
+
+void AVNHPlayerController::UpdateLobbyStartHold(float DeltaTime)
+{
+	if (!bLobbyStartHoldActive)
+	{
+		return;
+	}
+
+	if (!FocusedLobbyPlayButton.IsValid() || !IsInputKeyDown(EKeys::E))
+	{
+		ResetLobbyStartHold();
+		return;
+	}
+
+	LobbyStartHoldSeconds += DeltaTime;
+	LastInteractionText = FString::Printf(TEXT("Starting round %.0f%%"), FMath::Clamp(LobbyStartHoldSeconds / LobbyStartHoldRequiredSeconds, 0.0f, 1.0f) * 100.0f);
+	LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+
+	if (!bLobbyStartRequestSent && LobbyStartHoldSeconds >= LobbyStartHoldRequiredSeconds)
+	{
+		bLobbyStartRequestSent = true;
+		RequestStartRoundFromLobby();
+	}
+}
+
+void AVNHPlayerController::ResetLobbyStartHold()
+{
+	bLobbyStartHoldActive = false;
+	bLobbyStartRequestSent = false;
+	LobbyStartHoldSeconds = 0.0f;
 }
 
 void AVNHPlayerController::HandleQuickChatPressed()
@@ -2980,7 +3017,9 @@ FString AVNHPlayerController::GetInteractionPromptText() const
 {
 	if (FocusedLobbyPlayButton.IsValid())
 	{
-		return TEXT("E: Start round");
+		return bLobbyStartHoldActive
+			? FString::Printf(TEXT("HOLD E // STARTING %.0f%%"), FMath::Clamp(LobbyStartHoldSeconds / LobbyStartHoldRequiredSeconds, 0.0f, 1.0f) * 100.0f)
+			: TEXT("HOLD E // START ROUND");
 	}
 
 	if (const AVNHShopperCharacter* Shopper = TargetedShopper.Get())

@@ -101,7 +101,7 @@ protected:
 	FName MainMenuMapName = TEXT("MainMenu");
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Maps")
-	FName LobbyMapName = TEXT("Lobby");
+	FName LobbyMapName = TEXT("/Game/Maps/Lobby");
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Maps")
 	FName StoreMapName = TEXT("MVP_ClothingStore");

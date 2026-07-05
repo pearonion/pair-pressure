@@ -29,6 +29,17 @@ const FName SessionKeyRegion(TEXT("REGION"));
 const FName SessionKeyMapName(TEXT("MAP_NAME"));
 const FName SessionKeyGameId(TEXT("VNH_GAME_ID"));
 const FString SessionGameId(TEXT("VNHSimulator"));
+
+FString EncodeTravelOption(const FString& Value)
+{
+	FString Encoded = Value;
+	Encoded.ReplaceInline(TEXT("%"), TEXT("%25"));
+	Encoded.ReplaceInline(TEXT(" "), TEXT("%20"));
+	Encoded.ReplaceInline(TEXT("?"), TEXT("%3F"));
+	Encoded.ReplaceInline(TEXT("="), TEXT("%3D"));
+	Encoded.ReplaceInline(TEXT("&"), TEXT("%26"));
+	return Encoded;
+}
 }
 
 void UVNHCreateServerWidget::NativeConstruct()
@@ -182,7 +193,7 @@ void UVNHCreateServerWidget::HandleCreateGameClicked()
 	SessionSettings.bUseLobbiesVoiceChatIfAvailable = false;
 	SessionSettings.Set(SessionKeyServerName, ServerName, EOnlineDataAdvertisementType::ViaOnlineService);
 	SessionSettings.Set(SessionKeyIsPrivate, bPrivateMode, EOnlineDataAdvertisementType::ViaOnlineService);
-	SessionSettings.Set(SessionKeyPassword, bPrivateMode ? Password : FString(), EOnlineDataAdvertisementType::ViaOnlineService);
+	SessionSettings.Set(SessionKeyPassword, bPrivateMode ? Password : FString(), EOnlineDataAdvertisementType::DontAdvertise);
 	SessionSettings.Set(SessionKeyRoundSeconds, RoundSeconds, EOnlineDataAdvertisementType::ViaOnlineService);
 	SessionSettings.Set(SessionKeyMaxPlayers, ClampedPlayers, EOnlineDataAdvertisementType::ViaOnlineService);
 	SessionSettings.Set(SessionKeyRegion, FString(TEXT("USEAST")), EOnlineDataAdvertisementType::ViaOnlineService);
@@ -343,9 +354,9 @@ FString UVNHCreateServerWidget::BuildTravelOptions() const
 	return FString::Printf(
 		TEXT("?Public=%s?ServerName=%s?Private=%s?Password=%s?MaxPlayers=%d?RoundSeconds=%d"),
 		bPrivateMode ? TEXT("0") : TEXT("1"),
-		*ServerName.Replace(TEXT("?"), TEXT("")),
+		*EncodeTravelOption(ServerName.TrimStartAndEnd()),
 		bPrivateMode ? TEXT("1") : TEXT("0"),
-		bPrivateMode ? *Password.Replace(TEXT("?"), TEXT("")) : TEXT(""),
+		bPrivateMode ? *EncodeTravelOption(Password) : TEXT(""),
 		GetClampedMaxPlayers(),
 		GetSelectedRoundSeconds());
 }

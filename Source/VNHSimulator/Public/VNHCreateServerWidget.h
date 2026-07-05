@@ -68,7 +68,7 @@ protected:
 	TObjectPtr<UTextBlock> PrivateButtonLabel;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Server")
-	FName LobbyMapName = TEXT("Lobby");
+	FName LobbyMapName = TEXT("/Game/Maps/Lobby");
 
 private:
 	UFUNCTION()

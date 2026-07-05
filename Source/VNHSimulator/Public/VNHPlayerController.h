@@ -233,6 +233,8 @@ private:
 	void HandlePickUpPressed();
 	void HandleDropPressed();
 	void HandleInteractPressed();
+	void UpdateLobbyStartHold(float DeltaTime);
+	void ResetLobbyStartHold();
 	void HandleQuickChatPressed();
 	void HandleQuickChatLookingForShirtPressed();
 	void HandleQuickChatWaitingForFriendPressed();
@@ -328,6 +330,9 @@ private:
 	bool bWasPolledCancelTargetDown = false;
 	bool bWasPolledMarkDown = false;
 	bool bWasPolledFakeAccuseDown = false;
+	bool bLobbyStartHoldActive = false;
+	bool bLobbyStartRequestSent = false;
+	float LobbyStartHoldSeconds = 0.0f;
 	bool bHardwareCursorsRegistered = false;
 	float HardwareCursorRegistrationRetrySeconds = 0.0f;
 	UPROPERTY(Transient)

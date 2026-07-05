@@ -11,6 +11,7 @@ class UCheckBox;
 class UComboBoxString;
 class UEditableTextBox;
 class UHorizontalBox;
+class UBorder;
 class UTextBlock;
 class UVerticalBox;
 class UWidget;
@@ -245,6 +246,12 @@ private:
 	UFUNCTION()
 	void HandleCloseFiltersClicked();
 
+	UFUNCTION()
+	void HandlePasswordConfirmClicked();
+
+	UFUNCTION()
+	void HandlePasswordCancelClicked();
+
 	void RefreshServerList();
 	void HandleFindSessionsComplete(bool bWasSuccessful);
 	void HandleJoinSessionComplete(FName SessionName, EOnJoinSessionCompleteResult::Type Result);
@@ -254,6 +261,8 @@ private:
 	void SelectVisibleEntry(int32 EntryIndex);
 	void ApplyRowSelectionStyles();
 	void JoinSelectedServer();
+	void ShowPasswordPromptForSelectedServer();
+	void HidePasswordPrompt();
 	void SetStatus(const FText& NewStatus);
 	void SetFilterOverlayVisible(bool bVisible);
 	void ConfigureFilterCombos();
@@ -275,7 +284,12 @@ private:
 
 	TArray<FVNHServerBrowserEntry> AllEntries;
 	TArray<FVNHServerBrowserEntry> VisibleEntries;
+	TWeakObjectPtr<UBorder> PasswordPromptOverlay;
+	TWeakObjectPtr<UEditableTextBox> PasswordPromptTextBox;
+	FString AcceptedPrivateJoinPassword;
 	int32 SelectedVisibleIndex = INDEX_NONE;
+	int32 PendingPasswordJoinVisibleIndex = INDEX_NONE;
+	bool bAcceptedPasswordForPendingJoin = false;
 	int32 LastClickedVisibleIndex = INDEX_NONE;
 	double LastClickTime = 0.0;
 	bool bShowingPrivateTab = false;
