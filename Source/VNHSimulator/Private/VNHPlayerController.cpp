@@ -779,7 +779,17 @@ void AVNHPlayerController::PlayerTick(float DeltaTime)
 	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
 	if (IsPlayerControllerMainMenuWorld(GetWorld()))
 	{
+		RemoveLobbyMenu();
 		return;
+	}
+
+	if (MapName.Contains(TEXT("Lobby")))
+	{
+		ShowLobbyMenu();
+	}
+	else
+	{
+		RemoveLobbyMenu();
 	}
 
 	if (!bHardwareCursorsRegistered)
@@ -1228,6 +1238,13 @@ void AVNHPlayerController::RequestInteract()
 {
 	if (FocusedLobbyPlayButton.IsValid())
 	{
+		if (!IsLocalLobbyHost())
+		{
+			LastInteractionText = TEXT("Only the host can start the round.");
+			LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+			return;
+		}
+
 		bLobbyStartHoldActive = true;
 		bLobbyStartRequestSent = false;
 		LobbyStartHoldSeconds = 0.0f;
@@ -1239,7 +1256,9 @@ void AVNHPlayerController::RequestInteract()
 	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
 	if (MapName.Contains(TEXT("Lobby")))
 	{
-		LastInteractionText = TEXT("Look at the PLAY button and press E to start.");
+		LastInteractionText = IsLocalLobbyHost()
+			? TEXT("Stand next to the start console, hover it, and hold E.")
+			: TEXT("Waiting for the host to start the round.");
 		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 		return;
 	}
@@ -2059,8 +2078,16 @@ void AVNHPlayerController::UpdateLobbyStartHold(float DeltaTime)
 		return;
 	}
 
+	if (!IsLocalLobbyHost())
+	{
+		ResetLobbyStartHold();
+		LastInteractionText = TEXT("Only the host can start the round.");
+		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		return;
+	}
+
 	LobbyStartHoldSeconds += DeltaTime;
-	LastInteractionText = FString::Printf(TEXT("Starting round %.0f%%"), FMath::Clamp(LobbyStartHoldSeconds / LobbyStartHoldRequiredSeconds, 0.0f, 1.0f) * 100.0f);
+	LastInteractionText = FString::Printf(TEXT("Starting round %.0f%%"), GetLobbyStartHoldProgress() * 100.0f);
 	LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 
 	if (!bLobbyStartRequestSent && LobbyStartHoldSeconds >= LobbyStartHoldRequiredSeconds)
@@ -2250,6 +2277,15 @@ void AVNHPlayerController::ShowLobbyMenu()
 	NewLobbyMenu->SetUserFocus(this);
 
 	UE_LOG(LogVNH, Display, TEXT("LobbyMenu: shown as non-blocking overlay."));
+}
+
+void AVNHPlayerController::RemoveLobbyMenu()
+{
+	if (LobbyMenuWidget.IsValid())
+	{
+		LobbyMenuWidget->RemoveFromParent();
+		LobbyMenuWidget.Reset();
+	}
 }
 
 void AVNHPlayerController::UpdateRoleHudWidgetRuntimeLabels(float DeltaTime)
@@ -3018,8 +3054,14 @@ FString AVNHPlayerController::GetInteractionPromptText() const
 	if (FocusedLobbyPlayButton.IsValid())
 	{
 		return bLobbyStartHoldActive
-			? FString::Printf(TEXT("HOLD E // STARTING %.0f%%"), FMath::Clamp(LobbyStartHoldSeconds / LobbyStartHoldRequiredSeconds, 0.0f, 1.0f) * 100.0f)
+			? FString::Printf(TEXT("HOLD E // STARTING %.0f%%"), GetLobbyStartHoldProgress() * 100.0f)
 			: TEXT("HOLD E // START ROUND");
+	}
+
+	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
+	if (MapName.Contains(TEXT("Lobby")))
+	{
+		return IsLocalLobbyHost() ? TEXT("START CONSOLE // HOLD E") : FString();
 	}
 
 	if (const AVNHShopperCharacter* Shopper = TargetedShopper.Get())
@@ -3153,6 +3195,7 @@ void AVNHPlayerController::ClearMarkedSuspectsForNewRound()
 void AVNHPlayerController::UpdateFocusedShopper()
 {
 	AVNHShopperCharacter* PreviousFocusedShopper = FocusedShopper.Get();
+	AActor* PreviousFocusedLobbyPlayButton = FocusedLobbyPlayButton.Get();
 	AActor* PreviousFocusedInteractable = FocusedInteractable.Get();
 	FocusedShopper.Reset();
 	FocusedLobbyPlayButton.Reset();
@@ -3164,6 +3207,7 @@ void AVNHPlayerController::UpdateFocusedShopper()
 		{
 			RefreshShopperOutline(PreviousFocusedShopper, false);
 		}
+		SetInteractableOutline(PreviousFocusedLobbyPlayButton, false);
 		SetInteractableOutline(PreviousFocusedInteractable, false);
 		CurrentMouseCursor = EMouseCursor::Default;
 		return;
@@ -3175,6 +3219,7 @@ void AVNHPlayerController::UpdateFocusedShopper()
 		{
 			RefreshShopperOutline(PreviousFocusedShopper, false);
 		}
+		SetInteractableOutline(PreviousFocusedLobbyPlayButton, false);
 		SetInteractableOutline(PreviousFocusedInteractable, false);
 		return;
 	}
@@ -3187,6 +3232,7 @@ void AVNHPlayerController::UpdateFocusedShopper()
 		{
 			RefreshShopperOutline(PreviousFocusedShopper, false);
 		}
+		SetInteractableOutline(PreviousFocusedLobbyPlayButton, false);
 		SetInteractableOutline(PreviousFocusedInteractable, false);
 		return;
 	}
@@ -3203,13 +3249,23 @@ void AVNHPlayerController::UpdateFocusedShopper()
 	{
 		if (AVNHLobbyPlayButton* LobbyPlayButton = Cast<AVNHLobbyPlayButton>(Hit.GetActor()))
 		{
-			FocusedLobbyPlayButton = LobbyPlayButton;
-			if (PreviousFocusedShopper)
+			if (IsLocalLobbyHost() && LobbyPlayButton->IsPawnWithinInteractionRange(GetPawn()))
 			{
-				RefreshShopperOutline(PreviousFocusedShopper, false);
+				FocusedLobbyPlayButton = LobbyPlayButton;
+				if (PreviousFocusedShopper)
+				{
+					RefreshShopperOutline(PreviousFocusedShopper, false);
+				}
+				SetInteractableOutline(PreviousFocusedInteractable, false);
+				if (PreviousFocusedLobbyPlayButton != LobbyPlayButton)
+				{
+					SetInteractableOutline(PreviousFocusedLobbyPlayButton, false);
+					SetInteractableOutline(LobbyPlayButton, true);
+				}
+				return;
 			}
-			SetInteractableOutline(PreviousFocusedInteractable, false);
-			return;
+
+			SetInteractableOutline(PreviousFocusedLobbyPlayButton, false);
 		}
 
 		if (IsVNHInteractable(Hit.GetActor()))
@@ -3217,6 +3273,7 @@ void AVNHPlayerController::UpdateFocusedShopper()
 			FocusedInteractable = Hit.GetActor();
 			if (PreviousFocusedInteractable != Hit.GetActor())
 			{
+				SetInteractableOutline(PreviousFocusedLobbyPlayButton, false);
 				SetInteractableOutline(PreviousFocusedInteractable, false);
 				SetInteractableOutline(Hit.GetActor(), true);
 			}
@@ -3272,6 +3329,7 @@ void AVNHPlayerController::UpdateFocusedShopper()
 	{
 		RefreshShopperOutline(PreviousFocusedShopper, false);
 	}
+	SetInteractableOutline(PreviousFocusedLobbyPlayButton, false);
 	SetInteractableOutline(PreviousFocusedInteractable, false);
 
 	if (AVNHShopperCharacter* Target = TargetedShopper.Get())
@@ -3451,6 +3509,29 @@ bool AVNHPlayerController::IsAssignedHunter() const
 {
 	const AVNHPlayerState* VNHPlayerState = GetPlayerState<AVNHPlayerState>();
 	return VNHPlayerState && VNHPlayerState->IsHunter();
+}
+
+bool AVNHPlayerController::IsLocalLobbyHost() const
+{
+	const AVNHGameState* VNHGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr;
+	return PlayerState && VNHGameState && !VNHGameState->PlayerArray.IsEmpty() && VNHGameState->PlayerArray[0] == PlayerState;
+}
+
+float AVNHPlayerController::GetLobbyStartHoldProgress() const
+{
+	return FMath::Clamp(LobbyStartHoldSeconds / LobbyStartHoldRequiredSeconds, 0.0f, 1.0f);
+}
+
+bool AVNHPlayerController::GetLobbyStartPromptScreenPosition(FVector2D& OutScreenPosition) const
+{
+	const AVNHLobbyPlayButton* LobbyPlayButton = FocusedLobbyPlayButton.Get();
+	if (!LobbyPlayButton)
+	{
+		return false;
+	}
+
+	const FVector PromptWorldLocation = LobbyPlayButton->GetActorLocation() + FVector(0.0f, 0.0f, 190.0f);
+	return ProjectWorldLocationToScreen(PromptWorldLocation, OutScreenPosition, true);
 }
 
 void AVNHPlayerController::SetTargetedShopper(AVNHShopperCharacter* NewTarget)

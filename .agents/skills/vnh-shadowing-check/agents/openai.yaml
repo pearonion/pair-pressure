@@ -1,0 +1,4 @@
+interface:
+  display_name: "VNH Shadowing Check"
+  short_description: "Check C++ shadowing before handoff"
+  default_prompt: "Use $vnh-shadowing-check before finishing VNH C++ changes."

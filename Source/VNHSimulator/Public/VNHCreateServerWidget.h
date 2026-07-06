@@ -96,9 +96,14 @@ private:
 	void HandleCancelClicked();
 
 	void HandleSessionCreated(FName SessionName, bool bWasSuccessful);
+	void HandleSessionStarted(FName SessionName, bool bWasSuccessful);
 	void HandleExistingSessionDestroyed(FName SessionName, bool bWasSuccessful);
 
 	void BeginCreateSession(const FOnlineSessionSettings& SessionSettings);
+	void OpenLobbyAfterSessionReady();
+	void OpenListenLobbyFallback(const FText& FallbackStatusText, const TCHAR* Reason);
+	void AbortSteamSessionCreate(const FText& FailureStatusText, const TCHAR* Reason);
+	TSharedPtr<const FUniqueNetId> ResolveHostUserId() const;
 	void SetPrivateMode(bool bInPrivateMode);
 	void SetPasswordVisible(bool bInPasswordVisible);
 	int32 GetClampedMaxPlayers() const;
@@ -109,9 +114,12 @@ private:
 
 	IOnlineSessionPtr ActiveSessionInterface;
 	FDelegateHandle CreateSessionCompleteHandle;
+	FDelegateHandle StartSessionCompleteHandle;
 	FDelegateHandle DestroySessionCompleteHandle;
 	FOnlineSessionSettings PendingSessionSettings;
+	TSharedPtr<const FUniqueNetId> PendingHostUserId;
 	bool bCreateSessionInFlight = false;
+	bool bSteamSessionRequired = false;
 	bool bPrivateMode = false;
 	bool bPasswordVisible = false;
 };

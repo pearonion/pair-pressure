@@ -1,6 +1,7 @@
 #include "VNHLobbyMenuWidget.h"
 
 #include "AdvancedSteamFriendsLibrary.h"
+#include "Blueprint/WidgetLayoutLibrary.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/BorderSlot.h"
@@ -8,6 +9,7 @@
 #include "Components/ButtonSlot.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
+#include "Components/CircularThrobber.h"
 #include "Components/EditableTextBox.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
@@ -285,6 +287,7 @@ void UVNHLobbyMenuWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 	UpdateResponsiveLayout(MyGeometry);
+	UpdateLobbyStartPrompt();
 	RefreshAccumulator += InDeltaTime;
 	if (RefreshAccumulator >= 0.35f)
 	{
@@ -357,8 +360,9 @@ void UVNHLobbyMenuWidget::BuildLobbyHud()
 	UVerticalBox* HeaderStack = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("LobbyNameStack"));
 	TopLeft->SetContent(HeaderStack);
 	HeaderStack->AddChildToVerticalBox(Text(HeaderStack, TEXT("HOST LOBBY"), 31, Accent));
-	HeaderStack->AddChildToVerticalBox(Text(HeaderStack, TEXT("You can start the match anytime."), 17, White));
+	HeaderStack->AddChildToVerticalBox(Text(HeaderStack, TEXT("Start from the console when ready."), 17, White));
 	LobbyNameText = Cast<UTextBlock>(HeaderStack->GetChildAt(0));
+	LobbySubtitleText = Cast<UTextBlock>(HeaderStack->GetChildAt(1));
 
 	UBorder* TopRight = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("LobbyStatsPanel"));
 	TopRight->SetBrushColor(PanelStrong);
@@ -397,6 +401,27 @@ void UVNHLobbyMenuWidget::BuildLobbyHud()
 		ActionButtonSlot->SetSize(FillSize());
 		Button->SetVisibility(ESlateVisibility::Visible);
 	}
+
+	UBorder* StartPromptPanel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("LobbyStartPromptPanel"));
+	StartPromptPanel->SetBrushColor(FLinearColor(0.005f, 0.035f, 0.04f, 0.92f));
+	StartPromptPanel->SetVisibility(ESlateVisibility::Collapsed);
+	LobbyStartPromptSlot = AddCanvas(Root, StartPromptPanel, FAnchors(0.0f, 0.0f, 0.0f, 0.0f), FMargin(0.0f, 0.0f, 440.0f, 72.0f), FVector2D::ZeroVector, 30);
+	LobbyStartPromptPanel = StartPromptPanel;
+
+	UHorizontalBox* StartPromptRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("LobbyStartPromptRow"));
+	StartPromptPanel->SetContent(StartPromptRow);
+	LobbyStartProgressCircle = WidgetTree->ConstructWidget<UCircularThrobber>(UCircularThrobber::StaticClass(), TEXT("LobbyStartProgressCircle"));
+	LobbyStartProgressCircle->SetNumberOfPieces(18);
+	LobbyStartProgressCircle->SetRadius(19.0f);
+	LobbyStartProgressCircle->SetPeriod(0.85f);
+	UHorizontalBoxSlot* CircleSlot = StartPromptRow->AddChildToHorizontalBox(LobbyStartProgressCircle.Get());
+	CircleSlot->SetPadding(FMargin(18.0f, 0.0f, 14.0f, 0.0f));
+	CircleSlot->SetVerticalAlignment(VAlign_Center);
+	UVerticalBox* StartPromptTextStack = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("LobbyStartPromptTextStack"));
+	StartPromptTextStack->AddChildToVerticalBox(Text(StartPromptTextStack, TEXT("START GAME"), 24, Accent));
+	LobbyStartPromptText = Text(StartPromptTextStack, TEXT("HOLD E  0%"), 18, White);
+	StartPromptTextStack->AddChildToVerticalBox(LobbyStartPromptText.Get());
+	StartPromptRow->AddChildToHorizontalBox(StartPromptTextStack)->SetVerticalAlignment(VAlign_Center);
 
 	BuildInviteDialog();
 	UE_LOG(LogVNH, Display, TEXT("LobbyMenuWidget: HUD tree built."));
@@ -473,6 +498,15 @@ void UVNHLobbyMenuWidget::UpdateResponsiveLayout(const FGeometry& MyGeometry)
 		CachedActionSize = FVector2D(ButtonRowWidth, 54.0f);
 	}
 
+	if (UCanvasPanelSlot* PromptSlot = LobbyStartPromptSlot.Get())
+	{
+		const FVector2D PromptSize(360.0f, 74.0f);
+		PromptSlot->SetAnchors(FAnchors(0.0f, 0.0f, 0.0f, 0.0f));
+		PromptSlot->SetAlignment(FVector2D::ZeroVector);
+		PromptSlot->SetPosition(FVector2D((UsableSize.X - PromptSize.X) * 0.5f, FMath::Max(0.0f, UsableSize.Y - 176.0f)));
+		PromptSlot->SetSize(PromptSize);
+	}
+
 	if (UCanvasPanelSlot* DialogSlot = InviteDialogSlot.Get())
 	{
 		const FVector2D DialogSize(FMath::Clamp(UsableSize.X - 48.0f, 520.0f, 960.0f), FMath::Clamp(UsableSize.Y - 64.0f, 420.0f, 600.0f));
@@ -483,15 +517,70 @@ void UVNHLobbyMenuWidget::UpdateResponsiveLayout(const FGeometry& MyGeometry)
 	}
 }
 
+void UVNHLobbyMenuWidget::UpdateLobbyStartPrompt()
+{
+	AVNHPlayerController* VNHPlayerController = Cast<AVNHPlayerController>(GetOwningPlayer());
+	const bool bShowPrompt = VNHPlayerController && VNHPlayerController->IsLobbyStartFocused();
+	if (UBorder* PromptPanel = LobbyStartPromptPanel.Get())
+	{
+		PromptPanel->SetVisibility(bShowPrompt ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+
+	if (!bShowPrompt)
+	{
+		return;
+	}
+
+	if (UCanvasPanelSlot* PromptSlot = LobbyStartPromptSlot.Get())
+	{
+		FVector2D ScreenPosition = FVector2D::ZeroVector;
+		if (VNHPlayerController->GetLobbyStartPromptScreenPosition(ScreenPosition))
+		{
+			const float ViewportScale = FMath::Max(UWidgetLayoutLibrary::GetViewportScale(this), 0.01f);
+			ScreenPosition /= ViewportScale;
+
+			int32 ViewportX = 0;
+			int32 ViewportY = 0;
+			VNHPlayerController->GetViewportSize(ViewportX, ViewportY);
+			const FVector2D ViewportSize(ViewportX / ViewportScale, ViewportY / ViewportScale);
+			const FVector2D PromptSize(360.0f, 74.0f);
+			const FVector2D DesiredPosition(ScreenPosition.X - (PromptSize.X * 0.5f), ScreenPosition.Y - PromptSize.Y - 22.0f);
+			PromptSlot->SetPosition(FVector2D(
+				FMath::Clamp(DesiredPosition.X, 18.0f, FMath::Max(18.0f, ViewportSize.X - PromptSize.X - 18.0f)),
+				FMath::Clamp(DesiredPosition.Y, 18.0f, FMath::Max(18.0f, ViewportSize.Y - PromptSize.Y - 18.0f))));
+			PromptSlot->SetSize(PromptSize);
+		}
+	}
+
+	const float Progress = VNHPlayerController->GetLobbyStartHoldProgress();
+	if (UTextBlock* PromptText = LobbyStartPromptText.Get())
+	{
+		PromptText->SetText(FText::FromString(FString::Printf(TEXT("HOLD E  %.0f%%"), Progress * 100.0f)));
+	}
+	if (UCircularThrobber* ProgressCircle = LobbyStartProgressCircle.Get())
+	{
+		ProgressCircle->SetPeriod(FMath::Lerp(0.85f, 0.18f, Progress));
+		ProgressCircle->SetRenderOpacity(FMath::Lerp(0.45f, 1.0f, Progress));
+	}
+}
+
 void UVNHLobbyMenuWidget::RefreshLobbyLabels()
 {
 	const UWorld* World = GetWorld();
 	const FString UrlOptions = World ? World->URL.ToString() : FString();
 	const FString ServerName = UGameplayStatics::ParseOption(UrlOptions, TEXT("ServerName"));
-	const FString LobbyName = ServerName.IsEmpty() ? TEXT("HOST LOBBY") : ServerName.ToUpper();
+	const AVNHPlayerController* VNHPlayerController = Cast<AVNHPlayerController>(GetOwningPlayer());
+	const bool bIsHost = VNHPlayerController && VNHPlayerController->IsLocalLobbyHost();
+	const FString LobbyName = ServerName.IsEmpty() ? (bIsHost ? TEXT("HOST LOBBY") : TEXT("JOINED LOBBY")) : ServerName.ToUpper();
 	if (UTextBlock* TextBlock = LobbyNameText.Get())
 	{
 		TextBlock->SetText(FText::FromString(LobbyName));
+	}
+	if (UTextBlock* TextBlock = LobbySubtitleText.Get())
+	{
+		TextBlock->SetText(bIsHost
+			? NSLOCTEXT("VNH", "LobbyHostStartSubtitle", "Start from the console when ready.")
+			: NSLOCTEXT("VNH", "LobbyClientStartSubtitle", "Waiting for the host to start from the console."));
 	}
 
 	CachedMaxPlayers = DefaultLobbyMaxPlayers;
@@ -703,11 +792,11 @@ void UVNHLobbyMenuWidget::SetInviteDialogVisible(bool bVisible)
 	}
 }
 
-void UVNHLobbyMenuWidget::SetStatus(const FText& StatusText)
+void UVNHLobbyMenuWidget::SetStatus(const FText& NewStatusText)
 {
 	if (UTextBlock* TextBlock = InviteStatusText.Get())
 	{
-		TextBlock->SetText(StatusText);
+		TextBlock->SetText(NewStatusText);
 	}
 }
 

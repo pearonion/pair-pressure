@@ -236,6 +236,28 @@ bool AVNHGameMode::StartRoundFromLobby(APlayerController* RequestingPlayer)
 		return false;
 	}
 
+	UWorld* World = GetWorld();
+	const FString MapName = World ? World->GetMapName() : FString();
+	if (MapName.Contains(TEXT("Lobby")))
+	{
+		const APawn* RequestingPawn = RequestingPlayer ? RequestingPlayer->GetPawn() : nullptr;
+		bool bNearStartButton = false;
+		for (TActorIterator<AVNHLobbyPlayButton> It(World); It; ++It)
+		{
+			if (It->IsPawnWithinInteractionRange(RequestingPawn))
+			{
+				bNearStartButton = true;
+				break;
+			}
+		}
+
+		if (!bNearStartButton)
+		{
+			UE_LOG(LogVNH, Warning, TEXT("LobbyStart: rejected host start request because the host is not near the start console."));
+			return false;
+		}
+	}
+
 	if (CountConnectedPlayers() < RequiredPlayers)
 	{
 		if (CountConnectedPlayers() <= 0)
@@ -247,9 +269,8 @@ bool AVNHGameMode::StartRoundFromLobby(APlayerController* RequestingPlayer)
 		UE_LOG(LogVNH, Display, TEXT("LobbyStart: continuing with %d/%d players for local test flow."), CountConnectedPlayers(), RequiredPlayers);
 	}
 
-	if (UWorld* World = GetWorld())
+	if (World)
 	{
-		const FString MapName = World->GetMapName();
 		if (MapName.Contains(TEXT("MVP_ClothingStore")))
 		{
 			TryStartRound();
@@ -393,15 +414,20 @@ void AVNHGameMode::DebugStartRound()
 
 	if (CountConnectedPlayers() < RequiredPlayers)
 	{
+		int32 AssignedIndex = 0;
 		for (APlayerState* PlayerState : GameState->PlayerArray)
 		{
 			if (AVNHPlayerState* VNHPlayerState = Cast<AVNHPlayerState>(PlayerState))
 			{
-				VNHPlayerState->SetRole(EVNHPlayerRole::Alien);
-				UE_LOG(LogVNH, Display, TEXT("vnh.StartRound: forced single connected player to Alien for debug testing."));
-				break;
+				const EVNHPlayerRole ForcedRole = AssignedIndex == 0
+					? EVNHPlayerRole::Alien
+					: EVNHPlayerRole::Hunter;
+				VNHPlayerState->SetRole(ForcedRole);
+				VNHPlayerState->SetLightErrandText(ForcedRole == EVNHPlayerRole::Hunter ? FText::GetEmpty() : GetVNHLightErrand(AssignedIndex));
+				++AssignedIndex;
 			}
 		}
+		UE_LOG(LogVNH, Display, TEXT("vnh.StartRound: assigned debug roles for %d connected player(s)."), AssignedIndex);
 	}
 	else
 	{

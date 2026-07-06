@@ -32,10 +32,8 @@ public class VNHSimulator : ModuleRules
 			PrivateDependencyModuleNames.Add("UnrealEd");
 		}
 
-		if (Target.Configuration != UnrealTargetConfiguration.Shipping)
-		{
-			RuntimeDependencies.Add("$(TargetOutputDir)/steam_appid.txt", "$(ProjectDir)/steam_appid.txt", StagedFileType.NonUFS);
-		}
+		// Required for local packaged Steam testing with AppID 480 when the executable is launched outside Steam.
+		RuntimeDependencies.Add("$(TargetOutputDir)/steam_appid.txt", "$(ProjectDir)/steam_appid.txt", StagedFileType.NonUFS);
 
 		// Uncomment if you are using Slate UI
 		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

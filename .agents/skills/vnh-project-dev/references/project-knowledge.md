@@ -1,6 +1,6 @@
 # VNHSimulator Project Knowledge
 
-Last updated: 2026-07-01.
+Last updated: 2026-07-05.
 
 ## Project Shape
 
@@ -92,8 +92,8 @@ When DataTable rows exist, the runtime prepends a synthetic `None` option for ev
 Default body mesh currently points at:
 - `/Game/Creative_Characters/Skeleton_Meshes/SK_Body_009.SK_Body_009`
 
-Creative animation class currently referenced:
-- `/Game/Creative_Characters/Animations/ABP_CreativeCharacter.ABP_CreativeCharacter_C`
+Creative animation class:
+- `/Game/Creative_Characters/Animations/ABP_CreativeCharacter.ABP_CreativeCharacter_C` is missing and should not be hard-loaded. Runtime code falls back to compatible single-node idle/preview animations instead.
 
 ## Creative_Characters Mesh Taxonomy
 
@@ -157,6 +157,18 @@ Composure HUD:
 - Important button: `CustomizeButton`
 - Should not appear on main menu and should not enable customization during active round phases.
 
+Lobby HUD:
+- Runtime lobby overlay is native `UVNHLobbyMenuWidget`, spawned by `AVNHPlayerController::ShowLobbyMenu` on `/Game/Maps/Lobby`.
+- The old `/Game/UI/WBP_LobbyMenu` placeholder is no longer the active lobby overlay path.
+- The lobby overlay owns the host/player HUD labels, player list, ping bars, customize action, and Steam friends invite dialog.
+
+Settings dialog:
+- Asset: `/Game/UI/WBP_SettingsDialog`
+- Parent class: `VNHSettingsDialogWidget`
+- Existing Blueprint save/load path uses `/Game/UI/BP_SettingsSaveGame` and slot name `PlayerSettings`.
+- `VNHSettingsDialogWidget` mirrors settings into the same `PlayerSettings` SaveGame and applies master/music/SFX audio, brightness gamma, and mute-when-unfocused at runtime. Master volume is applied as a multiplier into the effective Music/SFX SoundClass overrides; the transient primary audio device volume is reserved for focus mute.
+- Accessibility tab, Hold to Act Natural, and Act Natural controls are intentionally hidden. Controls list includes Jump `SPACEBAR` and Crouch `CTRL`.
+
 ## Debug/Test Deck
 
 - Test deck/debug panel is owned by `VNHDebugHUD`.
@@ -167,6 +179,13 @@ Composure HUD:
 ## Known Pitfalls
 
 - Do not run `Build.bat` while the editor is open unless specifically instructed.
+- Steam hosting uses the native `UVNHCreateServerWidget` path. It creates and starts a Steam lobby session named `GameSession` with the resolved local Steam user id before traveling to `Lobby`; retries must clear any existing named session first. Packaged builds stage `steam_appid.txt` in all configs for local AppID 480 Steam tests launched outside Steam.
+- Server-browser Steam searches must resolve the local Steam unique net id, use UE's real `SEARCH_LOBBIES` key from `Online/OnlineSessionNames.h`, then filter locally by the advertised `VNH_GAME_ID=VNHSimulator` tag. Do not send `VNH_GAME_ID` as a backend query under AppID 480; it can hide valid lobbies.
+- If no online subsystem is available, `UVNHCreateServerWidget` may fall back to opening `/Game/Maps/Lobby` as a local listen lobby. If Steam is active and Steam session creation fails, do not local-fallback; show the Steam failure so packaged-game hosting problems are visible.
+- As of 2026-07-05, create-server travel uses `/Game/Maps/Lobby` and URL-encoded `ServerName`/`Password` options. Private passwords are not advertised in Steam search metadata; clients enter the password in `UVNHServerBrowserWidget`, which appends it to client travel, and `AVNHGameMode::PreLogin` rejects incorrect private-game passwords.
+- Created-game round length is carried by the `RoundSeconds` travel/session setting from `UVNHCreateServerWidget` and applied to `FVNHPhaseTiming::InvestigationSeconds` in `AVNHGameMode::InitGame`. Supported UI values are 2, 3, and 5 minutes, defaulting to 2 minutes.
+- `/Game/UI/WBP_VNHMainMenu` is currently a plain `UserWidget` owned through the Blueprint main-menu bootstrap/player-controller/HUD path, not `UVNHMainMenuWidget`. Host Private and Host Public both open `/Game/UI/WBP_CreateServerDialog`; Quit/Clock Out is wired in that widget graph to `QuitGame`.
+- Lobby round start is handled by the runtime `AVNHLobbyPlayButton` spawned from `AVNHGameMode::EnsureLobbyRuntimeActors`. Only the host can start; the host must stand near the static-mesh start console, hover it, and hold E. Solo/two-player starts are intentionally allowed for testing through `StartRoundFromLobby`/`DebugStartRound`.
 - Prefer user Live Compile for C++ changes.
 - Avoid automated PIE unless explicitly requested; previous sessions saw PIE cleanup crashes referencing stale `VNHGameInstance` through `TransBuffer`.
 - Widget button names that match C++ `UPROPERTY` fields should generally not be set as designer variables unless required; duplicate UPROPERTY/widget variable names can cause compile problems.

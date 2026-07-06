@@ -67,6 +67,17 @@ public:
 
 	FString GetMarkedSuspectsPanelText() const;
 
+	UFUNCTION(BlueprintPure, Category = "VNH|Lobby")
+	bool IsLocalLobbyHost() const;
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Lobby")
+	bool IsLobbyStartFocused() const { return FocusedLobbyPlayButton.IsValid(); }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Lobby")
+	float GetLobbyStartHoldProgress() const;
+
+	bool GetLobbyStartPromptScreenPosition(FVector2D& OutScreenPosition) const;
+
 	UFUNCTION(BlueprintPure, Category = "VNH|Interaction")
 	bool IsAssignedHunter() const;
 
@@ -243,6 +254,7 @@ private:
 	void ToggleDebugHud();
 	void ApplyDebugHudInputMode(bool bDebugHudVisible);
 	void ShowLobbyMenu();
+	void RemoveLobbyMenu();
 	void EnsureTargetOutlinePostProcess();
 	void EnsureRoleHudWidget();
 	void EnsureMarkedSuspectsWidget();

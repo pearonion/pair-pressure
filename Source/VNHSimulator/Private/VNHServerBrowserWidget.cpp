@@ -17,8 +17,11 @@
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "Engine/LocalPlayer.h"
 #include "Engine/Font.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerState.h"
+#include "Online/OnlineSessionNames.h"
 #include "OnlineSessionSettings.h"
 #include "OnlineSubsystem.h"
 #include "OnlineSubsystemUtils.h"
@@ -33,7 +36,6 @@ const FName BrowserSessionKeyMaxPlayers(TEXT("MAX_PLAYERS"));
 const FName BrowserSessionKeyRegion(TEXT("REGION"));
 const FName BrowserSessionKeyMapName(TEXT("MAP_NAME"));
 const FName BrowserSessionKeyGameId(TEXT("VNH_GAME_ID"));
-const FName BrowserSearchKeyLobbies(TEXT("SEARCH_LOBBIES"));
 
 const FString DefaultMapName(TEXT("MVP_Clothing Store"));
 const FString DefaultRegion(TEXT("USEAST"));
@@ -70,7 +72,7 @@ bool GetSessionBool(const FOnlineSessionSearchResult& Result, const FName Key, c
 	return Value;
 }
 
-FString EncodeTravelOption(const FString& Value)
+FString EncodeBrowserTravelOption(const FString& Value)
 {
 	FString Encoded = Value;
 	Encoded.ReplaceInline(TEXT("%"), TEXT("%25"));
@@ -86,6 +88,34 @@ int32 GetSessionInt(const FOnlineSessionSearchResult& Result, const FName Key, c
 	int32 Value = Fallback;
 	Result.Session.SessionSettings.Get(Key, Value);
 	return Value;
+}
+
+TSharedPtr<const FUniqueNetId> ResolveBrowserUserId(const APlayerController* PlayerController)
+{
+	if (!PlayerController)
+	{
+		return nullptr;
+	}
+
+	if (const APlayerState* BrowserPlayerState = PlayerController->PlayerState)
+	{
+		TSharedPtr<const FUniqueNetId> PlayerStateUserId = BrowserPlayerState->GetUniqueId().GetUniqueNetId();
+		if (PlayerStateUserId.IsValid())
+		{
+			return PlayerStateUserId;
+		}
+	}
+
+	if (const ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer())
+	{
+		const FUniqueNetIdRepl LocalUserId = LocalPlayer->GetPreferredUniqueNetId();
+		if (LocalUserId.IsValid())
+		{
+			return LocalUserId.GetUniqueNetId();
+		}
+	}
+
+	return nullptr;
 }
 
 UFont* GetServerBrowserFont()
@@ -652,16 +682,25 @@ void UVNHServerBrowserWidget::RefreshServerList()
 	}
 
 	ActiveSearch = MakeShared<FOnlineSessionSearch>();
-	ActiveSearch->MaxSearchResults = 100;
+	ActiveSearch->MaxSearchResults = 500;
 	ActiveSearch->bIsLanQuery = false;
-	ActiveSearch->QuerySettings.Set(BrowserSearchKeyLobbies, true, EOnlineComparisonOp::Equals);
-	ActiveSearch->QuerySettings.Set(BrowserSessionKeyGameId, BrowserSessionGameId, EOnlineComparisonOp::Equals);
+	ActiveSearch->QuerySettings.Set(SEARCH_LOBBIES, true, EOnlineComparisonOp::Equals);
+	const TSharedPtr<const FUniqueNetId> SearchUserId = ResolveBrowserUserId(GetOwningPlayer());
+	if (!SearchUserId.IsValid())
+	{
+		AllEntries.Reset();
+		PopulateExampleServers();
+		RebuildVisibleEntries();
+		SetStatus(NSLOCTEXT("VNH", "ServerBrowserNoSteamUserId", "Steam is active, but no Steam user id is available. Restart Steam and launch the packaged game again."));
+		UE_LOG(LogVNH, Warning, TEXT("ServerBrowser: Steam search skipped because no local unique net id was available."));
+		return;
+	}
 
 	FindSessionsCompleteHandle = ActiveSessionInterface->AddOnFindSessionsCompleteDelegate_Handle(
 		FOnFindSessionsCompleteDelegate::CreateUObject(this, &UVNHServerBrowserWidget::HandleFindSessionsComplete));
 
 	SetStatus(NSLOCTEXT("VNH", "ServerBrowserRefreshing", "Refreshing Steam server list..."));
-	if (!ActiveSessionInterface->FindSessions(0, ActiveSearch.ToSharedRef()))
+	if (!ActiveSessionInterface->FindSessions(*SearchUserId, ActiveSearch.ToSharedRef()))
 	{
 		ActiveSessionInterface->ClearOnFindSessionsCompleteDelegate_Handle(FindSessionsCompleteHandle);
 		AllEntries.Reset();
@@ -679,27 +718,40 @@ void UVNHServerBrowserWidget::HandleFindSessionsComplete(const bool bWasSuccessf
 	}
 
 	AllEntries.Reset();
+	int32 SteamLobbyResultCount = 0;
+	int32 VNHSteamLobbyCount = 0;
 	if (bWasSuccessful && ActiveSearch.IsValid())
 	{
+		SteamLobbyResultCount = ActiveSearch->SearchResults.Num();
 		for (const FOnlineSessionSearchResult& Result : ActiveSearch->SearchResults)
 		{
+			const FString GameId = GetSessionString(Result, BrowserSessionKeyGameId, FString());
+			if (!GameId.Equals(BrowserSessionGameId, ESearchCase::IgnoreCase))
+			{
+				continue;
+			}
+			++VNHSteamLobbyCount;
+
 			const int32 AdvertisedMaxPlayers = GetSessionInt(Result, BrowserSessionKeyMaxPlayers, Result.Session.SessionSettings.NumPublicConnections);
 			const int32 OpenSlots = FMath::Clamp(Result.Session.NumOpenPublicConnections, 0, AdvertisedMaxPlayers);
+			FOnlineSessionSearchResult LobbyResult = Result;
+			LobbyResult.Session.SessionSettings.bUseLobbiesIfAvailable = true;
+			LobbyResult.Session.SessionSettings.bUsesPresence = true;
 
 			FVNHServerBrowserEntry Entry;
-			Entry.ServerName = GetSessionString(Result, BrowserSessionKeyServerName, Result.Session.OwningUserName);
+			Entry.ServerName = GetSessionString(LobbyResult, BrowserSessionKeyServerName, LobbyResult.Session.OwningUserName);
 			if (Entry.ServerName.IsEmpty())
 			{
-				Entry.ServerName = Result.GetSessionIdStr();
+				Entry.ServerName = LobbyResult.GetSessionIdStr();
 			}
-			Entry.MapName = GetSessionString(Result, BrowserSessionKeyMapName, DefaultMapName);
-			Entry.Region = GetSessionString(Result, BrowserSessionKeyRegion, DefaultRegion).ToUpper();
+			Entry.MapName = GetSessionString(LobbyResult, BrowserSessionKeyMapName, DefaultMapName);
+			Entry.Region = GetSessionString(LobbyResult, BrowserSessionKeyRegion, DefaultRegion).ToUpper();
 			Entry.MaxPlayers = FMath::Max(AdvertisedMaxPlayers, 1);
 			Entry.OpenSlots = OpenSlots;
 			Entry.CurrentPlayers = FMath::Clamp(Entry.MaxPlayers - OpenSlots, 0, Entry.MaxPlayers);
-			Entry.Ping = Result.PingInMs >= 0 ? Result.PingInMs : 999;
-			Entry.bPrivate = GetSessionBool(Result, BrowserSessionKeyIsPrivate, false);
-			Entry.SearchResult = Result;
+			Entry.Ping = LobbyResult.PingInMs >= 0 ? LobbyResult.PingInMs : 999;
+			Entry.bPrivate = GetSessionBool(LobbyResult, BrowserSessionKeyIsPrivate, false);
+			Entry.SearchResult = LobbyResult;
 			AllEntries.Add(MoveTemp(Entry));
 		}
 	}
@@ -712,8 +764,12 @@ void UVNHServerBrowserWidget::HandleFindSessionsComplete(const bool bWasSuccessf
 	RebuildVisibleEntries();
 	const bool bShowingExamples = AllEntries.ContainsByPredicate([](const FVNHServerBrowserEntry& Entry) { return Entry.bExample; });
 	SetStatus(bShowingExamples
-		? NSLOCTEXT("VNH", "ServerBrowserExamples", "No Steam servers found. Showing example servers.")
+		? FText::FromString(FString::Printf(TEXT("No VNH Steam lobbies found (%d Steam lobby result%s scanned). Showing example servers."), SteamLobbyResultCount, SteamLobbyResultCount == 1 ? TEXT("") : TEXT("s")))
 		: FText::FromString(FString::Printf(TEXT("Found %d Steam server%s."), VisibleEntries.Num(), VisibleEntries.Num() == 1 ? TEXT("") : TEXT("s"))));
+	UE_LOG(LogVNH, Display, TEXT("ServerBrowser: Steam search success=%s, raw lobby results=%d, VNH lobby results=%d."),
+		bWasSuccessful ? TEXT("true") : TEXT("false"),
+		SteamLobbyResultCount,
+		VNHSteamLobbyCount);
 }
 
 void UVNHServerBrowserWidget::HandleJoinSessionComplete(FName SessionName, EOnJoinSessionCompleteResult::Type Result)
@@ -743,7 +799,7 @@ void UVNHServerBrowserWidget::HandleJoinSessionComplete(FName SessionName, EOnJo
 			const FString Password = AcceptedPrivateJoinPassword;
 			if (!Password.IsEmpty())
 			{
-				ConnectString += FString::Printf(TEXT("?Password=%s"), *EncodeTravelOption(Password));
+				ConnectString += FString::Printf(TEXT("?Password=%s"), *EncodeBrowserTravelOption(Password));
 			}
 		}
 		AcceptedPrivateJoinPassword.Reset();

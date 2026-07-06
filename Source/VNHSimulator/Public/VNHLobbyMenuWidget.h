@@ -9,6 +9,7 @@
 
 class UBorder;
 class UCanvasPanelSlot;
+class UCircularThrobber;
 class UEditableTextBox;
 class UHorizontalBox;
 class UImage;
@@ -67,13 +68,14 @@ private:
 	void BuildLobbyHud();
 	void BuildInviteDialog();
 	void UpdateResponsiveLayout(const FGeometry& MyGeometry);
+	void UpdateLobbyStartPrompt();
 	void RefreshLobbyLabels();
 	void RefreshPlayers();
 	void RequestFriendsList();
 	void HandleReadFriendsListComplete(int32 LocalUserNum, bool bWasSuccessful, const FString& ListName, const FString& ErrorString);
 	void RebuildFriendsList();
 	void SetInviteDialogVisible(bool bVisible);
-	void SetStatus(const FText& StatusText);
+	void SetStatus(const FText& NewStatusText);
 
 	UFUNCTION()
 	void HandleInviteClicked();
@@ -88,12 +90,17 @@ private:
 	void HandleSearchChanged(const FText& Text);
 
 	TWeakObjectPtr<UTextBlock> LobbyNameText;
+	TWeakObjectPtr<UTextBlock> LobbySubtitleText;
 	TWeakObjectPtr<UTextBlock> PlayerCountText;
 	TWeakObjectPtr<UTextBlock> PingText;
+	TWeakObjectPtr<UBorder> LobbyStartPromptPanel;
+	TWeakObjectPtr<UTextBlock> LobbyStartPromptText;
+	TWeakObjectPtr<UCircularThrobber> LobbyStartProgressCircle;
 	TWeakObjectPtr<UHorizontalBox> PingBarsBox;
 	TWeakObjectPtr<UVerticalBox> PlayerRowsBox;
 	TWeakObjectPtr<UBorder> InviteDialog;
 	TWeakObjectPtr<UCanvasPanelSlot> ActionButtonsSlot;
+	TWeakObjectPtr<UCanvasPanelSlot> LobbyStartPromptSlot;
 	TWeakObjectPtr<UCanvasPanelSlot> InviteDialogSlot;
 	TWeakObjectPtr<UEditableTextBox> SearchTextBox;
 	TWeakObjectPtr<UScrollBox> FriendsScrollBox;

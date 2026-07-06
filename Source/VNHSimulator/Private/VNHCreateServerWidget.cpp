@@ -5,9 +5,12 @@
 #include "Components/ComboBoxString.h"
 #include "Components/EditableTextBox.h"
 #include "Components/TextBlock.h"
+#include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerState.h"
 #include "Interfaces/OnlineSessionInterface.h"
 #include "Kismet/GameplayStatics.h"
+#include "Online/OnlineSessionNames.h"
 #include "OnlineSessionSettings.h"
 #include "OnlineSubsystem.h"
 #include "OnlineSubsystemUtils.h"
@@ -30,7 +33,7 @@ const FName SessionKeyMapName(TEXT("MAP_NAME"));
 const FName SessionKeyGameId(TEXT("VNH_GAME_ID"));
 const FString SessionGameId(TEXT("VNHSimulator"));
 
-FString EncodeTravelOption(const FString& Value)
+FString EncodeCreateServerTravelOption(const FString& Value)
 {
 	FString Encoded = Value;
 	Encoded.ReplaceInline(TEXT("%"), TEXT("%25"));
@@ -167,14 +170,30 @@ void UVNHCreateServerWidget::HandleCreateGameClicked()
 	IOnlineSubsystem* OnlineSubsystem = Online::GetSubsystem(GetWorld());
 	if (!OnlineSubsystem)
 	{
-		SetStatus(NSLOCTEXT("VNH", "CreateServerNoSubsystem", "Steam online subsystem is not available."));
+		bSteamSessionRequired = false;
+		OpenListenLobbyFallback(NSLOCTEXT("VNH", "CreateServerLocalNoSubsystem", "Steam is unavailable. Opening a local listen lobby..."), TEXT("no online subsystem"));
 		return;
 	}
 
+	bSteamSessionRequired = OnlineSubsystem->GetSubsystemName().ToString().Equals(TEXT("STEAM"), ESearchCase::IgnoreCase);
 	ActiveSessionInterface = OnlineSubsystem->GetSessionInterface();
 	if (!ActiveSessionInterface.IsValid())
 	{
-		SetStatus(NSLOCTEXT("VNH", "CreateServerNoSessions", "Steam sessions are not available."));
+		if (bSteamSessionRequired)
+		{
+			AbortSteamSessionCreate(NSLOCTEXT("VNH", "CreateServerSteamNoSessions", "Steam sessions are unavailable. Game was not hosted."), TEXT("no session interface"));
+		}
+		else
+		{
+			OpenListenLobbyFallback(NSLOCTEXT("VNH", "CreateServerLocalNoSessions", "Steam sessions are unavailable. Opening a local listen lobby..."), TEXT("no session interface"));
+		}
+		return;
+	}
+
+	PendingHostUserId = ResolveHostUserId();
+	if (bSteamSessionRequired && !PendingHostUserId.IsValid())
+	{
+		AbortSteamSessionCreate(NSLOCTEXT("VNH", "CreateServerNoSteamUserId", "Steam is active, but no Steam user id is available. Restart Steam and launch the packaged game again."), TEXT("no local Steam unique net id"));
 		return;
 	}
 
@@ -199,6 +218,7 @@ void UVNHCreateServerWidget::HandleCreateGameClicked()
 	SessionSettings.Set(SessionKeyRegion, FString(TEXT("USEAST")), EOnlineDataAdvertisementType::ViaOnlineService);
 	SessionSettings.Set(SessionKeyMapName, LobbyMapName.ToString(), EOnlineDataAdvertisementType::ViaOnlineService);
 	SessionSettings.Set(SessionKeyGameId, SessionGameId, EOnlineDataAdvertisementType::ViaOnlineService);
+	SessionSettings.Set(SETTING_MAPNAME, LobbyMapName.ToString(), EOnlineDataAdvertisementType::ViaOnlineService);
 
 	bCreateSessionInFlight = true;
 	if (ActiveSessionInterface->GetNamedSession(NAME_GameSession))
@@ -210,9 +230,15 @@ void UVNHCreateServerWidget::HandleCreateGameClicked()
 		SetStatus(NSLOCTEXT("VNH", "CreateServerClearingOldSession", "Clearing previous Steam session..."));
 		if (!ActiveSessionInterface->DestroySession(NAME_GameSession))
 		{
-			bCreateSessionInFlight = false;
 			ActiveSessionInterface->ClearOnDestroySessionCompleteDelegate_Handle(DestroySessionCompleteHandle);
-			SetStatus(NSLOCTEXT("VNH", "CreateServerDestroyFailed", "Could not clear the previous Steam session."));
+			if (bSteamSessionRequired)
+			{
+				AbortSteamSessionCreate(NSLOCTEXT("VNH", "CreateServerSteamDestroyFailed", "Could not clear the previous Steam session. Game was not hosted."), TEXT("destroy session request failed"));
+			}
+			else
+			{
+				OpenListenLobbyFallback(NSLOCTEXT("VNH", "CreateServerLocalDestroyFailed", "Could not clear the old Steam session. Opening a local listen lobby..."), TEXT("destroy session request failed"));
+			}
 		}
 		return;
 	}
@@ -227,7 +253,6 @@ void UVNHCreateServerWidget::HandleCancelClicked()
 
 void UVNHCreateServerWidget::HandleSessionCreated(FName SessionName, bool bWasSuccessful)
 {
-	bCreateSessionInFlight = false;
 	if (ActiveSessionInterface.IsValid())
 	{
 		ActiveSessionInterface->ClearOnCreateSessionCompleteDelegate_Handle(CreateSessionCompleteHandle);
@@ -235,14 +260,48 @@ void UVNHCreateServerWidget::HandleSessionCreated(FName SessionName, bool bWasSu
 
 	if (!bWasSuccessful)
 	{
-		SetStatus(NSLOCTEXT("VNH", "CreateServerFailed", "Steam session creation failed. Check Steam is running and AppID 480 is active."));
+		if (bSteamSessionRequired)
+		{
+			AbortSteamSessionCreate(NSLOCTEXT("VNH", "CreateServerSteamCreateFailed", "Steam session creation failed. Game was not hosted."), TEXT("create session completed unsuccessfully"));
+		}
+		else
+		{
+			OpenListenLobbyFallback(NSLOCTEXT("VNH", "CreateServerLocalCreateFailed", "Steam session creation failed. Opening a local listen lobby..."), TEXT("create session completed unsuccessfully"));
+		}
 		return;
 	}
 
-	const FString TravelOptions = FString::Printf(TEXT("listen%s"), *BuildTravelOptions());
-	SetStatus(NSLOCTEXT("VNH", "CreateServerOpeningLobby", "Session created. Opening lobby..."));
-	UGameplayStatics::OpenLevel(this, LobbyMapName, true, TravelOptions);
-	UE_LOG(LogVNH, Display, TEXT("CreateServer: created Advanced Steam session and opening %s?%s."), *LobbyMapName.ToString(), *TravelOptions);
+	if (ActiveSessionInterface.IsValid())
+	{
+		StartSessionCompleteHandle = ActiveSessionInterface->AddOnStartSessionCompleteDelegate_Handle(
+			FOnStartSessionCompleteDelegate::CreateUObject(this, &UVNHCreateServerWidget::HandleSessionStarted));
+
+		SetStatus(NSLOCTEXT("VNH", "CreateServerStartingSession", "Steam session created. Starting session..."));
+		if (ActiveSessionInterface->StartSession(NAME_GameSession))
+		{
+			return;
+		}
+
+		ActiveSessionInterface->ClearOnStartSessionCompleteDelegate_Handle(StartSessionCompleteHandle);
+		UE_LOG(LogVNH, Warning, TEXT("CreateServer: StartSession request failed after creation; opening lobby because the Steam lobby exists."));
+	}
+
+	OpenLobbyAfterSessionReady();
+}
+
+void UVNHCreateServerWidget::HandleSessionStarted(FName SessionName, bool bWasSuccessful)
+{
+	if (ActiveSessionInterface.IsValid())
+	{
+		ActiveSessionInterface->ClearOnStartSessionCompleteDelegate_Handle(StartSessionCompleteHandle);
+	}
+
+	if (!bWasSuccessful)
+	{
+		UE_LOG(LogVNH, Warning, TEXT("CreateServer: StartSession completed unsuccessfully for %s; opening lobby because the Steam lobby exists."), *SessionName.ToString());
+	}
+
+	OpenLobbyAfterSessionReady();
 }
 
 void UVNHCreateServerWidget::HandleExistingSessionDestroyed(FName SessionName, bool bWasSuccessful)
@@ -254,8 +313,14 @@ void UVNHCreateServerWidget::HandleExistingSessionDestroyed(FName SessionName, b
 
 	if (!bWasSuccessful)
 	{
-		bCreateSessionInFlight = false;
-		SetStatus(NSLOCTEXT("VNH", "CreateServerDestroyCompleteFailed", "Could not clear the previous Steam session."));
+		if (bSteamSessionRequired)
+		{
+			AbortSteamSessionCreate(NSLOCTEXT("VNH", "CreateServerSteamDestroyCompleteFailed", "Could not clear the previous Steam session. Game was not hosted."), TEXT("destroy session completed unsuccessfully"));
+		}
+		else
+		{
+			OpenListenLobbyFallback(NSLOCTEXT("VNH", "CreateServerLocalDestroyCompleteFailed", "Could not clear the previous Steam session. Opening a local listen lobby..."), TEXT("destroy session completed unsuccessfully"));
+		}
 		return;
 	}
 
@@ -266,8 +331,14 @@ void UVNHCreateServerWidget::BeginCreateSession(const FOnlineSessionSettings& Se
 {
 	if (!ActiveSessionInterface.IsValid())
 	{
-		bCreateSessionInFlight = false;
-		SetStatus(NSLOCTEXT("VNH", "CreateServerNoSessionsAfterDestroy", "Steam sessions are not available."));
+		if (bSteamSessionRequired)
+		{
+			AbortSteamSessionCreate(NSLOCTEXT("VNH", "CreateServerSteamSessionsLost", "Steam session interface was lost. Game was not hosted."), TEXT("session interface lost"));
+		}
+		else
+		{
+			OpenListenLobbyFallback(NSLOCTEXT("VNH", "CreateServerLocalNoSessionsAfterDestroy", "Steam sessions are unavailable. Opening a local listen lobby..."), TEXT("session interface lost"));
+		}
 		return;
 	}
 
@@ -275,12 +346,85 @@ void UVNHCreateServerWidget::BeginCreateSession(const FOnlineSessionSettings& Se
 		FOnCreateSessionCompleteDelegate::CreateUObject(this, &UVNHCreateServerWidget::HandleSessionCreated));
 
 	SetStatus(NSLOCTEXT("VNH", "CreateServerCreating", "Creating Steam session..."));
-	if (!ActiveSessionInterface->CreateSession(0, NAME_GameSession, SessionSettings))
+	const bool bCreateStarted = PendingHostUserId.IsValid()
+		? ActiveSessionInterface->CreateSession(*PendingHostUserId, NAME_GameSession, SessionSettings)
+		: ActiveSessionInterface->CreateSession(0, NAME_GameSession, SessionSettings);
+	if (!bCreateStarted)
 	{
-		bCreateSessionInFlight = false;
 		ActiveSessionInterface->ClearOnCreateSessionCompleteDelegate_Handle(CreateSessionCompleteHandle);
-		SetStatus(NSLOCTEXT("VNH", "CreateServerStartFailed", "Could not start Steam session creation."));
+		if (bSteamSessionRequired)
+		{
+			AbortSteamSessionCreate(NSLOCTEXT("VNH", "CreateServerSteamStartFailed", "Could not start Steam session creation. Game was not hosted."), TEXT("create session request failed"));
+		}
+		else
+		{
+			OpenListenLobbyFallback(NSLOCTEXT("VNH", "CreateServerLocalStartFailed", "Could not start Steam session creation. Opening a local listen lobby..."), TEXT("create session request failed"));
+		}
 	}
+}
+
+void UVNHCreateServerWidget::OpenLobbyAfterSessionReady()
+{
+	bCreateSessionInFlight = false;
+	bSteamSessionRequired = false;
+	PendingHostUserId.Reset();
+	const FString TravelOptions = FString::Printf(TEXT("listen%s"), *BuildTravelOptions());
+	SetStatus(NSLOCTEXT("VNH", "CreateServerOpeningLobby", "Steam session ready. Opening lobby..."));
+	UGameplayStatics::OpenLevel(this, LobbyMapName, true, TravelOptions);
+	UE_LOG(LogVNH, Display, TEXT("CreateServer: created Advanced Steam session and opening %s?%s."), *LobbyMapName.ToString(), *TravelOptions);
+}
+
+void UVNHCreateServerWidget::OpenListenLobbyFallback(const FText& FallbackStatusText, const TCHAR* Reason)
+{
+	bCreateSessionInFlight = false;
+	bSteamSessionRequired = false;
+	PendingHostUserId.Reset();
+	SetStatus(FallbackStatusText);
+
+	const FString TravelOptions = FString::Printf(TEXT("listen%s"), *BuildTravelOptions());
+	UE_LOG(LogVNH, Warning, TEXT("CreateServer: falling back to local listen lobby because %s. Opening %s?%s."),
+		Reason ? Reason : TEXT("session setup was unavailable"),
+		*LobbyMapName.ToString(),
+		*TravelOptions);
+	UGameplayStatics::OpenLevel(this, LobbyMapName, true, TravelOptions);
+}
+
+void UVNHCreateServerWidget::AbortSteamSessionCreate(const FText& FailureStatusText, const TCHAR* Reason)
+{
+	bCreateSessionInFlight = false;
+	bSteamSessionRequired = false;
+	PendingHostUserId.Reset();
+	SetStatus(FailureStatusText);
+	UE_LOG(LogVNH, Error, TEXT("CreateServer: Steam session create aborted because %s."), Reason ? Reason : TEXT("session setup failed"));
+}
+
+TSharedPtr<const FUniqueNetId> UVNHCreateServerWidget::ResolveHostUserId() const
+{
+	const APlayerController* PlayerController = GetOwningPlayer();
+	if (!PlayerController)
+	{
+		return nullptr;
+	}
+
+	if (const APlayerState* HostPlayerState = PlayerController->PlayerState)
+	{
+		TSharedPtr<const FUniqueNetId> PlayerStateUserId = HostPlayerState->GetUniqueId().GetUniqueNetId();
+		if (PlayerStateUserId.IsValid())
+		{
+			return PlayerStateUserId;
+		}
+	}
+
+	if (const ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer())
+	{
+		const FUniqueNetIdRepl LocalUserId = LocalPlayer->GetPreferredUniqueNetId();
+		if (LocalUserId.IsValid())
+		{
+			return LocalUserId.GetUniqueNetId();
+		}
+	}
+
+	return nullptr;
 }
 
 void UVNHCreateServerWidget::SetPrivateMode(bool bInPrivateMode)
@@ -354,9 +498,9 @@ FString UVNHCreateServerWidget::BuildTravelOptions() const
 	return FString::Printf(
 		TEXT("?Public=%s?ServerName=%s?Private=%s?Password=%s?MaxPlayers=%d?RoundSeconds=%d"),
 		bPrivateMode ? TEXT("0") : TEXT("1"),
-		*EncodeTravelOption(ServerName.TrimStartAndEnd()),
+		*EncodeCreateServerTravelOption(ServerName.TrimStartAndEnd()),
 		bPrivateMode ? TEXT("1") : TEXT("0"),
-		bPrivateMode ? *EncodeTravelOption(Password) : TEXT(""),
+		bPrivateMode ? *EncodeCreateServerTravelOption(Password) : TEXT(""),
 		GetClampedMaxPlayers(),
 		GetSelectedRoundSeconds());
 }
