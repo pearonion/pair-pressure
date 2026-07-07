@@ -804,6 +804,7 @@ void UVNHServerBrowserWidget::HandleJoinSessionComplete(FName SessionName, EOnJo
 		}
 		AcceptedPrivateJoinPassword.Reset();
 		SetStatus(NSLOCTEXT("VNH", "ServerBrowserJoining", "Joining selected server..."));
+		RemoveFromParent();
 		PlayerController->ClientTravel(ConnectString, TRAVEL_Absolute);
 	}
 }

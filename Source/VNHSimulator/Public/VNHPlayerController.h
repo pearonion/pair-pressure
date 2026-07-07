@@ -253,6 +253,7 @@ private:
 	void HandleQuickChatFoundWrongSizePressed();
 	void ToggleDebugHud();
 	void ApplyDebugHudInputMode(bool bDebugHudVisible);
+	void RemoveBlockingMenuWidgets();
 	void ShowLobbyMenu();
 	void RemoveLobbyMenu();
 	void EnsureTargetOutlinePostProcess();

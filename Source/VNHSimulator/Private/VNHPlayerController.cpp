@@ -4,6 +4,7 @@
 #include "EnhancedInputSubsystems.h"
 #include "Animation/AnimMontage.h"
 #include "Blueprint/UserWidget.h"
+#include "Blueprint/WidgetLayoutLibrary.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Components/PostProcessComponent.h"
@@ -15,8 +16,6 @@
 #include "Components/VerticalBox.h"
 #include "Components/Widget.h"
 #include "Engine/DataTable.h"
-#include "Engine/Engine.h"
-#include "Engine/GameViewportClient.h"
 #include "GameFramework/SaveGame.h"
 #include "GameFramework/Character.h"
 #include "Engine/Scene.h"
@@ -31,6 +30,7 @@
 #include "VNHGameMode.h"
 #include "VNHGameState.h"
 #include "VNHAlienLocomotionComponent.h"
+#include "VNHCharacterCustomizerWidget.h"
 #include "VNHDebugHUD.h"
 #include "VNHGameInstance.h"
 #include "VNHLobbyPlayButton.h"
@@ -1735,6 +1735,60 @@ void AVNHPlayerController::ClientShowLobbyMenu_Implementation()
 	ShowLobbyMenu();
 }
 
+void AVNHPlayerController::RemoveBlockingMenuWidgets()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	int32 RemovedWidgetCount = 0;
+	TArray<UUserWidget*> TopLevelWidgets;
+	UWidgetBlueprintLibrary::GetAllWidgetsOfClass(this, TopLevelWidgets, UUserWidget::StaticClass(), true);
+	for (UUserWidget* ExistingWidget : TopLevelWidgets)
+	{
+		if (ExistingWidget && !ExistingWidget->IsA<UVNHLobbyMenuWidget>() && !ExistingWidget->IsA<UVNHCharacterCustomizerWidget>())
+		{
+			ExistingWidget->RemoveFromParent();
+			++RemovedWidgetCount;
+		}
+	}
+
+	const TCHAR* BlockingWidgetPaths[] =
+	{
+		TEXT("/Game/UI/WBP_CreateServerDialog.WBP_CreateServerDialog_C"),
+		TEXT("/Game/UI/WBP_ServerBrowser.WBP_ServerBrowser_C"),
+		TEXT("/Game/UI/WBP_VNHMainMenu.WBP_VNHMainMenu_C"),
+		TEXT("/Game/UI/WBP_MainMenuRuntime.WBP_MainMenuRuntime_C")
+	};
+
+	for (const TCHAR* WidgetPath : BlockingWidgetPaths)
+	{
+		UClass* WidgetClass = LoadClass<UUserWidget>(nullptr, WidgetPath);
+		if (!WidgetClass)
+		{
+			continue;
+		}
+
+		TArray<UUserWidget*> ExistingWidgets;
+		UWidgetBlueprintLibrary::GetAllWidgetsOfClass(this, ExistingWidgets, WidgetClass, false);
+		for (UUserWidget* ExistingWidget : ExistingWidgets)
+		{
+			if (ExistingWidget)
+			{
+				ExistingWidget->RemoveFromParent();
+				++RemovedWidgetCount;
+				UE_LOG(LogVNH, Display, TEXT("LobbyMenu: removed blocking menu widget %s before showing lobby HUD."), WidgetPath);
+			}
+		}
+	}
+
+	if (RemovedWidgetCount > 0)
+	{
+		UE_LOG(LogVNH, Display, TEXT("LobbyMenu: removed %d blocking top-level widget(s) before showing lobby HUD."), RemovedWidgetCount);
+	}
+}
+
 void AVNHPlayerController::HandleLobbyCustomizeClicked()
 {
 	if (UVNHGameInstance* VNHGameInstance = GetGameInstance<UVNHGameInstance>())
@@ -2227,39 +2281,43 @@ void AVNHPlayerController::ShowLobbyMenu()
 		return;
 	}
 
-	if (LobbyMenuWidget.IsValid())
+	RemoveBlockingMenuWidgets();
+
+	if (UVNHLobbyMenuWidget* ExistingLobbyMenu = Cast<UVNHLobbyMenuWidget>(LobbyMenuWidget.Get()))
 	{
+		if (!ExistingLobbyMenu->IsInViewport())
+		{
+			ExistingLobbyMenu->AddToViewport(20000);
+		}
+		ExistingLobbyMenu->SetAnchorsInViewport(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
+		ExistingLobbyMenu->SetAlignmentInViewport(FVector2D::ZeroVector);
+		ExistingLobbyMenu->SetPositionInViewport(FVector2D::ZeroVector, false);
+		int32 ExistingViewportX = 0;
+		int32 ExistingViewportY = 0;
+		GetViewportSize(ExistingViewportX, ExistingViewportY);
+		const float ExistingViewportScale = FMath::Max(UWidgetLayoutLibrary::GetViewportScale(ExistingLobbyMenu), 0.01f);
+		ExistingLobbyMenu->SetDesiredSizeInViewport(FVector2D(FMath::Max(1, ExistingViewportX), FMath::Max(1, ExistingViewportY)) / ExistingViewportScale);
+		ExistingLobbyMenu->SetVisibility(ESlateVisibility::Visible);
+		UE_LOG(LogVNH, Display, TEXT("LobbyMenu: existing native overlay restored."));
 		return;
 	}
 
-	UClass* LobbyWidgetClass = LoadClass<UVNHLobbyMenuWidget>(nullptr, TEXT("/Game/UI/WBP_LobbyMenu.WBP_LobbyMenu_C"));
-	if (!LobbyWidgetClass)
-	{
-		LobbyWidgetClass = UVNHLobbyMenuWidget::StaticClass();
-		UE_LOG(LogVNH, Warning, TEXT("LobbyMenu: /Game/UI/WBP_LobbyMenu is unavailable; falling back to native class."));
-	}
-
-	UVNHLobbyMenuWidget* NewLobbyMenu = CreateWidget<UVNHLobbyMenuWidget>(this, LobbyWidgetClass);
+	UVNHLobbyMenuWidget* NewLobbyMenu = CreateWidget<UVNHLobbyMenuWidget>(this, UVNHLobbyMenuWidget::StaticClass());
 	if (!NewLobbyMenu)
 	{
 		UE_LOG(LogVNH, Warning, TEXT("LobbyMenu: CreateWidget failed."));
 		return;
 	}
 
-	NewLobbyMenu->AddToViewport(7500);
+	NewLobbyMenu->AddToViewport(20000);
 	NewLobbyMenu->SetAnchorsInViewport(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
 	NewLobbyMenu->SetAlignmentInViewport(FVector2D::ZeroVector);
 	NewLobbyMenu->SetPositionInViewport(FVector2D::ZeroVector, false);
-	FVector2D ViewportSize(1920.0f, 1080.0f);
-	if (GEngine && GEngine->GameViewport && GEngine->GameViewport->Viewport)
-	{
-		const FIntPoint SizeXY = GEngine->GameViewport->Viewport->GetSizeXY();
-		if (SizeXY.X > 0 && SizeXY.Y > 0)
-		{
-			ViewportSize = FVector2D(static_cast<float>(SizeXY.X), static_cast<float>(SizeXY.Y));
-		}
-	}
-	NewLobbyMenu->SetDesiredSizeInViewport(ViewportSize);
+	int32 NewViewportX = 0;
+	int32 NewViewportY = 0;
+	GetViewportSize(NewViewportX, NewViewportY);
+	const float NewViewportScale = FMath::Max(UWidgetLayoutLibrary::GetViewportScale(NewLobbyMenu), 0.01f);
+	NewLobbyMenu->SetDesiredSizeInViewport(FVector2D(FMath::Max(1, NewViewportX), FMath::Max(1, NewViewportY)) / NewViewportScale);
 	NewLobbyMenu->SetVisibility(ESlateVisibility::Visible);
 	LobbyMenuWidget = NewLobbyMenu;
 
@@ -3513,6 +3571,11 @@ bool AVNHPlayerController::IsAssignedHunter() const
 
 bool AVNHPlayerController::IsLocalLobbyHost() const
 {
+	if (IsLocalController() && GetNetMode() != NM_Client)
+	{
+		return true;
+	}
+
 	const AVNHGameState* VNHGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr;
 	return PlayerState && VNHGameState && !VNHGameState->PlayerArray.IsEmpty() && VNHGameState->PlayerArray[0] == PlayerState;
 }
@@ -3531,7 +3594,7 @@ bool AVNHPlayerController::GetLobbyStartPromptScreenPosition(FVector2D& OutScree
 	}
 
 	const FVector PromptWorldLocation = LobbyPlayButton->GetActorLocation() + FVector(0.0f, 0.0f, 190.0f);
-	return ProjectWorldLocationToScreen(PromptWorldLocation, OutScreenPosition, true);
+	return UWidgetLayoutLibrary::ProjectWorldLocationToWidgetPosition(this, PromptWorldLocation, OutScreenPosition, true);
 }
 
 void AVNHPlayerController::SetTargetedShopper(AVNHShopperCharacter* NewTarget)

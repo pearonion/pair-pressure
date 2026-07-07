@@ -8,6 +8,7 @@
 #include "VNHLobbyMenuWidget.generated.h"
 
 class UBorder;
+class UCanvasPanel;
 class UCanvasPanelSlot;
 class UCircularThrobber;
 class UEditableTextBox;
@@ -65,9 +66,11 @@ private:
 		TWeakObjectPtr<UTexture2D> Avatar;
 	};
 
+	UCanvasPanel* EnsureLobbyRootWidget();
 	void BuildLobbyHud();
 	void BuildInviteDialog();
 	void UpdateResponsiveLayout(const FGeometry& MyGeometry);
+	void ApplyResponsiveLobbyLayout(const FVector2D& LocalSize);
 	void UpdateLobbyStartPrompt();
 	void RefreshLobbyLabels();
 	void RefreshPlayers();
@@ -91,6 +94,8 @@ private:
 
 	TWeakObjectPtr<UTextBlock> LobbyNameText;
 	TWeakObjectPtr<UTextBlock> LobbySubtitleText;
+	TWeakObjectPtr<UTextBlock> LobbyStatusText;
+	TWeakObjectPtr<UTextBlock> LobbyCodeText;
 	TWeakObjectPtr<UTextBlock> PlayerCountText;
 	TWeakObjectPtr<UTextBlock> PingText;
 	TWeakObjectPtr<UBorder> LobbyStartPromptPanel;
@@ -99,6 +104,11 @@ private:
 	TWeakObjectPtr<UHorizontalBox> PingBarsBox;
 	TWeakObjectPtr<UVerticalBox> PlayerRowsBox;
 	TWeakObjectPtr<UBorder> InviteDialog;
+	TWeakObjectPtr<UCanvasPanelSlot> LobbyNameSlot;
+	TWeakObjectPtr<UCanvasPanelSlot> LobbyStatusSlot;
+	TWeakObjectPtr<UCanvasPanelSlot> LobbyCodeSlot;
+	TWeakObjectPtr<UCanvasPanelSlot> LobbyStatsSlot;
+	TWeakObjectPtr<UCanvasPanelSlot> PlayersPanelSlot;
 	TWeakObjectPtr<UCanvasPanelSlot> ActionButtonsSlot;
 	TWeakObjectPtr<UCanvasPanelSlot> LobbyStartPromptSlot;
 	TWeakObjectPtr<UCanvasPanelSlot> InviteDialogSlot;

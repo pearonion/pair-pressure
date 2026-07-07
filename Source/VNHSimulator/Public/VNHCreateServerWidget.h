@@ -11,6 +11,7 @@ class UCheckBox;
 class UComboBoxString;
 class UEditableTextBox;
 class UTextBlock;
+class IOnlineSubsystem;
 
 UCLASS()
 class VNHSIMULATOR_API UVNHCreateServerWidget : public UUserWidget
@@ -20,6 +21,8 @@ class VNHSIMULATOR_API UVNHCreateServerWidget : public UUserWidget
 public:
 	virtual void NativeConstruct() override;
 	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
+
+	void ConfigureInitialMode(bool bInitialPrivateMode);
 
 protected:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
@@ -103,7 +106,7 @@ private:
 	void OpenLobbyAfterSessionReady();
 	void OpenListenLobbyFallback(const FText& FallbackStatusText, const TCHAR* Reason);
 	void AbortSteamSessionCreate(const FText& FailureStatusText, const TCHAR* Reason);
-	TSharedPtr<const FUniqueNetId> ResolveHostUserId() const;
+	TSharedPtr<const FUniqueNetId> ResolveHostUserId(IOnlineSubsystem* OnlineSubsystem) const;
 	void SetPrivateMode(bool bInPrivateMode);
 	void SetPasswordVisible(bool bInPasswordVisible);
 	int32 GetClampedMaxPlayers() const;

@@ -12,6 +12,7 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "Modules/ModuleManager.h"
 #include "VNHCharacterCustomizerWidget.h"
+#include "VNHCreateServerWidget.h"
 #include "VNHCharacterProfileSave.h"
 #include "VNHDebugHUD.h"
 #include "VNHGameState.h"
@@ -264,6 +265,11 @@ bool IsMainMenuWorld(const UWorld* World)
 	return World && World->GetMapName().Contains(TEXT("MainMenu"));
 }
 
+bool IsLobbyWorld(const UWorld* World)
+{
+	return World && World->GetMapName().Contains(TEXT("Lobby"));
+}
+
 bool IsInGameCustomizationAllowed(const UWorld* World)
 {
 	if (IsMainMenuWorld(World))
@@ -422,11 +428,43 @@ void UVNHGameInstance::HandleMenuCustomizerClicked()
 
 void UVNHGameInstance::HostGame(bool bPublic)
 {
-	HideMainMenu();
+	APlayerController* PlayerController = GetFirstLocalPlayerController();
+	if (!PlayerController)
+	{
+		SetMainMenuStatus(NSLOCTEXT("VNH", "MainMenuStatusHostNoController", "Create Game is unavailable without a local player."));
+		UE_LOG(LogVNH, Warning, TEXT("MainMenu: cannot open create-server dialog without a local player controller."));
+		return;
+	}
 
-	const FString Options = FString::Printf(TEXT("listen?Public=%s"), bPublic ? TEXT("1") : TEXT("0"));
-	UGameplayStatics::OpenLevel(this, LobbyMapName, true, Options);
-	UE_LOG(LogVNH, Display, TEXT("MainMenu: hosting %s lobby on %s."), bPublic ? TEXT("public") : TEXT("private"), *LobbyMapName.ToString());
+	UClass* CreateServerWidgetClass = LoadClass<UVNHCreateServerWidget>(nullptr, TEXT("/Game/UI/WBP_CreateServerDialog.WBP_CreateServerDialog_C"));
+	if (!CreateServerWidgetClass)
+	{
+		CreateServerWidgetClass = UVNHCreateServerWidget::StaticClass();
+		UE_LOG(LogVNH, Warning, TEXT("MainMenu: /Game/UI/WBP_CreateServerDialog unavailable; using native create-server widget."));
+	}
+
+	UVNHCreateServerWidget* CreateServerWidget = CreateWidget<UVNHCreateServerWidget>(PlayerController, CreateServerWidgetClass);
+	if (!CreateServerWidget)
+	{
+		SetMainMenuStatus(NSLOCTEXT("VNH", "MainMenuStatusCreateServerMissing", "Create Game dialog is not available."));
+		UE_LOG(LogVNH, Warning, TEXT("MainMenu: CreateWidget failed for create-server dialog."));
+		return;
+	}
+
+	CreateServerWidget->AddToViewport(9600);
+	CreateServerWidget->ConfigureInitialMode(!bPublic);
+
+	FInputModeGameAndUI InputMode;
+	InputMode.SetWidgetToFocus(CreateServerWidget->TakeWidget());
+	InputMode.SetHideCursorDuringCapture(false);
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	PlayerController->SetInputMode(InputMode);
+	PlayerController->bShowMouseCursor = true;
+	PlayerController->bEnableClickEvents = true;
+	PlayerController->bEnableMouseOverEvents = true;
+
+	SetMainMenuStatus(NSLOCTEXT("VNH", "MainMenuStatusCreateServerDialog", "Choose your server settings."));
+	UE_LOG(LogVNH, Display, TEXT("MainMenu: opened create-server dialog for %s game."), bPublic ? TEXT("public") : TEXT("private"));
 }
 
 void UVNHGameInstance::BindMainMenuButtons(UUserWidget* MainMenuWidget)
@@ -496,7 +534,13 @@ FString UVNHGameInstance::GetJoinAddressFromMenu() const
 void UVNHGameInstance::ShowCharacterCustomizer(bool bLobbyMode)
 {
 	UWorld* World = GetWorld();
-	if (!IsInGameCustomizationAllowed(World))
+	if (!bLobbyMode && !IsInGameCustomizationAllowed(World))
+	{
+		HideCharacterCustomizer();
+		UE_LOG(LogVNH, Display, TEXT("Customizer: blocked because the round is already active."));
+		return;
+	}
+	if (bLobbyMode && !IsLobbyWorld(World) && !IsInGameCustomizationAllowed(World))
 	{
 		HideCharacterCustomizer();
 		UE_LOG(LogVNH, Display, TEXT("Customizer: blocked because the round is already active."));
@@ -536,7 +580,7 @@ void UVNHGameInstance::ShowCharacterCustomizer(bool bLobbyMode)
 
 	ActiveCustomizer->ClearFlags(RF_Transactional);
 	ActiveCustomizer->SetLobbyMode(bLobbyMode);
-	ActiveCustomizer->AddToViewport(bLobbyMode ? 8000 : 9000);
+	ActiveCustomizer->AddToViewport(bLobbyMode ? 21000 : 9000);
 
 	PlayerController->bShowMouseCursor = true;
 	PlayerController->bEnableClickEvents = true;

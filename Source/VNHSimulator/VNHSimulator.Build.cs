@@ -20,6 +20,7 @@ public class VNHSimulator : ModuleRules
 			"UMG",
 			"AssetRegistry",
 			"OnlineSubsystem",
+			"OnlineSubsystemSteam",
 			"OnlineSubsystemUtils",
 			"AdvancedSessions",
 			"AdvancedSteamSessions"

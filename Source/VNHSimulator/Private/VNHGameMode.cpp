@@ -915,7 +915,17 @@ bool AVNHGameMode::IsHunterController(const APlayerController* PlayerController)
 
 bool AVNHGameMode::IsHostController(const APlayerController* PlayerController) const
 {
-	if (!PlayerController || !GameState || GameState->PlayerArray.IsEmpty())
+	if (!PlayerController)
+	{
+		return false;
+	}
+
+	if (PlayerController->IsLocalController() && GetNetMode() != NM_Client)
+	{
+		return true;
+	}
+
+	if (!GameState || GameState->PlayerArray.IsEmpty())
 	{
 		return false;
 	}

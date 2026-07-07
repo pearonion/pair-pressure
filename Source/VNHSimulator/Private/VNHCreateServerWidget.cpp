@@ -8,6 +8,7 @@
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
+#include "Interfaces/OnlineIdentityInterface.h"
 #include "Interfaces/OnlineSessionInterface.h"
 #include "Kismet/GameplayStatics.h"
 #include "Online/OnlineSessionNames.h"
@@ -102,6 +103,11 @@ void UVNHCreateServerWidget::NativeConstruct()
 	SetStatus(NSLOCTEXT("VNH", "CreateServerReady", "Choose your server settings."));
 }
 
+void UVNHCreateServerWidget::ConfigureInitialMode(bool bInitialPrivateMode)
+{
+	SetPrivateMode(bInitialPrivateMode);
+}
+
 FReply UVNHCreateServerWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
 {
 	if (InKeyEvent.GetKey() == EKeys::Escape)
@@ -170,6 +176,14 @@ void UVNHCreateServerWidget::HandleCreateGameClicked()
 	IOnlineSubsystem* OnlineSubsystem = Online::GetSubsystem(GetWorld());
 	if (!OnlineSubsystem)
 	{
+		OnlineSubsystem = Online::GetSubsystem(GetWorld(), FName(TEXT("STEAM")));
+		if (OnlineSubsystem)
+		{
+			UE_LOG(LogVNH, Display, TEXT("CreateServer: default online subsystem was unavailable; using explicit %s subsystem."), *OnlineSubsystem->GetSubsystemName().ToString());
+		}
+	}
+	if (!OnlineSubsystem)
+	{
 		bSteamSessionRequired = false;
 		OpenListenLobbyFallback(NSLOCTEXT("VNH", "CreateServerLocalNoSubsystem", "Steam is unavailable. Opening a local listen lobby..."), TEXT("no online subsystem"));
 		return;
@@ -177,6 +191,10 @@ void UVNHCreateServerWidget::HandleCreateGameClicked()
 
 	bSteamSessionRequired = OnlineSubsystem->GetSubsystemName().ToString().Equals(TEXT("STEAM"), ESearchCase::IgnoreCase);
 	ActiveSessionInterface = OnlineSubsystem->GetSessionInterface();
+	UE_LOG(LogVNH, Display, TEXT("CreateServer: subsystem=%s steam_required=%s session_interface=%s."),
+		*OnlineSubsystem->GetSubsystemName().ToString(),
+		bSteamSessionRequired ? TEXT("true") : TEXT("false"),
+		ActiveSessionInterface.IsValid() ? TEXT("valid") : TEXT("invalid"));
 	if (!ActiveSessionInterface.IsValid())
 	{
 		if (bSteamSessionRequired)
@@ -190,11 +208,10 @@ void UVNHCreateServerWidget::HandleCreateGameClicked()
 		return;
 	}
 
-	PendingHostUserId = ResolveHostUserId();
+	PendingHostUserId = ResolveHostUserId(OnlineSubsystem);
 	if (bSteamSessionRequired && !PendingHostUserId.IsValid())
 	{
-		AbortSteamSessionCreate(NSLOCTEXT("VNH", "CreateServerNoSteamUserId", "Steam is active, but no Steam user id is available. Restart Steam and launch the packaged game again."), TEXT("no local Steam unique net id"));
-		return;
+		UE_LOG(LogVNH, Warning, TEXT("CreateServer: Steam is active but no local Steam unique net id was resolved before CreateSession; falling back to local user index 0."));
 	}
 
 	FOnlineSessionSettings SessionSettings;
@@ -210,6 +227,8 @@ void UVNHCreateServerWidget::HandleCreateGameClicked()
 	SessionSettings.bAllowJoinViaPresence = true;
 	SessionSettings.bAllowJoinViaPresenceFriendsOnly = false;
 	SessionSettings.bUseLobbiesVoiceChatIfAvailable = false;
+	SessionSettings.bAntiCheatProtected = false;
+	SessionSettings.bUsesStats = false;
 	SessionSettings.Set(SessionKeyServerName, ServerName, EOnlineDataAdvertisementType::ViaOnlineService);
 	SessionSettings.Set(SessionKeyIsPrivate, bPrivateMode, EOnlineDataAdvertisementType::ViaOnlineService);
 	SessionSettings.Set(SessionKeyPassword, bPrivateMode ? Password : FString(), EOnlineDataAdvertisementType::DontAdvertise);
@@ -346,7 +365,14 @@ void UVNHCreateServerWidget::BeginCreateSession(const FOnlineSessionSettings& Se
 		FOnCreateSessionCompleteDelegate::CreateUObject(this, &UVNHCreateServerWidget::HandleSessionCreated));
 
 	SetStatus(NSLOCTEXT("VNH", "CreateServerCreating", "Creating Steam session..."));
-	const bool bCreateStarted = PendingHostUserId.IsValid()
+	const bool bUsingResolvedHostId = PendingHostUserId.IsValid();
+	UE_LOG(LogVNH, Display, TEXT("CreateServer: CreateSession starting via %s. PublicConnections=%d Advertise=%s Presence=%s Lobbies=%s."),
+		bUsingResolvedHostId ? TEXT("resolved unique id") : TEXT("local user index 0"),
+		SessionSettings.NumPublicConnections,
+		SessionSettings.bShouldAdvertise ? TEXT("true") : TEXT("false"),
+		SessionSettings.bUsesPresence ? TEXT("true") : TEXT("false"),
+		SessionSettings.bUseLobbiesIfAvailable ? TEXT("true") : TEXT("false"));
+	const bool bCreateStarted = bUsingResolvedHostId
 		? ActiveSessionInterface->CreateSession(*PendingHostUserId, NAME_GameSession, SessionSettings)
 		: ActiveSessionInterface->CreateSession(0, NAME_GameSession, SessionSettings);
 	if (!bCreateStarted)
@@ -370,6 +396,7 @@ void UVNHCreateServerWidget::OpenLobbyAfterSessionReady()
 	PendingHostUserId.Reset();
 	const FString TravelOptions = FString::Printf(TEXT("listen%s"), *BuildTravelOptions());
 	SetStatus(NSLOCTEXT("VNH", "CreateServerOpeningLobby", "Steam session ready. Opening lobby..."));
+	RemoveFromParent();
 	UGameplayStatics::OpenLevel(this, LobbyMapName, true, TravelOptions);
 	UE_LOG(LogVNH, Display, TEXT("CreateServer: created Advanced Steam session and opening %s?%s."), *LobbyMapName.ToString(), *TravelOptions);
 }
@@ -386,6 +413,7 @@ void UVNHCreateServerWidget::OpenListenLobbyFallback(const FText& FallbackStatus
 		Reason ? Reason : TEXT("session setup was unavailable"),
 		*LobbyMapName.ToString(),
 		*TravelOptions);
+	RemoveFromParent();
 	UGameplayStatics::OpenLevel(this, LobbyMapName, true, TravelOptions);
 }
 
@@ -398,7 +426,7 @@ void UVNHCreateServerWidget::AbortSteamSessionCreate(const FText& FailureStatusT
 	UE_LOG(LogVNH, Error, TEXT("CreateServer: Steam session create aborted because %s."), Reason ? Reason : TEXT("session setup failed"));
 }
 
-TSharedPtr<const FUniqueNetId> UVNHCreateServerWidget::ResolveHostUserId() const
+TSharedPtr<const FUniqueNetId> UVNHCreateServerWidget::ResolveHostUserId(IOnlineSubsystem* OnlineSubsystem) const
 {
 	const APlayerController* PlayerController = GetOwningPlayer();
 	if (!PlayerController)
@@ -421,6 +449,19 @@ TSharedPtr<const FUniqueNetId> UVNHCreateServerWidget::ResolveHostUserId() const
 		if (LocalUserId.IsValid())
 		{
 			return LocalUserId.GetUniqueNetId();
+		}
+	}
+
+	if (OnlineSubsystem)
+	{
+		const IOnlineIdentityPtr IdentityInterface = OnlineSubsystem->GetIdentityInterface();
+		if (IdentityInterface.IsValid())
+		{
+			TSharedPtr<const FUniqueNetId> IdentityUserId = IdentityInterface->GetUniquePlayerId(0);
+			if (IdentityUserId.IsValid())
+			{
+				return IdentityUserId;
+			}
 		}
 	}
 

@@ -262,14 +262,18 @@ void UVNHLobbyFriendInviteButton::HandleClicked()
 
 TSharedRef<SWidget> UVNHLobbyMenuWidget::RebuildWidget()
 {
+	EnsureLobbyRootWidget();
+	TSharedRef<SWidget> RebuiltWidget = Super::RebuildWidget();
 	BuildLobbyHud();
-	return Super::RebuildWidget();
+	return RebuiltWidget;
 }
 
 void UVNHLobbyMenuWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 	SetIsFocusable(true);
+	const FVector2D ViewportSize = UWidgetLayoutLibrary::GetViewportSize(this);
+	ApplyResponsiveLobbyLayout(ViewportSize);
 	RequestFriendsList();
 	RefreshLobbyLabels();
 	RefreshPlayers();
@@ -336,18 +340,30 @@ FReply UVNHLobbyMenuWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry,
 	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 }
 
-void UVNHLobbyMenuWidget::BuildLobbyHud()
+UCanvasPanel* UVNHLobbyMenuWidget::EnsureLobbyRootWidget()
 {
 	if (!WidgetTree)
 	{
-		UE_LOG(LogVNH, Warning, TEXT("LobbyMenuWidget: BuildLobbyHud skipped because WidgetTree is null."));
-		return;
+		WidgetTree = NewObject<UWidgetTree>(this, TEXT("WidgetTree"), RF_Transient);
 	}
 
 	UCanvasPanel* Root = Cast<UCanvasPanel>(WidgetTree->RootWidget);
 	if (!Root)
 	{
-		UE_LOG(LogVNH, Warning, TEXT("LobbyMenuWidget: BuildLobbyHud skipped because root widget is not a CanvasPanel."));
+		Root = WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("Root"));
+		WidgetTree->RootWidget = Root;
+	}
+
+	Root->SetVisibility(ESlateVisibility::Visible);
+	return Root;
+}
+
+void UVNHLobbyMenuWidget::BuildLobbyHud()
+{
+	UCanvasPanel* Root = EnsureLobbyRootWidget();
+	if (!Root)
+	{
+		UE_LOG(LogVNH, Warning, TEXT("LobbyMenuWidget: BuildLobbyHud skipped because root canvas could not be created."));
 		return;
 	}
 	Root->ClearChildren();
@@ -355,7 +371,7 @@ void UVNHLobbyMenuWidget::BuildLobbyHud()
 
 	UBorder* TopLeft = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("LobbyNamePanel"));
 	TopLeft->SetBrushColor(PanelStrong);
-	AddCanvas(Root, TopLeft, FAnchors(0.0f, 0.0f, 0.0f, 0.0f), FMargin(24.0f, 24.0f, 390.0f, 104.0f), FVector2D(0.0f, 0.0f), 10);
+	LobbyNameSlot = AddCanvas(Root, TopLeft, FAnchors(0.0f, 0.0f, 0.0f, 0.0f), FMargin(24.0f, 24.0f, 390.0f, 104.0f), FVector2D(0.0f, 0.0f), 10);
 
 	UVerticalBox* HeaderStack = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("LobbyNameStack"));
 	TopLeft->SetContent(HeaderStack);
@@ -364,9 +380,15 @@ void UVNHLobbyMenuWidget::BuildLobbyHud()
 	LobbyNameText = Cast<UTextBlock>(HeaderStack->GetChildAt(0));
 	LobbySubtitleText = Cast<UTextBlock>(HeaderStack->GetChildAt(1));
 
+	UBorder* TopCenter = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("LobbyStatusPanel"));
+	TopCenter->SetBrushColor(PanelStrong);
+	LobbyStatusSlot = AddCanvas(Root, TopCenter, FAnchors(0.0f, 0.0f, 0.0f, 0.0f), FMargin(810.0f, 28.0f, 300.0f, 64.0f), FVector2D::ZeroVector, 10);
+	LobbyStatusText = Text(TopCenter, TEXT("LOBBY OPEN"), 28, Accent, ETextJustify::Center);
+	TopCenter->SetContent(LobbyStatusText.Get());
+
 	UBorder* TopRight = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("LobbyStatsPanel"));
 	TopRight->SetBrushColor(PanelStrong);
-	AddCanvas(Root, TopRight, FAnchors(1.0f, 0.0f, 1.0f, 0.0f), FMargin(-24.0f, 24.0f, 292.0f, 58.0f), FVector2D(1.0f, 0.0f), 10);
+	LobbyStatsSlot = AddCanvas(Root, TopRight, FAnchors(0.0f, 0.0f, 0.0f, 0.0f), FMargin(1604.0f, 24.0f, 292.0f, 58.0f), FVector2D::ZeroVector, 10);
 
 	UHorizontalBox* StatsRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("LobbyStatsRow"));
 	TopRight->SetContent(StatsRow);
@@ -379,7 +401,7 @@ void UVNHLobbyMenuWidget::BuildLobbyHud()
 
 	UBorder* PlayersPanel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("PlayersPanel"));
 	PlayersPanel->SetBrushColor(PanelStrong);
-	AddCanvas(Root, PlayersPanel, FAnchors(1.0f, 0.5f, 1.0f, 0.5f), FMargin(-24.0f, 0.0f, 300.0f, 330.0f), FVector2D(1.0f, 0.5f), 10);
+	PlayersPanelSlot = AddCanvas(Root, PlayersPanel, FAnchors(0.0f, 0.0f, 0.0f, 0.0f), FMargin(1596.0f, 375.0f, 300.0f, 330.0f), FVector2D::ZeroVector, 10);
 	UVerticalBox* PlayersStack = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("PlayersStack"));
 	PlayersPanel->SetContent(PlayersStack);
 	PlayersStack->AddChildToVerticalBox(Text(PlayersStack, TEXT("PLAYERS"), 22, Accent));
@@ -388,7 +410,7 @@ void UVNHLobbyMenuWidget::BuildLobbyHud()
 
 	UHorizontalBox* ButtonRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("LobbyActionButtons"));
 	ButtonRow->SetVisibility(ESlateVisibility::Visible);
-	ActionButtonsSlot = AddCanvas(Root, ButtonRow, FAnchors(0.0f, 0.0f, 0.0f, 0.0f), FMargin(0.0f, 0.0f, 660.0f, 54.0f), FVector2D::ZeroVector, 20);
+	ActionButtonsSlot = AddCanvas(Root, ButtonRow, FAnchors(0.0f, 0.0f, 0.0f, 0.0f), FMargin(630.0f, 994.0f, 660.0f, 54.0f), FVector2D::ZeroVector, 20);
 	UButton* EmoteButton = MakeTextButton(ButtonRow, TEXT("EMOTE"), 20);
 	UButton* InviteButton = MakeTextButton(ButtonRow, TEXT("INVITE"), 20);
 	UButton* CustomizeButton = MakeTextButton(ButtonRow, TEXT("CUSTOMIZE"), 20);
@@ -401,6 +423,15 @@ void UVNHLobbyMenuWidget::BuildLobbyHud()
 		ActionButtonSlot->SetSize(FillSize());
 		Button->SetVisibility(ESlateVisibility::Visible);
 	}
+
+	UBorder* LobbyCodePanel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("LobbyCodePanel"));
+	LobbyCodePanel->SetBrushColor(PanelStrong);
+	LobbyCodeSlot = AddCanvas(Root, LobbyCodePanel, FAnchors(0.0f, 0.0f, 0.0f, 0.0f), FMargin(24.0f, 902.0f, 310.0f, 118.0f), FVector2D::ZeroVector, 20);
+	UVerticalBox* LobbyCodeStack = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("LobbyCodeStack"));
+	LobbyCodePanel->SetContent(LobbyCodeStack);
+	LobbyCodeStack->AddChildToVerticalBox(Text(LobbyCodeStack, TEXT("LOBBY CODE"), 18, Accent));
+	LobbyCodeText = Text(LobbyCodeStack, TEXT("LOCAL"), 36, Accent);
+	LobbyCodeStack->AddChildToVerticalBox(LobbyCodeText.Get());
 
 	UBorder* StartPromptPanel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("LobbyStartPromptPanel"));
 	StartPromptPanel->SetBrushColor(FLinearColor(0.005f, 0.035f, 0.04f, 0.92f));
@@ -424,6 +455,11 @@ void UVNHLobbyMenuWidget::BuildLobbyHud()
 	StartPromptRow->AddChildToHorizontalBox(StartPromptTextStack)->SetVerticalAlignment(VAlign_Center);
 
 	BuildInviteDialog();
+	const FVector2D InitialViewportSize = UWidgetLayoutLibrary::GetViewportSize(this);
+	if (InitialViewportSize.X > 0.0f && InitialViewportSize.Y > 0.0f)
+	{
+		ApplyResponsiveLobbyLayout(InitialViewportSize);
+	}
 	UE_LOG(LogVNH, Display, TEXT("LobbyMenuWidget: HUD tree built."));
 }
 
@@ -478,42 +514,86 @@ void UVNHLobbyMenuWidget::BuildInviteDialog()
 
 void UVNHLobbyMenuWidget::UpdateResponsiveLayout(const FGeometry& MyGeometry)
 {
-	const FVector2D LocalSize = MyGeometry.GetLocalSize();
+	FVector2D ViewportSize = UWidgetLayoutLibrary::GetViewportSize(this);
+	if (ViewportSize.X <= 0.0f || ViewportSize.Y <= 0.0f)
+	{
+		ViewportSize = MyGeometry.GetLocalSize();
+	}
+	ApplyResponsiveLobbyLayout(ViewportSize);
+}
+
+void UVNHLobbyMenuWidget::ApplyResponsiveLobbyLayout(const FVector2D& LocalSize)
+{
 	if (LocalSize.X <= 0.0f || LocalSize.Y <= 0.0f)
 	{
 		return;
 	}
 
-	const FVector2D UsableSize(LocalSize.X, FMath::Min(LocalSize.Y, LocalSize.X * 9.0f / 16.0f));
+	const FVector2D ViewportSize(FMath::Max(1.0f, LocalSize.X), FMath::Max(1.0f, LocalSize.Y));
+	const float EdgePadding = ViewportSize.X < 1280.0f ? 18.0f : 24.0f;
+	const float AvailableWidth = FMath::Max(1.0f, ViewportSize.X - (EdgePadding * 2.0f));
+	const auto ConfigureSlot = [](UCanvasPanelSlot* CanvasPanelSlot, const FAnchors& Anchors, const FVector2D& Alignment, const FVector2D& Position, const FVector2D& Size)
+	{
+		if (!CanvasPanelSlot)
+		{
+			return;
+		}
+		CanvasPanelSlot->SetAnchors(Anchors);
+		CanvasPanelSlot->SetAlignment(Alignment);
+		CanvasPanelSlot->SetPosition(Position);
+		CanvasPanelSlot->SetSize(Size);
+	};
+
+	const FVector2D NameSize(FMath::Min(430.0f, AvailableWidth), 112.0f);
+	const FVector2D StatusSize(FMath::Min(320.0f, AvailableWidth), 64.0f);
+	const FVector2D StatsSize(FMath::Min(340.0f, AvailableWidth), 64.0f);
+	const FVector2D PlayerPanelSize(FMath::Min(350.0f, AvailableWidth), 385.0f);
+	const FVector2D CodeSize(FMath::Min(310.0f, AvailableWidth), 118.0f);
+	const FVector2D ActionSize(FMath::Min(660.0f, AvailableWidth), 54.0f);
+	const FVector2D PromptSize(FMath::Min(360.0f, AvailableWidth), 74.0f);
+
+	if (UCanvasPanelSlot* NameSlot = LobbyNameSlot.Get())
+	{
+		ConfigureSlot(NameSlot, FAnchors(0.0f, 0.0f, 0.0f, 0.0f), FVector2D::ZeroVector, FVector2D(EdgePadding, EdgePadding), NameSize);
+	}
+
+	if (UCanvasPanelSlot* StatusSlot = LobbyStatusSlot.Get())
+	{
+		ConfigureSlot(StatusSlot, FAnchors(0.5f, 0.0f, 0.5f, 0.0f), FVector2D(0.5f, 0.0f), FVector2D(0.0f, EdgePadding + 4.0f), StatusSize);
+	}
+
+	if (UCanvasPanelSlot* StatsSlot = LobbyStatsSlot.Get())
+	{
+		ConfigureSlot(StatsSlot, FAnchors(1.0f, 0.0f, 1.0f, 0.0f), FVector2D(1.0f, 0.0f), FVector2D(-EdgePadding, EdgePadding), StatsSize);
+	}
+
+	if (UCanvasPanelSlot* PlayerSlot = PlayersPanelSlot.Get())
+	{
+		ConfigureSlot(PlayerSlot, FAnchors(1.0f, 0.0f, 1.0f, 0.0f), FVector2D(1.0f, 0.0f), FVector2D(-EdgePadding, 150.0f), PlayerPanelSize);
+	}
+
+	if (UCanvasPanelSlot* CodeSlot = LobbyCodeSlot.Get())
+	{
+		ConfigureSlot(CodeSlot, FAnchors(0.0f, 1.0f, 0.0f, 1.0f), FVector2D(0.0f, 1.0f), FVector2D(EdgePadding, -EdgePadding), CodeSize);
+	}
 
 	if (UCanvasPanelSlot* ActionSlot = ActionButtonsSlot.Get())
 	{
-		const float ButtonRowWidth = FMath::Clamp(UsableSize.X - 48.0f, 360.0f, 660.0f);
-		const FVector2D ButtonRowPosition((UsableSize.X - ButtonRowWidth) * 0.5f, FMath::Max(0.0f, UsableSize.Y - 86.0f));
-		ActionSlot->SetAnchors(FAnchors(0.0f, 0.0f, 0.0f, 0.0f));
-		ActionSlot->SetAlignment(FVector2D::ZeroVector);
-		ActionSlot->SetPosition(ButtonRowPosition);
-		ActionSlot->SetSize(FVector2D(ButtonRowWidth, 54.0f));
-		CachedActionPosition = ButtonRowPosition;
-		CachedActionSize = FVector2D(ButtonRowWidth, 54.0f);
+		const FVector2D ActionPosition(0.0f, -32.0f);
+		ConfigureSlot(ActionSlot, FAnchors(0.5f, 1.0f, 0.5f, 1.0f), FVector2D(0.5f, 1.0f), ActionPosition, ActionSize);
+		CachedActionPosition = FVector2D((ViewportSize.X - ActionSize.X) * 0.5f, ViewportSize.Y - 32.0f - ActionSize.Y);
+		CachedActionSize = ActionSize;
 	}
 
 	if (UCanvasPanelSlot* PromptSlot = LobbyStartPromptSlot.Get())
 	{
-		const FVector2D PromptSize(360.0f, 74.0f);
-		PromptSlot->SetAnchors(FAnchors(0.0f, 0.0f, 0.0f, 0.0f));
-		PromptSlot->SetAlignment(FVector2D::ZeroVector);
-		PromptSlot->SetPosition(FVector2D((UsableSize.X - PromptSize.X) * 0.5f, FMath::Max(0.0f, UsableSize.Y - 176.0f)));
-		PromptSlot->SetSize(PromptSize);
+		ConfigureSlot(PromptSlot, FAnchors(0.5f, 1.0f, 0.5f, 1.0f), FVector2D(0.5f, 1.0f), FVector2D(0.0f, -122.0f), PromptSize);
 	}
 
 	if (UCanvasPanelSlot* DialogSlot = InviteDialogSlot.Get())
 	{
-		const FVector2D DialogSize(FMath::Clamp(UsableSize.X - 48.0f, 520.0f, 960.0f), FMath::Clamp(UsableSize.Y - 64.0f, 420.0f, 600.0f));
-		DialogSlot->SetAnchors(FAnchors(0.0f, 0.0f, 0.0f, 0.0f));
-		DialogSlot->SetAlignment(FVector2D::ZeroVector);
-		DialogSlot->SetPosition((UsableSize - DialogSize) * 0.5f);
-		DialogSlot->SetSize(DialogSize);
+		const FVector2D DialogSize(FMath::Min(960.0f, AvailableWidth), FMath::Min(600.0f, FMath::Max(260.0f, ViewportSize.Y - (EdgePadding * 2.0f))));
+		ConfigureSlot(DialogSlot, FAnchors(0.5f, 0.5f, 0.5f, 0.5f), FVector2D(0.5f, 0.5f), FVector2D::ZeroVector, DialogSize);
 	}
 }
 
@@ -536,18 +616,22 @@ void UVNHLobbyMenuWidget::UpdateLobbyStartPrompt()
 		FVector2D ScreenPosition = FVector2D::ZeroVector;
 		if (VNHPlayerController->GetLobbyStartPromptScreenPosition(ScreenPosition))
 		{
-			const float ViewportScale = FMath::Max(UWidgetLayoutLibrary::GetViewportScale(this), 0.01f);
-			ScreenPosition /= ViewportScale;
-
-			int32 ViewportX = 0;
-			int32 ViewportY = 0;
-			VNHPlayerController->GetViewportSize(ViewportX, ViewportY);
-			const FVector2D ViewportSize(ViewportX / ViewportScale, ViewportY / ViewportScale);
+			FVector2D ViewportSize = UWidgetLayoutLibrary::GetViewportSize(this);
+			if (ViewportSize.X <= 0.0f || ViewportSize.Y <= 0.0f)
+			{
+				int32 ViewportX = 0;
+				int32 ViewportY = 0;
+				VNHPlayerController->GetViewportSize(ViewportX, ViewportY);
+				ViewportSize = FVector2D(FMath::Max(1, ViewportX), FMath::Max(1, ViewportY));
+			}
 			const FVector2D PromptSize(360.0f, 74.0f);
+			const float PromptPadding = 18.0f;
 			const FVector2D DesiredPosition(ScreenPosition.X - (PromptSize.X * 0.5f), ScreenPosition.Y - PromptSize.Y - 22.0f);
+			PromptSlot->SetAnchors(FAnchors(0.0f, 0.0f, 0.0f, 0.0f));
+			PromptSlot->SetAlignment(FVector2D::ZeroVector);
 			PromptSlot->SetPosition(FVector2D(
-				FMath::Clamp(DesiredPosition.X, 18.0f, FMath::Max(18.0f, ViewportSize.X - PromptSize.X - 18.0f)),
-				FMath::Clamp(DesiredPosition.Y, 18.0f, FMath::Max(18.0f, ViewportSize.Y - PromptSize.Y - 18.0f))));
+				FMath::Clamp(DesiredPosition.X, PromptPadding, FMath::Max(PromptPadding, ViewportSize.X - PromptSize.X - PromptPadding)),
+				FMath::Clamp(DesiredPosition.Y, PromptPadding, FMath::Max(PromptPadding, ViewportSize.Y - PromptSize.Y - PromptPadding))));
 			PromptSlot->SetSize(PromptSize);
 		}
 	}
@@ -581,6 +665,16 @@ void UVNHLobbyMenuWidget::RefreshLobbyLabels()
 		TextBlock->SetText(bIsHost
 			? NSLOCTEXT("VNH", "LobbyHostStartSubtitle", "Start from the console when ready.")
 			: NSLOCTEXT("VNH", "LobbyClientStartSubtitle", "Waiting for the host to start from the console."));
+	}
+	if (UTextBlock* TextBlock = LobbyStatusText.Get())
+	{
+		TextBlock->SetText(bIsHost
+			? NSLOCTEXT("VNH", "LobbyOpenStatus", "LOBBY OPEN")
+			: NSLOCTEXT("VNH", "LobbyJoinedStatus", "JOINED LOBBY"));
+	}
+	if (UTextBlock* TextBlock = LobbyCodeText.Get())
+	{
+		TextBlock->SetText(FText::FromString(ServerName.IsEmpty() ? TEXT("LOCAL") : ServerName.ToUpper()));
 	}
 
 	CachedMaxPlayers = DefaultLobbyMaxPlayers;
