@@ -2302,7 +2302,14 @@ void AVNHPlayerController::ShowLobbyMenu()
 		return;
 	}
 
-	UVNHLobbyMenuWidget* NewLobbyMenu = CreateWidget<UVNHLobbyMenuWidget>(this, UVNHLobbyMenuWidget::StaticClass());
+	UClass* LobbyWidgetClass = LoadClass<UVNHLobbyMenuWidget>(nullptr, TEXT("/Game/UI/WBP_LobbyMenu.WBP_LobbyMenu_C"));
+	if (!LobbyWidgetClass)
+	{
+		LobbyWidgetClass = UVNHLobbyMenuWidget::StaticClass();
+		UE_LOG(LogVNH, Warning, TEXT("LobbyMenu: /Game/UI/WBP_LobbyMenu unavailable; using native fallback widget."));
+	}
+
+	UVNHLobbyMenuWidget* NewLobbyMenu = CreateWidget<UVNHLobbyMenuWidget>(this, LobbyWidgetClass);
 	if (!NewLobbyMenu)
 	{
 		UE_LOG(LogVNH, Warning, TEXT("LobbyMenu: CreateWidget failed."));

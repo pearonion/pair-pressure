@@ -67,6 +67,8 @@ private:
 	};
 
 	UCanvasPanel* EnsureLobbyRootWidget();
+	bool HasDesignerLobbyHud() const;
+	bool BindDesignerLobbyHud();
 	void BuildLobbyHud();
 	void BuildInviteDialog();
 	void UpdateResponsiveLayout(const FGeometry& MyGeometry);
@@ -123,4 +125,5 @@ private:
 	int32 CachedMaxPlayers = 8;
 	FVector2D CachedActionPosition = FVector2D::ZeroVector;
 	FVector2D CachedActionSize = FVector2D::ZeroVector;
+	bool bUsingDesignerLobbyHud = false;
 };

@@ -262,9 +262,16 @@ void UVNHLobbyFriendInviteButton::HandleClicked()
 
 TSharedRef<SWidget> UVNHLobbyMenuWidget::RebuildWidget()
 {
-	EnsureLobbyRootWidget();
+	const bool bIsNativeFallbackClass = GetClass() == UVNHLobbyMenuWidget::StaticClass();
+	if (bIsNativeFallbackClass)
+	{
+		EnsureLobbyRootWidget();
+	}
 	TSharedRef<SWidget> RebuiltWidget = Super::RebuildWidget();
-	BuildLobbyHud();
+	if (bIsNativeFallbackClass)
+	{
+		BuildLobbyHud();
+	}
 	return RebuiltWidget;
 }
 
@@ -272,14 +279,19 @@ void UVNHLobbyMenuWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 	SetIsFocusable(true);
-	const FVector2D ViewportSize = UWidgetLayoutLibrary::GetViewportSize(this);
-	ApplyResponsiveLobbyLayout(ViewportSize);
+	bUsingDesignerLobbyHud = BindDesignerLobbyHud();
+	if (!bUsingDesignerLobbyHud)
+	{
+		const FVector2D ViewportSize = UWidgetLayoutLibrary::GetViewportSize(this);
+		ApplyResponsiveLobbyLayout(ViewportSize);
+	}
 	RequestFriendsList();
 	RefreshLobbyLabels();
 	RefreshPlayers();
-	UE_LOG(LogVNH, Display, TEXT("LobbyMenuWidget: NativeConstruct complete. WidgetTree=%s Root=%s"),
+	UE_LOG(LogVNH, Display, TEXT("LobbyMenuWidget: NativeConstruct complete. WidgetTree=%s Root=%s DesignerHud=%s"),
 		WidgetTree ? TEXT("true") : TEXT("false"),
-		WidgetTree && WidgetTree->RootWidget ? *WidgetTree->RootWidget->GetName() : TEXT("None"));
+		WidgetTree && WidgetTree->RootWidget ? *WidgetTree->RootWidget->GetName() : TEXT("None"),
+		bUsingDesignerLobbyHud ? TEXT("true") : TEXT("false"));
 }
 
 void UVNHLobbyMenuWidget::NativeDestruct()
@@ -290,7 +302,10 @@ void UVNHLobbyMenuWidget::NativeDestruct()
 void UVNHLobbyMenuWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
-	UpdateResponsiveLayout(MyGeometry);
+	if (!bUsingDesignerLobbyHud)
+	{
+		UpdateResponsiveLayout(MyGeometry);
+	}
 	UpdateLobbyStartPrompt();
 	RefreshAccumulator += InDeltaTime;
 	if (RefreshAccumulator >= 0.35f)
@@ -313,7 +328,7 @@ FReply UVNHLobbyMenuWidget::NativeOnKeyDown(const FGeometry& InGeometry, const F
 
 FReply UVNHLobbyMenuWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
-	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && CachedActionSize.X > 0.0f && CachedActionSize.Y > 0.0f)
+	if (!bUsingDesignerLobbyHud && InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && CachedActionSize.X > 0.0f && CachedActionSize.Y > 0.0f)
 	{
 		const FVector2D LocalPosition = InGeometry.AbsoluteToLocal(InMouseEvent.GetScreenSpacePosition());
 		const bool bInsideActionRow =
@@ -338,6 +353,71 @@ FReply UVNHLobbyMenuWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry,
 	}
 
 	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+}
+
+bool UVNHLobbyMenuWidget::HasDesignerLobbyHud() const
+{
+	return WidgetTree
+		&& WidgetTree->RootWidget
+		&& WidgetTree->FindWidget(TEXT("LobbyNameText"))
+		&& WidgetTree->FindWidget(TEXT("PlayerRowsBox"))
+		&& WidgetTree->FindWidget(TEXT("CustomizeButton"));
+}
+
+bool UVNHLobbyMenuWidget::BindDesignerLobbyHud()
+{
+	if (!HasDesignerLobbyHud())
+	{
+		return false;
+	}
+
+	LobbyNameText = Cast<UTextBlock>(GetWidgetFromName(TEXT("LobbyNameText")));
+	LobbySubtitleText = Cast<UTextBlock>(GetWidgetFromName(TEXT("LobbySubtitleText")));
+	LobbyStatusText = Cast<UTextBlock>(GetWidgetFromName(TEXT("LobbyStatusText")));
+	LobbyCodeText = Cast<UTextBlock>(GetWidgetFromName(TEXT("LobbyCodeText")));
+	PlayerCountText = Cast<UTextBlock>(GetWidgetFromName(TEXT("PlayerCountText")));
+	PingText = Cast<UTextBlock>(GetWidgetFromName(TEXT("PingText")));
+	LobbyStartPromptPanel = Cast<UBorder>(GetWidgetFromName(TEXT("LobbyStartPromptPanel")));
+	LobbyStartPromptText = Cast<UTextBlock>(GetWidgetFromName(TEXT("LobbyStartPromptText")));
+	LobbyStartProgressCircle = Cast<UCircularThrobber>(GetWidgetFromName(TEXT("LobbyStartProgressCircle")));
+	PingBarsBox = Cast<UHorizontalBox>(GetWidgetFromName(TEXT("PingBarsBox")));
+	PlayerRowsBox = Cast<UVerticalBox>(GetWidgetFromName(TEXT("PlayerRowsBox")));
+	InviteDialog = Cast<UBorder>(GetWidgetFromName(TEXT("InviteDialog")));
+	SearchTextBox = Cast<UEditableTextBox>(GetWidgetFromName(TEXT("InviteSearchTextBox")));
+	FriendsScrollBox = Cast<UScrollBox>(GetWidgetFromName(TEXT("FriendsScrollBox")));
+	InviteStatusText = Cast<UTextBlock>(GetWidgetFromName(TEXT("InviteStatusText")));
+
+	LobbyNameSlot = LobbyNameText.IsValid() ? Cast<UCanvasPanelSlot>(LobbyNameText->Slot) : nullptr;
+	LobbyStatusSlot = LobbyStatusText.IsValid() ? Cast<UCanvasPanelSlot>(LobbyStatusText->Slot) : nullptr;
+	LobbyCodeSlot = LobbyCodeText.IsValid() ? Cast<UCanvasPanelSlot>(LobbyCodeText->Slot) : nullptr;
+	LobbyStatsSlot = PlayerCountText.IsValid() ? Cast<UCanvasPanelSlot>(PlayerCountText->Slot) : nullptr;
+	PlayersPanelSlot = PlayerRowsBox.IsValid() ? Cast<UCanvasPanelSlot>(PlayerRowsBox->Slot) : nullptr;
+	LobbyStartPromptSlot = LobbyStartPromptPanel.IsValid() ? Cast<UCanvasPanelSlot>(LobbyStartPromptPanel->Slot) : nullptr;
+	InviteDialogSlot = InviteDialog.IsValid() ? Cast<UCanvasPanelSlot>(InviteDialog->Slot) : nullptr;
+
+	if (UButton* InviteButton = Cast<UButton>(GetWidgetFromName(TEXT("InviteButton"))))
+	{
+		InviteButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleInviteClicked);
+	}
+	if (UButton* CustomizeButton = Cast<UButton>(GetWidgetFromName(TEXT("CustomizeButton"))))
+	{
+		CustomizeButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleCustomizeClicked);
+	}
+	if (UButton* CloseInviteButton = Cast<UButton>(GetWidgetFromName(TEXT("CloseInviteButton"))))
+	{
+		CloseInviteButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleCloseInviteClicked);
+	}
+	if (UEditableTextBox* InviteSearchTextBox = SearchTextBox.Get())
+	{
+		InviteSearchTextBox->OnTextChanged.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleSearchChanged);
+	}
+	if (UBorder* Dialog = InviteDialog.Get())
+	{
+		Dialog->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	UE_LOG(LogVNH, Display, TEXT("LobbyMenuWidget: bound designer WBP_LobbyMenu widgets."));
+	return true;
 }
 
 UCanvasPanel* UVNHLobbyMenuWidget::EnsureLobbyRootWidget()
