@@ -1,0 +1,36 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0.1",
+	"FriendlyName": "GmRapidThumbnailCreator",
+	"Description": "This is a code plugin that allows you to create high-quality images such as various icons and thumbnails.",
+	"Category": "Editor",
+	"CreatedBy": "DevGaeMyo",
+	"CreatedByURL": "",
+	"DocsURL": "https://zheldgksekfck.tistory.com/242",
+	"MarketplaceURL": "com.epicgames.launcher:\n//ue/marketplace/product/d17f85a9c55649cbbf8866ac308baeb8",
+	"SupportURL": "https://discord.gg/hCRDBkcNGt",
+	"EngineVersion": "5.8.0",
+	"CanContainContent": true,
+	"Installed": true,
+	"Modules": [
+		{
+			"Name": "GmRapidThumbnailCreator",
+			"Type": "Editor",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64"
+			]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "HairStrands",
+			"Enabled": true
+		},
+		{
+			"Name": "EditorScriptingUtilities",
+			"Enabled": true
+		}
+	]
+}

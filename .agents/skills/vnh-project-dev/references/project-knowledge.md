@@ -84,7 +84,19 @@ DataTable state on 2026-07-01:
   - Pants/Shorts 20
   - Shoes 21
   - Accessory 46
-- The `Icon` column is intentionally empty for now because no per-item thumbnails existed under `/Game/UI/CharacterCustomizer/Images` or `/Game/UI/CharacterCustomizer/Thumbnails` at the time of seeding. Existing widget code falls back to text labels.
+- The table was initially seeded without usable thumbnail assets. The `Icon` column now contains deterministic texture paths for every row.
+
+Thumbnail state on 2026-07-04:
+- All 391 DataTable rows contain unique icon paths under `/Game/UI/CharacterCustomizer/Thumbnails`.
+- Texture assets now exist at all 391 configured paths.
+- Verified catalog counts: Accessory 46, Body 16, Face 79, Hair 26, Hat 63, Mustache 18, Outfit 42, Outwear 60, Pants 20, Shoes 21.
+- All 391 textures load with `TC_EditorIcon`, `TEXTUREGROUP_UI`, no mipmaps, and sRGB.
+- The first five body textures were generated before the headless capture framing fix and are visually blank. They must be explicitly replaced before the catalog is considered finished.
+- `Scripts/generate_customizer_thumbnails.py` prefers the `GmRapidThumbnailCreator` plugin as its capture backend and retains the VNH SceneCapture implementation as a fallback.
+- The plugin's scripted path includes null-safe operation without an editor widget, optional save-confirmation suppression, explicit point-light setup, origin-based capture to match the plugin's Blueprint bounds calculations, 20 percent framing margin, bounds-center correction, and UI-icon compression.
+- The plugin package was missing `/GmRapidThumbnailCreator/Materials/RT/RT_ThumbnailCreatorPNG`; the project copy now contains a 512-capable `RTF_RGBA8_SRGB` target at that expected path.
+- A cross-category visual sample passed for body, accessory, face, hair, hat, outfit, outerwear, pants, and shoes after centering. Beard/mustache clipping was corrected by bounds-center normalization.
+- Temporary generator actors use the exact label `VNH_TempRapidThumbnailCreator` and must be removed after interrupted or timed-out batches. Current verified count is zero.
 
 GameInstance should prefer the DataTable when it exists and contains enabled rows for a category. If no rows exist for a category, it falls back to Creative_Characters asset discovery.
 When DataTable rows exist, the runtime prepends a synthetic `None` option for every optional slot except `Body`. Selecting it passes an empty mesh path through the existing customization application path and removes that worn item.
@@ -94,6 +106,13 @@ Default body mesh currently points at:
 
 Creative animation class:
 - `/Game/Creative_Characters/Animations/ABP_CreativeCharacter.ABP_CreativeCharacter_C` is missing and should not be hard-loaded. Runtime code falls back to compatible single-node idle/preview animations instead.
+
+Runtime locomotion assets:
+- `/Game/Creative_Characters/Animations/ABP_CreativeCharacter`
+- `/Game/Creative_Characters/Animations/BS_CreativeLocomotion`
+- The Anim Blueprint updates `Speed` from the owning pawn's planar velocity and feeds a 1D blend space with idle at 0, walk at 135, and run at 300.
+- Before these assets existed, `VNHShopperCharacter` fell back to a single idle sequence, so moving characters appeared to slide.
+- Shopper capsules ignore the `Camera` collision channel. The spring arm still probes world geometry, but other shoppers should no longer retract the camera.
 
 ## Creative_Characters Mesh Taxonomy
 

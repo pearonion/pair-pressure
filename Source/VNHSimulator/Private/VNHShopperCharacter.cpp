@@ -5,6 +5,7 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Components/AudioComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
@@ -129,6 +130,11 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 	AIControllerClass = AVNHShopperAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 	bUseControllerRotationYaw = false;
+
+	if (UCapsuleComponent* ShopperCapsule = GetCapsuleComponent())
+	{
+		ShopperCapsule->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	}
 
 	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
 	{
