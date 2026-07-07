@@ -174,12 +174,22 @@ void UVNHCreateServerWidget::HandleCreateGameClicked()
 	const int32 RoundSeconds = GetSelectedRoundSeconds();
 
 	IOnlineSubsystem* OnlineSubsystem = Online::GetSubsystem(GetWorld());
-	if (!OnlineSubsystem)
+	if (!OnlineSubsystem || OnlineSubsystem->GetSubsystemName().ToString().Equals(TEXT("NULL"), ESearchCase::IgnoreCase))
 	{
-		OnlineSubsystem = Online::GetSubsystem(GetWorld(), FName(TEXT("STEAM")));
-		if (OnlineSubsystem)
+		IOnlineSubsystem* SteamSubsystem = Online::GetSubsystem(GetWorld(), FName(TEXT("STEAM")));
+		if (SteamSubsystem)
 		{
-			UE_LOG(LogVNH, Display, TEXT("CreateServer: default online subsystem was unavailable; using explicit %s subsystem."), *OnlineSubsystem->GetSubsystemName().ToString());
+			if (OnlineSubsystem)
+			{
+				UE_LOG(LogVNH, Display, TEXT("CreateServer: default online subsystem was %s; using explicit %s subsystem for Steam hosting."),
+					*OnlineSubsystem->GetSubsystemName().ToString(),
+					*SteamSubsystem->GetSubsystemName().ToString());
+			}
+			else
+			{
+				UE_LOG(LogVNH, Display, TEXT("CreateServer: default online subsystem was unavailable; using explicit %s subsystem."), *SteamSubsystem->GetSubsystemName().ToString());
+			}
+			OnlineSubsystem = SteamSubsystem;
 		}
 	}
 	if (!OnlineSubsystem)
