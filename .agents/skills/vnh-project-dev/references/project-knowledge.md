@@ -105,12 +105,13 @@ Default body mesh currently points at:
 - `/Game/Creative_Characters/Skeleton_Meshes/SK_Body_009.SK_Body_009`
 
 Creative animation class:
-- `/Game/Creative_Characters/Animations/ABP_CreativeCharacter.ABP_CreativeCharacter_C` is missing and should not be hard-loaded. Runtime code falls back to compatible single-node idle/preview animations instead.
+- `/Game/Creative_Characters/Animations/ABP_CreativeCharacter.ABP_CreativeCharacter_C` exists and is assigned explicitly by `AVNHShopperCharacter::ConfigureCreativeCharacterVisuals` because the game mode spawns the native character class directly. If it cannot load, runtime falls back to the compatible single-node idle animation.
 
 Runtime locomotion assets:
 - `/Game/Creative_Characters/Animations/ABP_CreativeCharacter`
 - `/Game/Creative_Characters/Animations/BS_CreativeLocomotion`
 - The Anim Blueprint updates `Speed` from the owning pawn's planar velocity and feeds a 1D blend space with idle at 0, walk at 135, and run at 300.
+- The locomotion sequences enable root motion and force-lock the root to the reference pose so CharacterMovement controls translation without visual mesh drift.
 - Before these assets existed, `VNHShopperCharacter` fell back to a single idle sequence, so moving characters appeared to slide.
 - Shopper capsules ignore the `Camera` collision channel. The spring arm still probes world geometry, but other shoppers should no longer retract the camera.
 

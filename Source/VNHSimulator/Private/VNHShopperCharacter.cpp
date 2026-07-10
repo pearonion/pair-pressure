@@ -1251,6 +1251,17 @@ void AVNHShopperCharacter::ConfigureCreativeCharacterVisuals()
 
 	if (!MeshComponent->GetAnimClass())
 	{
+		if (UClass* CreativeLocomotionAnimClass = LoadClass<UAnimInstance>(
+			nullptr,
+			TEXT("/Game/Creative_Characters/Animations/ABP_CreativeCharacter.ABP_CreativeCharacter_C")))
+		{
+			MeshComponent->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+			MeshComponent->SetAnimInstanceClass(CreativeLocomotionAnimClass);
+		}
+	}
+
+	if (!MeshComponent->GetAnimClass())
+	{
 		if (UAnimationAsset* IdleAnimation = LoadObject<UAnimationAsset>(nullptr, CreativeIdleAnimPath))
 		{
 			MeshComponent->SetAnimationMode(EAnimationMode::AnimationSingleNode);
