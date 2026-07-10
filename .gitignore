@@ -42,5 +42,4 @@ Plugins/*/Saved/
 .codex/config.toml
 
 # Locally installed marketplace/source packs
-Content/ClothingStore/
 Content/ClothingStore.zip
