@@ -155,6 +155,7 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 	FollowCameraBoom->TargetArmLength = 420.0f;
 	FollowCameraBoom->SetRelativeRotation(FRotator(-18.0f, 0.0f, 0.0f));
 	FollowCameraBoom->bUsePawnControlRotation = true;
+	FollowCameraBoom->bDoCollisionTest = false;
 	FollowCameraBoom->bEnableCameraLag = true;
 	FollowCameraBoom->CameraLagSpeed = 12.0f;
 
