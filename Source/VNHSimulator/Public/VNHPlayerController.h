@@ -145,6 +145,9 @@ public:
 	void ServerRequestAccusation(AVNHShopperCharacter* AccusedShopper);
 
 	UFUNCTION(Server, Reliable)
+	void ServerRequestPressure(AVNHShopperCharacter* PressuredShopper);
+
+	UFUNCTION(Server, Reliable)
 	void ServerRequestHumanDrill();
 
 	UFUNCTION(Server, Reliable)
@@ -396,6 +399,7 @@ private:
 	float LastInteractionTimeSeconds = -100.0f;
 	float TimeUntilRoleHudWidgetLookup = 0.0f;
 	float TimeUntilDebugDeckLabelLookup = 0.0f;
+	bool bDebugDeckVisible = false;
 	float TimeUntilMarkedWidgetLookup = 0.0f;
 	float TimeUntilComposureWidgetLookup = 0.0f;
 	float RoleHudDisplayedFartCooldownRemaining = 0.0f;

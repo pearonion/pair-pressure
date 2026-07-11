@@ -65,6 +65,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Shopper")
 	void SetPossessedByAlien(bool bNewPossessedByAlien);
 
+	void PrepareForPlayerPossession();
+
 	UFUNCTION(BlueprintCallable, Category = "VNH|Shopper")
 	bool UseActNatural();
 

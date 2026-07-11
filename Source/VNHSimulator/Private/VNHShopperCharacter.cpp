@@ -363,6 +363,33 @@ void AVNHShopperCharacter::SetPossessedByAlien(bool bNewPossessedByAlien)
 	OnRep_PossessedByAlien();
 }
 
+void AVNHShopperCharacter::PrepareForPlayerPossession()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (RoutineComponent)
+	{
+		RoutineComponent->PauseRoutineForPossession();
+	}
+
+	SetActorEnableCollision(true);
+	if (UCapsuleComponent* ShopperCapsule = GetCapsuleComponent())
+	{
+		ShopperCapsule->SetCollisionProfileName(TEXT("Pawn"));
+		ShopperCapsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		ShopperCapsule->UpdateOverlaps();
+	}
+
+	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	{
+		MovementComponent->StopMovementImmediately();
+		MovementComponent->SetMovementMode(MOVE_Walking);
+	}
+}
+
 bool AVNHShopperCharacter::UseActNatural()
 {
 	if (!HasAuthority() || !IsPlayerControlled() || !bActNaturalAvailable || !RoutineComponent)

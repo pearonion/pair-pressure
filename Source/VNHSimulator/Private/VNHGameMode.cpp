@@ -1,5 +1,6 @@
 #include "VNHGameMode.h"
 
+#include "Components/CapsuleComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Engine/StaticMeshActor.h"
 #include "Engine/StaticMesh.h"
@@ -570,6 +571,10 @@ bool AVNHGameMode::DebugPossessShopperByIndex(int32 ShopperIndex, EVNHPlayerRole
 	{
 		Shoppers.Add(*It);
 	}
+	Shoppers.Sort([](const AVNHShopperCharacter& LeftShopper, const AVNHShopperCharacter& RightShopper)
+	{
+		return LeftShopper.GetFName().LexicalLess(RightShopper.GetFName());
+	});
 
 	if (!Shoppers.IsValidIndex(ShopperIndex))
 	{
@@ -587,7 +592,20 @@ bool AVNHGameMode::DebugPossessShopperByIndex(int32 ShopperIndex, EVNHPlayerRole
 	}
 
 	Shopper->SetPossessedByAlien(ForcedRole == EVNHPlayerRole::Alien);
+	Shopper->PrepareForPlayerPossession();
+
+	FHitResult GroundHit;
+	FCollisionQueryParams GroundQueryParams(SCENE_QUERY_STAT(VNHDebugPossessionGround), false, Shopper);
+	const FVector GroundTraceStart = Shopper->GetActorLocation() + FVector(0.0f, 0.0f, 200.0f);
+	const FVector GroundTraceEnd = Shopper->GetActorLocation() - FVector(0.0f, 0.0f, 2000.0f);
+	if (GetWorld()->LineTraceSingleByChannel(GroundHit, GroundTraceStart, GroundTraceEnd, ECC_Visibility, GroundQueryParams))
+	{
+		const float CapsuleHalfHeight = Shopper->GetCapsuleComponent() ? Shopper->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() : 88.0f;
+		const FVector GroundedLocation = GroundHit.ImpactPoint + FVector(0.0f, 0.0f, CapsuleHalfHeight + 2.0f);
+		Shopper->SetActorLocation(GroundedLocation, false, nullptr, ETeleportType::TeleportPhysics);
+	}
 	AlienController->Possess(Shopper);
+	AlienController->SetViewTarget(Shopper);
 
 	if (AVNHGameState* VNHGameState = GetVNHGameState())
 	{

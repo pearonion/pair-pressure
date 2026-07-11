@@ -106,6 +106,16 @@ const TCHAR* const RoleHudActionSuffixes[RoleHudActionSlotCount] =
 	TEXT("PlaceDecoy")
 };
 
+const TCHAR* const HunterRoleHudActionSuffixes[RoleHudActionSlotCount] =
+{
+	TEXT("Mark"),
+	TEXT("Accuse"),
+	TEXT("Pressure"),
+	TEXT("HumanDrill"),
+	TEXT("EveryonePoint"),
+	TEXT("FakeDrill")
+};
+
 const TCHAR* const RoleHudKeyboardHotkeyLabels[RoleHudActionSlotCount] =
 {
 	TEXT("1"),
@@ -452,7 +462,7 @@ void AVNHPlayerController::BeginPlay()
 	}
 
 	UpdateAlienInputMapping();
-	ApplyDebugHudInputMode(true);
+	ApplyDebugHudInputMode(false);
 	if (!bIsMainMenuMap)
 	{
 		ApplySavedCharacterCustomization();
@@ -764,7 +774,6 @@ void AVNHPlayerController::SetupInputComponent()
 	InputComponent->BindAction(TEXT("VNH_QuickChat_NoThanks"), IE_Pressed, this, &AVNHPlayerController::HandleQuickChatNoThanksPressed);
 	InputComponent->BindAction(TEXT("VNH_QuickChat_WrongSize"), IE_Pressed, this, &AVNHPlayerController::HandleQuickChatFoundWrongSizePressed);
 	InputComponent->BindAction(TEXT("VNH_ToggleDebugHud"), IE_Pressed, this, &AVNHPlayerController::ToggleDebugHud);
-	InputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &AVNHPlayerController::ToggleDebugHud);
 
 	UE_LOG(LogVNH, Display, TEXT("AlienInput: setup complete. Controller=%s InputComponent=%s EnhancedComponent=%s"),
 		*GetClass()->GetName(),
@@ -852,6 +861,34 @@ void AVNHPlayerController::ExecuteRoleHudActionSlot(int32 SlotIndex)
 {
 	const AVNHPlayerState* VNHPlayerState = GetPlayerState<AVNHPlayerState>();
 	const EVNHPlayerRole AssignedRole = VNHPlayerState ? VNHPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
+	if (AssignedRole == EVNHPlayerRole::Hunter)
+	{
+		switch (SlotIndex)
+		{
+		case 0:
+			MarkFocusedShopper();
+			break;
+		case 1:
+			DebugAccuseFocusedShopper();
+			break;
+		case 2:
+			FakeAccuseFocusedShopper();
+			break;
+		case 3:
+			RequestHumanDrill();
+			break;
+		case 4:
+			RequestEveryonePoint();
+			break;
+		case 5:
+			RequestFakeDrill();
+			break;
+		default:
+			break;
+		}
+		return;
+	}
+
 	if (AssignedRole != EVNHPlayerRole::Human && AssignedRole != EVNHPlayerRole::Alien)
 	{
 		return;
@@ -896,14 +933,16 @@ void AVNHPlayerController::UpdateRoleHudActionHotkeyLabels()
 	const AVNHPlayerState* VNHPlayerState = GetPlayerState<AVNHPlayerState>();
 	const EVNHPlayerRole AssignedRole = VNHPlayerState ? VNHPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
 	const bool bController = IsControllerInputPresetSelected();
-	const int32 VisibleSlotCount = AssignedRole == EVNHPlayerRole::Alien ? RoleHudActionSlotCount : 5;
+	const bool bHunter = AssignedRole == EVNHPlayerRole::Hunter;
+	const TCHAR* const* ActiveActionSuffixes = bHunter ? HunterRoleHudActionSuffixes : RoleHudActionSuffixes;
+	const int32 VisibleSlotCount = bHunter || AssignedRole == EVNHPlayerRole::Alien ? RoleHudActionSlotCount : 5;
 
 	for (int32 SlotIndex = 0; SlotIndex < RoleHudActionSlotCount; ++SlotIndex)
 	{
 		if (!RoleHudActionHotkeyTextBlocks[SlotIndex].IsValid())
 		{
 			RoleHudActionHotkeyTextBlocks[SlotIndex] = Cast<UTextBlock>(Widget->GetWidgetFromName(
-				FName(FString::Printf(TEXT("ActionHotkeyText_%s"), RoleHudActionSuffixes[SlotIndex]))));
+				FName(FString::Printf(TEXT("ActionHotkeyText_%s"), ActiveActionSuffixes[SlotIndex]))));
 		}
 
 		if (UTextBlock* HotkeyText = RoleHudActionHotkeyTextBlocks[SlotIndex].Get())
@@ -1309,7 +1348,7 @@ void AVNHPlayerController::MarkFocusedShopper()
 	AVNHShopperCharacter* Shopper = GetInteractionShopper();
 	if (!Shopper)
 	{
-		LastInteractionText = TEXT("No target to mark. Aim and right-click a shopper.");
+		LastInteractionText = TEXT("No target to mark. Hover over a shopper.");
 		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 		return;
 	}
@@ -1357,12 +1396,13 @@ void AVNHPlayerController::FakeAccuseFocusedShopper()
 	AVNHShopperCharacter* Shopper = GetInteractionShopper();
 	if (!Shopper)
 	{
-		LastInteractionText = TEXT("No target to pressure. Aim and right-click a shopper.");
+		LastInteractionText = TEXT("No target to pressure. Hover over a shopper.");
 		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 		return;
 	}
 
-	LastInteractionText = FString::Printf(TEXT("Fake accusation pressure on %s."), *GetNameSafe(Shopper));
+	ServerRequestPressure(Shopper);
+	LastInteractionText = FString::Printf(TEXT("Accusation pressure on %s."), *GetNameSafe(Shopper));
 	LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 	UE_LOG(LogVNH, Display, TEXT("Interaction: %s"), *LastInteractionText);
 }
@@ -1379,17 +1419,14 @@ void AVNHPlayerController::DebugAccuseFocusedShopper()
 	AVNHShopperCharacter* Shopper = GetInteractionShopper();
 	if (!Shopper)
 	{
-		LastInteractionText = TEXT("No target to accuse. Aim and right-click a shopper.");
+		LastInteractionText = TEXT("No target to accuse. Hover over a shopper.");
 		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 		return;
 	}
 
-	if (AVNHGameMode* VNHGameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AVNHGameMode>() : nullptr)
-	{
-		VNHGameMode->DebugResolveAccusation(Shopper);
-		LastInteractionText = FString::Printf(TEXT("Accused %s."), *GetNameSafe(Shopper));
-		LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
-	}
+	RequestAccusation(Shopper);
+	LastInteractionText = FString::Printf(TEXT("Accused %s."), *GetNameSafe(Shopper));
+	LastInteractionTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 }
 
 void AVNHPlayerController::CancelTargetSelection()
@@ -1723,6 +1760,24 @@ void AVNHPlayerController::ServerPerformUniversalAction_Implementation(EVNHUnive
 	ClientReceiveInteractionText(FString::Printf(TEXT("%s // %s"), ToUniversalActionText(Action), EffectiveTarget ? *GetNameSafe(EffectiveTarget) : TEXT("NO TARGET")));
 }
 
+void AVNHPlayerController::ServerRequestPressure_Implementation(AVNHShopperCharacter* PressuredShopper)
+{
+	AVNHShopperCharacter* HunterShopper = Cast<AVNHShopperCharacter>(GetPawn());
+	if (!IsAssignedHunter() || !HunterShopper || !PressuredShopper)
+	{
+		return;
+	}
+
+	if (FVector::DistSquared(HunterShopper->GetActorLocation(), PressuredShopper->GetActorLocation()) > FMath::Square(2000.0f))
+	{
+		ClientReceiveInteractionText(TEXT("Pressure target is out of range."));
+		return;
+	}
+
+	PressuredShopper->ApplyComposureDelta(-8.0f, TEXT("HunterPressure"));
+	ClientReceiveInteractionText(FString::Printf(TEXT("PRESSURE // %s"), *GetNameSafe(PressuredShopper)));
+}
+
 void AVNHPlayerController::ClientReceiveInteractionText_Implementation(const FString& InteractionText)
 {
 	LastInteractionText = InteractionText;
@@ -2008,13 +2063,7 @@ void AVNHPlayerController::HandleTargetFocusPressed()
 
 void AVNHPlayerController::HandleInspectPressed()
 {
-	if (FocusedInteractable.IsValid() || (!IsAssignedHunter() && FocusedShopper.IsValid()))
-	{
-		RequestUniversalAction(EVNHUniversalAction::Inspect);
-		return;
-	}
-
-	RequestInteract();
+	RequestUniversalAction(EVNHUniversalAction::Inspect);
 }
 
 void AVNHPlayerController::HandlePointPressed()
@@ -2185,14 +2234,27 @@ void AVNHPlayerController::HandleQuickChatFoundWrongSizePressed()
 
 void AVNHPlayerController::ToggleDebugHud()
 {
+	bDebugDeckVisible = !bDebugDeckVisible;
+
+	TArray<UUserWidget*> DebugDeckWidgets;
+	UWidgetBlueprintLibrary::GetAllWidgetsOfClass(this, DebugDeckWidgets, UUserWidget::StaticClass(), false);
+	for (UUserWidget* DebugDeckWidget : DebugDeckWidgets)
+	{
+		if (DebugDeckWidget && DebugDeckWidget->GetClass()->GetName().Contains(TEXT("WBP_VNHDebugDeck")))
+		{
+			DebugDeckWidget->SetVisibility(bDebugDeckVisible ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		}
+	}
+
 	AVNHDebugHUD* DebugHUD = GetHUD<AVNHDebugHUD>();
 	if (!DebugHUD)
 	{
+		ApplyDebugHudInputMode(bDebugDeckVisible);
 		return;
 	}
 
-	DebugHUD->ToggleDebugPanel();
-	ApplyDebugHudInputMode(DebugHUD->IsDebugPanelVisible());
+	DebugHUD->SetDebugPanelVisible(bDebugDeckVisible);
+	ApplyDebugHudInputMode(bDebugDeckVisible);
 }
 
 void AVNHPlayerController::ApplyDebugHudInputMode(bool bDebugHudVisible)
@@ -2628,6 +2690,8 @@ void AVNHPlayerController::UpdateDebugDeckRuntimeLabels(float DeltaTime)
 			{
 				continue;
 			}
+
+			Widget->SetVisibility(bDebugDeckVisible ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 
 			if (!RoundStatusTextBlock.IsValid())
 			{
@@ -3110,7 +3174,7 @@ void AVNHPlayerController::UpdateRoleCameraMode()
 
 	if (AVNHShopperCharacter* Shopper = Cast<AVNHShopperCharacter>(GetPawn()))
 	{
-		Shopper->SetFirstPersonViewEnabled(IsAssignedHunter());
+		Shopper->SetFirstPersonViewEnabled(false);
 	}
 }
 
@@ -3562,12 +3626,12 @@ void AVNHPlayerController::PerformDrop(AVNHShopperCharacter* Shopper)
 
 AVNHShopperCharacter* AVNHPlayerController::GetInteractionShopper() const
 {
-	if (AVNHShopperCharacter* Shopper = TargetedShopper.Get())
+	if (AVNHShopperCharacter* Shopper = FocusedShopper.Get())
 	{
 		return Shopper;
 	}
 
-	return FocusedShopper.Get();
+	return TargetedShopper.Get();
 }
 
 bool AVNHPlayerController::IsAssignedHunter() const

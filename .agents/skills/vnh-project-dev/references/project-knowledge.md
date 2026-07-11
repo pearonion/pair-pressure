@@ -110,10 +110,20 @@ Creative animation class:
 Runtime locomotion assets:
 - `/Game/Creative_Characters/Animations/ABP_CreativeCharacter`
 - `/Game/Creative_Characters/Animations/BS_CreativeLocomotion`
+- The AnimGraph routes `BS_CreativeLocomotion` through `Slot 'DefaultSlot'` before `Output Pose`, allowing the role-action montages to override locomotion during playback.
+- Jump animation is handled by the `LocomotionAndJump` state machine in `ABP_CreativeCharacter`: Locomotion -> `ANIM_Jump_Start` -> looping `ANIM_Jump_Loop` -> `ANIM_Jump_End` -> Locomotion. `IsInAir` is updated from CharacterMovement `IsFalling`, and the state-machine output remains routed through `DefaultSlot`.
+- The three Creative Character jump sequences force-lock their root because CharacterMovement controls capsule translation.
 - The Anim Blueprint updates `Speed` from the owning pawn's planar velocity and feeds a 1D blend space with idle at 0, walk at 135, and run at 300.
 - The locomotion sequences enable root motion and force-lock the root to the reference pose so CharacterMovement controls translation without visual mesh drift.
 - Before these assets existed, `VNHShopperCharacter` fell back to a single idle sequence, so moving characters appeared to slide.
 - Shopper capsules ignore the `Camera` collision channel. The spring arm still probes world geometry, but other shoppers should no longer retract the camera.
+- Hunter, Human, and Alien players all use the third-person follow camera and `ABP_CreativeCharacter`; Hunter role-action montages remain blocked by native role validation, while locomotion and jump animation remain available.
+
+Role-action animation assets:
+- `/Game/Data/DT_HumanActionAnimations` and `/Game/Data/DT_AlienActionAnimations` use `UAnimMontage` arrays for high/low/no composure, not raw `UAnimSequence` references.
+- Compatible role-action montages live under `/Game/Animations/RoleActions` and target `/Game/Creative_Characters/Animations/SKEL_Skeleton`, the skeleton used by `/Game/Creative_Characters/Animations/SK_Animations`.
+- Human/Alien Inspect HUD clicks and action-slot 1 always request `EVNHUniversalAction::Inspect`, matching Point, Wave, and Laugh; normal world interaction remains on the separate interact input.
+- Hunter action slots are: 1 Mark, 2 Accuse, 3 Pressure, 4 Human Drill, 5 Everyone Point, 6 Fake Drill. Keyboard/controller slot dispatch and Hunter-specific hotkey widget suffixes use this same order. Hovered shoppers take priority over an older locked target; Accuse and Pressure use server RPCs, with Pressure applying an authoritative composure penalty.
 
 ## Creative_Characters Mesh Taxonomy
 
@@ -192,9 +202,10 @@ Settings dialog:
 ## Debug/Test Deck
 
 - Test deck/debug panel is owned by `VNHDebugHUD`.
-- Toggle path includes an action mapping named `VNH_ToggleDebugHud` and direct key binding in `VNHPlayerController::SetupInputComponent`.
-- `Config/DefaultInput.ini` has mapped `VNH_ToggleDebugHud` to `F1`; if the desired key changes, update both config and direct code binding.
+- `/Game/Blueprints/BP_VNHDebugDeckSpawner` creates `/Game/UI/WBP_VNHDebugDeck` in `MVP_ClothingStore` and other gameplay maps. The deck starts collapsed and the player controller toggles the actual UMG widget visibility.
+- `VNH_ToggleDebugHud` is mapped only to `F1` in `Config/DefaultInput.ini`, with no direct Tab/Backslash bindings, so it works in PIE/editor play and packaged builds without consuming those gameplay keys.
 - Do not use backtick/tilde for debug deck because Unreal console uses it.
+- Debug shopper possession sorts shoppers by actor name before applying an index. Any role selected through the deck pauses the NPC routine, restores Pawn capsule collision and walking mode, grounds the shopper with a downward trace, then possesses it and updates the view target. This prevents Hunter test possession from inheriting unsafe NPC movement/collision state or falling through the store floor.
 
 ## Known Pitfalls
 
