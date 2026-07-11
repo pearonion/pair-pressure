@@ -284,6 +284,22 @@ FAutoConsoleCommandWithWorldAndArgs VNHPossessAlienCommand(
 		}
 	}));
 
+FAutoConsoleCommandWithWorldAndArgs VNHPossessHumanRoleCommand(
+	TEXT("vnh.PossessHumanRole"),
+	TEXT("Debug: possess a shopper as Human. Usage: vnh.PossessHumanRole 2"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
+	{
+		if (AVNHGameMode* GameMode = GetVNHGameMode(World))
+		{
+			const int32 ShopperIndex = Args.IsValidIndex(0) ? FCString::Atoi(*Args[0]) : 2;
+			GameMode->DebugPossessShopperByIndex(ShopperIndex, EVNHPlayerRole::Human);
+		}
+		else
+		{
+			UE_LOG(LogVNH, Warning, TEXT("vnh.PossessHumanRole failed: no VNH auth game mode in current world."));
+		}
+	}));
+
 FAutoConsoleCommandWithWorldAndArgs VNHSpawnTestHumanCommand(
 	TEXT("vnh.SpawnTestHuman"),
 	TEXT("Debug: spawn a visible shopper test pawn and possess it. Usage: vnh.SpawnTestHuman [X Y Z]"),

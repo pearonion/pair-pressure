@@ -179,8 +179,9 @@ TArray<AVNHDebugHUD::FDebugButton> AVNHDebugHUD::BuildButtons() const
 	return {
 		{TEXT("StartRound"), TEXT("Start Round"), TEXT("vnh.StartRound")},
 		{TEXT("StartRoutines"), TEXT("Kick NPC Routines"), TEXT("vnh.StartRoutines")},
-		{TEXT("PossessAlien0"), TEXT("Alien 0"), TEXT("vnh.PossessHuman 0 Alien")},
-		{TEXT("PossessHunter1"), TEXT("Hunter Test"), TEXT("vnh.PossessHuman 1 Hunter")},
+		{TEXT("PossessAlien0"), TEXT("Alien 0"), TEXT("vnh.PossessAlien 0")},
+		{TEXT("PossessHunter1"), TEXT("Hunter 1"), TEXT("vnh.PossessHunter 1")},
+		{TEXT("PossessHuman2"), TEXT("Human 2"), TEXT("vnh.PossessHumanRole 2")},
 		{TEXT("Freeze"), TEXT("Freeze Test"), TEXT("vnh.TriggerTest Freeze")},
 		{TEXT("LookEntrance"), TEXT("Look Here"), TEXT("vnh.TriggerTest LookHere")},
 		{TEXT("ClearAisle"), TEXT("Clear Aisle"), TEXT("vnh.TriggerTest ClearAisle")},

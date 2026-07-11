@@ -7,6 +7,7 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/HUD.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerStart.h"
 #include "GameFramework/PlayerState.h"
@@ -23,7 +24,7 @@
 namespace
 {
 const FName VNHDebugArenaTag(TEXT("VNHDebugArena"));
-const TCHAR* VNHStoreMapTravelURL = TEXT("/Game/Maps/MVP_ClothingStore?StartRound=1");
+const TCHAR* VNHStoreMapPath = TEXT("/Game/Maps/MVP_ClothingStore");
 
 const FText& GetVNHLightErrand(int32 Index)
 {
@@ -279,8 +280,12 @@ bool AVNHGameMode::StartRoundFromLobby(APlayerController* RequestingPlayer)
 			return true;
 		}
 
-		World->ServerTravel(VNHStoreMapTravelURL);
-		UE_LOG(LogVNH, Display, TEXT("LobbyStart: travelling %d connected players to %s."), CountConnectedPlayers(), VNHStoreMapTravelURL);
+		const FString StoreTravelURL = FString::Printf(
+			TEXT("%s?StartRound=1?RoundSeconds=%d"),
+			VNHStoreMapPath,
+			FMath::RoundToInt(PhaseTiming.InvestigationSeconds));
+		World->ServerTravel(StoreTravelURL);
+		UE_LOG(LogVNH, Display, TEXT("LobbyStart: travelling %d connected players to %s."), CountConnectedPlayers(), *StoreTravelURL);
 		return true;
 	}
 
@@ -612,7 +617,16 @@ bool AVNHGameMode::DebugPossessShopperByIndex(int32 ShopperIndex, EVNHPlayerRole
 		VNHGameState->SetPossessedShopper(ForcedRole == EVNHPlayerRole::Alien ? Shopper : nullptr);
 	}
 
-	UE_LOG(LogVNH, Display, TEXT("vnh.PossessHuman: controller possessed shopper index %d (%s) as role %d."), ShopperIndex, *GetNameSafe(Shopper), static_cast<int32>(ForcedRole));
+	const bool bPossessedShopperFalling = Shopper->GetCharacterMovement() && Shopper->GetCharacterMovement()->IsFalling();
+	UE_LOG(
+		LogVNH,
+		Display,
+		TEXT("vnh.PossessHuman: controller possessed shopper index %d (%s) as role %d at Z=%.1f Falling=%s."),
+		ShopperIndex,
+		*GetNameSafe(Shopper),
+		static_cast<int32>(ForcedRole),
+		Shopper->GetActorLocation().Z,
+		bPossessedShopperFalling ? TEXT("true") : TEXT("false"));
 	return true;
 }
 
@@ -813,6 +827,7 @@ void AVNHGameMode::EnsureMvpInteractionProps()
 		{TEXT("/Game/Interactions/BP_VNHProp_Cup.BP_VNHProp_Cup_C"), TEXT("MVP_Prop_Cup"), FVector(180.0f, 0.0f, 45.0f), false},
 		{TEXT("/Game/Interactions/BP_VNHProp_Tool.BP_VNHProp_Tool_C"), TEXT("MVP_Prop_Tool"), FVector(180.0f, 70.0f, 45.0f), false},
 		{TEXT("/Game/Interactions/BP_VNHProp_Suspicious.BP_VNHProp_Suspicious_C"), TEXT("MVP_Prop_Suspicious"), FVector(180.0f, 140.0f, 45.0f), true},
+		{TEXT("/Game/Interactions/BP_VNHProp_Football.BP_VNHProp_Football_C"), TEXT("MVP_Prop_Football"), FVector(250.0f, 0.0f, 45.0f), false},
 	};
 
 	FActorSpawnParameters SpawnParameters;

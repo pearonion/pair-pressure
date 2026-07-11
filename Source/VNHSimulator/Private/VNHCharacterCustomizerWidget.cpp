@@ -325,6 +325,10 @@ bool UVNHCharacterCustomizerWidget::BindDesignerWidgets()
 	MustacheButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("MustacheButton")));
 	OutfitButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("OutfitButton")));
 	OutwearButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("OutwearButton")));
+	if (OutwearButton)
+	{
+		OutwearButton->SetVisibility(ESlateVisibility::Collapsed);
+	}
 	PantsButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("PantsButton")));
 	ShoesButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("ShoesButton")));
 	AccessoryButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("AccessoryButton")));
@@ -365,8 +369,10 @@ bool UVNHCharacterCustomizerWidget::BindDesignerWidgets()
 		if (Button && (!Icon || !Label))
 		{
 			UVerticalBox* ItemStack = WidgetTree->ConstructWidget<UVerticalBox>();
+			ItemStack->SetClipping(EWidgetClipping::ClipToBounds);
 			Icon = WidgetTree->ConstructWidget<UImage>();
-			Icon->SetDesiredSizeOverride(FVector2D(118.0f, 82.0f));
+			Icon->SetDesiredSizeOverride(FVector2D(158.0f, 110.0f));
+			Icon->SetClipping(EWidgetClipping::ClipToBounds);
 
 			Label = WidgetTree->ConstructWidget<UTextBlock>();
 			Label->SetFont(Font(12));
@@ -375,9 +381,18 @@ bool UVNHCharacterCustomizerWidget::BindDesignerWidgets()
 			Label->SetAutoWrapText(true);
 			Label->SetWrapTextAt(126.0f);
 
-			ItemStack->AddChildToVerticalBox(Icon);
+			if (UVerticalBoxSlot* IconSlot = ItemStack->AddChildToVerticalBox(Icon))
+			{
+				IconSlot->SetHorizontalAlignment(HAlign_Center);
+				IconSlot->SetVerticalAlignment(VAlign_Center);
+				IconSlot->SetPadding(FMargin(0.0f));
+			}
 			ItemStack->AddChildToVerticalBox(Label);
 			Button->SetContent(ItemStack);
+		}
+		if (Button)
+		{
+			Button->SetClipping(EWidgetClipping::ClipToBounds);
 		}
 
 		ItemSlotButtons.Add(Button);
@@ -973,6 +988,10 @@ void UVNHCharacterCustomizerWidget::RefreshItemGrid()
 
 		const int32 OptionIndex = (ActivePage * ItemsPerPage) + LocalIndex;
 		const bool bHasOption = OptionIndex < OptionCount;
+		const FString OptionLabel = bHasOption
+			? VNHGameInstance->GetCustomizationSlotOptionLabel(ActiveSlot, OptionIndex)
+			: FString();
+		const bool bShowNoneLabel = OptionLabel.Equals(TEXT("None"), ESearchCase::IgnoreCase);
 		Button->SetVisibility(bHasOption ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 		Button->SetIsEnabled(bHasOption);
 
@@ -988,10 +1007,8 @@ void UVNHCharacterCustomizerWidget::RefreshItemGrid()
 			Label->SetJustification(ETextJustify::Center);
 			Label->SetAutoWrapText(true);
 			Label->SetWrapTextAt(190.0f);
-			Label->SetVisibility(ESlateVisibility::HitTestInvisible);
-			Label->SetText(bHasOption
-				? FText::FromString(VNHGameInstance->GetCustomizationSlotOptionLabel(ActiveSlot, OptionIndex))
-				: FText::GetEmpty());
+			Label->SetVisibility(bShowNoneLabel ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+			Label->SetText(bShowNoneLabel ? FText::FromString(OptionLabel) : FText::GetEmpty());
 		}
 
 		UImage* Icon = ItemSlotImages.IsValidIndex(LocalIndex) ? ItemSlotImages[LocalIndex].Get() : nullptr;
@@ -1011,7 +1028,8 @@ void UVNHCharacterCustomizerWidget::RefreshItemGrid()
 			{
 				if (UTexture2D* Texture = IconAsset.LoadSynchronous())
 				{
-					Icon->SetBrushFromTexture(Texture, true);
+					Icon->SetDesiredSizeOverride(FVector2D(158.0f, 110.0f));
+					Icon->SetBrushFromTexture(Texture, false);
 					Icon->SetVisibility(ESlateVisibility::HitTestInvisible);
 					Icon->SetRenderOpacity(1.0f);
 				}

@@ -20,6 +20,13 @@ void UVNHAlienLocomotionComponent::BeginPlay()
 	if (OwnerCharacter.IsValid())
 	{
 		MovementComponent = OwnerCharacter->GetCharacterMovement();
+		OwnerCharacter->bUseControllerRotationYaw = false;
+		if (MovementComponent.IsValid())
+		{
+			MovementComponent->bOrientRotationToMovement = false;
+			MovementComponent->bUseControllerDesiredRotation = true;
+			MovementComponent->RotationRate = FRotator(0.0f, GetBodyTurnRateDegrees(), 0.0f);
+		}
 	}
 }
 
@@ -195,16 +202,38 @@ void UVNHAlienLocomotionComponent::ApplyMovement(const FVector& DesiredDirection
 
 void UVNHAlienLocomotionComponent::UpdateBodyFacing(float DeltaTime, const FVector& DesiredDirection)
 {
-	if (!OwnerCharacter.IsValid() || DesiredDirection.IsNearlyZero())
+	if (!OwnerCharacter.IsValid() || !MovementComponent.IsValid())
 	{
 		return;
 	}
 
-	const FRotator CurrentRotation = OwnerCharacter->GetActorRotation();
-	const FRotator TargetRotation(0.0f, DesiredDirection.Rotation().Yaw + LocomotionState.WobbleDegrees, 0.0f);
-	LocomotionState.BodyYawDeltaDegrees = FMath::FindDeltaAngleDegrees(CurrentRotation.Yaw, TargetRotation.Yaw);
-	const FRotator NewRotation = FMath::RInterpConstantTo(CurrentRotation, TargetRotation, DeltaTime, GetBodyTurnRateDegrees());
-	OwnerCharacter->SetActorRotation(FRotator(0.0f, NewRotation.Yaw, 0.0f));
+	if (DesiredDirection.IsNearlyZero())
+	{
+		LocomotionState.BodyYawDeltaDegrees = FMath::FindDeltaAngleDegrees(
+			OwnerCharacter->GetActorRotation().Yaw,
+			OwnerCharacter->GetControlRotation().Yaw);
+		return;
+	}
+
+	AController* Controller = OwnerCharacter->GetController();
+	if (!Controller)
+	{
+		return;
+	}
+
+	const FRotator CurrentControlRotation = Controller->GetControlRotation();
+	const float WobbleYaw = !DesiredDirection.IsNearlyZero() ? LocomotionState.WobbleDegrees : 0.0f;
+	const FRotator TargetControlRotation(CurrentControlRotation.Pitch, DesiredDirection.Rotation().Yaw + WobbleYaw, 0.0f);
+	const FRotator NewControlRotation = FMath::RInterpConstantTo(
+		CurrentControlRotation,
+		TargetControlRotation,
+		DeltaTime,
+		GetBodyTurnRateDegrees());
+	Controller->SetControlRotation(NewControlRotation);
+	MovementComponent->RotationRate = FRotator(0.0f, GetBodyTurnRateDegrees(), 0.0f);
+	LocomotionState.BodyYawDeltaDegrees = FMath::FindDeltaAngleDegrees(
+		OwnerCharacter->GetActorRotation().Yaw,
+		TargetControlRotation.Yaw);
 }
 
 void UVNHAlienLocomotionComponent::UpdateAnimationRate()

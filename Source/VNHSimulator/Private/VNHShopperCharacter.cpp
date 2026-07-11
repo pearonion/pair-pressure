@@ -152,21 +152,36 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 
 	FollowCameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("FollowCameraBoom"));
 	FollowCameraBoom->SetupAttachment(RootComponent);
-	FollowCameraBoom->TargetArmLength = 420.0f;
+	FollowCameraBoom->TargetArmLength = 460.0f;
+	FollowCameraBoom->TargetOffset = FVector(0.0f, 0.0f, 68.0f);
 	FollowCameraBoom->SetRelativeRotation(FRotator(-18.0f, 0.0f, 0.0f));
 	FollowCameraBoom->bUsePawnControlRotation = true;
-	FollowCameraBoom->bDoCollisionTest = false;
-	FollowCameraBoom->bEnableCameraLag = true;
+	FollowCameraBoom->bDoCollisionTest = true;
+	FollowCameraBoom->ProbeSize = 18.0f;
+	FollowCameraBoom->ProbeChannel = ECC_Camera;
+	FollowCameraBoom->bEnableCameraLag = false;
 	FollowCameraBoom->CameraLagSpeed = 12.0f;
 
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 	FollowCamera->SetupAttachment(FollowCameraBoom, USpringArmComponent::SocketName);
 	FollowCamera->bUsePawnControlRotation = false;
+	FollowCamera->PostProcessSettings.bOverride_MotionBlurAmount = true;
+	FollowCamera->PostProcessSettings.MotionBlurAmount = 0.0f;
+	FollowCamera->PostProcessSettings.bOverride_MotionBlurMax = true;
+	FollowCamera->PostProcessSettings.MotionBlurMax = 0.0f;
+	FollowCamera->PostProcessSettings.bOverride_MotionBlurPerObjectSize = true;
+	FollowCamera->PostProcessSettings.MotionBlurPerObjectSize = 0.0f;
 
 	FirstPersonCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FirstPersonCamera"));
 	FirstPersonCamera->SetupAttachment(RootComponent);
 	FirstPersonCamera->SetRelativeLocation(FVector(8.0f, 0.0f, 64.0f));
 	FirstPersonCamera->bUsePawnControlRotation = true;
+	FirstPersonCamera->PostProcessSettings.bOverride_MotionBlurAmount = true;
+	FirstPersonCamera->PostProcessSettings.MotionBlurAmount = 0.0f;
+	FirstPersonCamera->PostProcessSettings.bOverride_MotionBlurMax = true;
+	FirstPersonCamera->PostProcessSettings.MotionBlurMax = 0.0f;
+	FirstPersonCamera->PostProcessSettings.bOverride_MotionBlurPerObjectSize = true;
+	FirstPersonCamera->PostProcessSettings.MotionBlurPerObjectSize = 0.0f;
 	FirstPersonCamera->SetAutoActivate(false);
 
 	DebugBodyMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DebugBodyMesh"));
@@ -252,6 +267,7 @@ void AVNHShopperCharacter::BeginPlay()
 void AVNHShopperCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	UpdateAdaptiveFollowCamera(DeltaSeconds);
 
 	if (HasAuthority() && IsPlayerControlled())
 	{
@@ -334,7 +350,7 @@ void AVNHShopperCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 	DOREPLIFETIME(AVNHShopperCharacter, CurrentFartThreshold);
 	DOREPLIFETIME(AVNHShopperCharacter, FartCooldownRemaining);
 	DOREPLIFETIME(AVNHShopperCharacter, LastUniversalAction);
-	DOREPLIFETIME(AVNHShopperCharacter, HeldProp);
+	DOREPLIFETIME(AVNHShopperCharacter, HeldProps);
 	DOREPLIFETIME(AVNHShopperCharacter, CharacterCustomization);
 }
 
@@ -361,6 +377,40 @@ void AVNHShopperCharacter::SetPossessedByAlien(bool bNewPossessedByAlien)
 	}
 
 	OnRep_PossessedByAlien();
+}
+
+void AVNHShopperCharacter::UpdateAdaptiveFollowCamera(float DeltaSeconds)
+{
+	if (!IsLocallyControlled() || !FollowCameraBoom || !FollowCamera || !FollowCamera->IsActive())
+	{
+		return;
+	}
+
+	const FVector BoomOrigin = FollowCameraBoom->GetComponentLocation() + FollowCameraBoom->TargetOffset;
+	const float CurrentCameraDistance = FVector::Distance(BoomOrigin, FollowCamera->GetComponentLocation());
+	const float CompressionAlpha = 1.0f - FMath::Clamp(
+		CurrentCameraDistance / FMath::Max(FollowCameraBoom->TargetArmLength, 1.0f),
+		0.0f,
+		1.0f);
+	const float DesiredExtraHeight = FMath::SmoothStep(0.15f, 0.8f, CompressionAlpha) * 125.0f;
+	const float OverheadAlpha = FMath::SmoothStep(0.2f, 0.85f, CompressionAlpha);
+	const float NewSocketHeight = FMath::FInterpTo(
+		FollowCameraBoom->SocketOffset.Z,
+		DesiredExtraHeight,
+		DeltaSeconds,
+		7.0f);
+	FollowCameraBoom->SocketOffset.Z = NewSocketHeight;
+
+	if (AController* ShopperController = GetController())
+	{
+		FRotator AdaptiveControlRotation = ShopperController->GetControlRotation();
+		AdaptiveControlRotation.Pitch = FMath::FInterpTo(
+			AdaptiveControlRotation.Pitch,
+			FMath::Lerp(-18.0f, -55.0f, OverheadAlpha),
+			DeltaSeconds,
+			6.0f);
+		ShopperController->SetControlRotation(AdaptiveControlRotation);
+	}
 }
 
 void AVNHShopperCharacter::PrepareForPlayerPossession()
@@ -478,7 +528,34 @@ void AVNHShopperCharacter::SetHeldProp(AActor* NewHeldProp)
 {
 	if (HasAuthority())
 	{
-		HeldProp = NewHeldProp;
+		if (NewHeldProp)
+		{
+			HeldProps.AddUnique(NewHeldProp);
+		}
+		else if (!HeldProps.IsEmpty())
+		{
+			HeldProps.Pop();
+		}
+	}
+}
+
+void AVNHShopperCharacter::PlayDirectionalKnockdown(const FVector& ImpactOrigin)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const AVNHPlayerState* VNHPlayerState = GetPlayerState<AVNHPlayerState>();
+	const EVNHPlayerRole PlayerRole = VNHPlayerState ? VNHPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
+	if (PlayerRole != EVNHPlayerRole::Human && PlayerRole != EVNHPlayerRole::Alien && PlayerRole != EVNHPlayerRole::Hunter)
+	{
+		return;
+	}
+
+	if (UAnimMontage* KnockdownMontage = ResolveFartKnockdownMontage(PlayerRole, GetFartKnockdownRowName(this, ImpactOrigin)))
+	{
+		PlayUniversalActionMontage(KnockdownMontage);
 	}
 }
 
@@ -740,7 +817,7 @@ bool AVNHShopperCharacter::IsNearSuspiciousObject() const
 	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
 	{
 		const AActor* Actor = *It;
-		if (Actor && Actor != HeldProp
+		if (Actor && !IsHoldingProp(Actor)
 			&& (Actor->ActorHasTag(TEXT("VNH.Suspicious")) || Actor->GetClass()->GetName().Contains(TEXT("Suspicious")))
 			&& FVector::DistSquared(Actor->GetActorLocation(), GetActorLocation()) <= FMath::Square(180.0f))
 		{
@@ -868,7 +945,7 @@ UAnimMontage* AVNHShopperCharacter::ResolveFartKnockdownMontage(EVNHPlayerRole P
 	}
 
 	UDataTable* ActionAnimationTable = nullptr;
-	if (PlayerRole == EVNHPlayerRole::Human)
+	if (PlayerRole == EVNHPlayerRole::Human || PlayerRole == EVNHPlayerRole::Hunter)
 	{
 		ActionAnimationTable = HumanActionAnimationTable.LoadSynchronous();
 	}
@@ -892,11 +969,11 @@ UAnimMontage* AVNHShopperCharacter::ResolveFartKnockdownMontage(EVNHPlayerRole P
 
 	const UScriptStruct* RowStruct = ActionAnimationTable->GetRowStruct();
 	const TCHAR* AnimationFieldName = TEXT("HighComposureAnimations");
-	if (Composure <= 0.0f)
+	if (PlayerRole != EVNHPlayerRole::Hunter && Composure <= 0.0f)
 	{
 		AnimationFieldName = TEXT("NoComposureAnimations");
 	}
-	else if (Composure <= 50.0f)
+	else if (PlayerRole != EVNHPlayerRole::Hunter && Composure <= 50.0f)
 	{
 		AnimationFieldName = TEXT("LowComposureAnimations");
 	}

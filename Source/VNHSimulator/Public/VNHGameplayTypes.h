@@ -70,7 +70,8 @@ enum class EVNHUniversalAction : uint8
 	Fart,
 	PlaceDecoy,
 	PickUp,
-	Drop
+	Drop,
+	Throw
 };
 
 UENUM(BlueprintType)

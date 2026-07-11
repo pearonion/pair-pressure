@@ -3,6 +3,7 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Animation/AnimMontage.h"
+#include "Animation/AnimInstance.h"
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
@@ -13,6 +14,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/TextBlock.h"
 #include "Components/Button.h"
+#include "Components/CanvasPanelSlot.h"
 #include "Components/VerticalBox.h"
 #include "Components/Widget.h"
 #include "Engine/DataTable.h"
@@ -93,6 +95,9 @@ constexpr float LobbyStartHoldRequiredSeconds = 1.5f;
 constexpr int32 EveryonePointMaxUsesPerRound = 2;
 constexpr int32 RoleHudActionSlotCount = 6;
 constexpr float RoleHudFartCooldownDisplayTolerance = 0.05f;
+constexpr float ThrowMaxChargeSeconds = 1.5f;
+constexpr float ThrowMinSpeed = 850.0f;
+constexpr float ThrowMaxSpeed = 2400.0f;
 constexpr const TCHAR* VNHSettingsSection = TEXT("/Script/VNHSimulator.VNHSettings");
 constexpr const TCHAR* VNHSettingsSaveSlot = TEXT("PlayerSettings");
 
@@ -250,6 +255,8 @@ const TCHAR* ToUniversalActionText(EVNHUniversalAction Action)
 		return TEXT("PICK UP");
 	case EVNHUniversalAction::Drop:
 		return TEXT("DROP");
+	case EVNHUniversalAction::Throw:
+		return TEXT("THROW");
 	default:
 		return TEXT("NONE");
 	}
@@ -310,6 +317,8 @@ FName ToUniversalActionRowName(EVNHUniversalAction Action)
 		return TEXT("PickUp");
 	case EVNHUniversalAction::Drop:
 		return TEXT("Drop");
+	case EVNHUniversalAction::Throw:
+		return TEXT("Throw");
 	default:
 		return NAME_None;
 	}
@@ -324,6 +333,7 @@ bool IsRoleAnimationAction(EVNHUniversalAction Action)
 	case EVNHUniversalAction::Wave:
 	case EVNHUniversalAction::Laugh:
 	case EVNHUniversalAction::PlaceDecoy:
+	case EVNHUniversalAction::Throw:
 		return true;
 	default:
 		return false;
@@ -609,6 +619,11 @@ void AVNHPlayerController::EnsureRoleHudWidget()
 	ActiveRoleHudRole = AssignedRole;
 	TimeUntilRoleHudWidgetLookup = 0.0f;
 	BindRoleHudActionButtons();
+	int32 ReticleViewportX = 0;
+	int32 ReticleViewportY = 0;
+	GetViewportSize(ReticleViewportX, ReticleViewportY);
+	VirtualCursorPosition = FVector2D(ReticleViewportX * 0.5f, ReticleViewportY * 0.5f);
+	bVirtualCursorInitialized = ReticleViewportX > 0 && ReticleViewportY > 0;
 	UpdateRoleHudWidgetRuntimeLabels(0.0f);
 }
 
@@ -738,13 +753,14 @@ void AVNHPlayerController::SetupInputComponent()
 
 	InputComponent->BindAxis(TEXT("VNH_AlienMoveForward"), this, &AVNHPlayerController::HandleAlienMoveForwardAxis);
 	InputComponent->BindAxis(TEXT("VNH_AlienMoveRight"), this, &AVNHPlayerController::HandleAlienMoveRightAxis);
-	InputComponent->BindAxis(TEXT("Turn Right / Left Mouse"), this, &AVNHPlayerController::HandleTurnAxis);
 	InputComponent->BindAxis(TEXT("Turn Right / Left Gamepad"), this, &AVNHPlayerController::HandleTurnAxis);
-	InputComponent->BindAxis(TEXT("Look Up / Down Mouse"), this, &AVNHPlayerController::HandleLookUpAxis);
 	InputComponent->BindAxis(TEXT("Look Up / Down Gamepad"), this, &AVNHPlayerController::HandleLookUpAxis);
+	InputComponent->BindAxis(TEXT("VNH_CursorX"), this, &AVNHPlayerController::HandleCursorXAxis);
+	InputComponent->BindAxis(TEXT("VNH_CursorY"), this, &AVNHPlayerController::HandleCursorYAxis);
 	InputComponent->BindAction(TEXT("VNH_AlienFastWalk"), IE_Pressed, this, &AVNHPlayerController::HandleAlienFastWalkStarted);
 	InputComponent->BindAction(TEXT("VNH_AlienFastWalk"), IE_Released, this, &AVNHPlayerController::HandleAlienFastWalkStopped);
-	InputComponent->BindAction(TEXT("VNH_AlienActNatural"), IE_Pressed, this, &AVNHPlayerController::RequestActNatural);
+	InputComponent->BindAction(TEXT("VNH_AlienActNatural"), IE_Pressed, this, &AVNHPlayerController::HandleThrowChargePressed);
+	InputComponent->BindAction(TEXT("VNH_AlienActNatural"), IE_Released, this, &AVNHPlayerController::HandleThrowChargeReleased);
 	InputComponent->BindAction(TEXT("VNH_TargetFocus"), IE_Pressed, this, &AVNHPlayerController::HandleTargetFocusPressed);
 	InputComponent->BindAction(TEXT("VNH_Interact"), IE_Pressed, this, &AVNHPlayerController::HandleInteractPressed);
 	InputComponent->BindAction(TEXT("Jump"), IE_Pressed, this, &AVNHPlayerController::HandleJumpPressed);
@@ -818,6 +834,7 @@ void AVNHPlayerController::PlayerTick(float DeltaTime)
 	PollAlienKeyboardInput();
 	PollInteractionInput();
 	UpdateRoleHudWidgetRuntimeLabels(DeltaTime);
+	UpdateCursorReticleAndHeadLook(DeltaTime);
 	UpdateDebugDeckRuntimeLabels(DeltaTime);
 	UpdateMarkedSuspectsWidgetRuntimeLabels(DeltaTime);
 }
@@ -835,6 +852,7 @@ void AVNHPlayerController::BindRoleHudActionButtons()
 	BindRoleHudActionButton(TEXT("ActionButton_Laugh"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudLaughClicked));
 	BindRoleHudActionButton(TEXT("ActionButton_Fart"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudFartClicked));
 	BindRoleHudActionButton(TEXT("ActionButton_PlaceDecoy"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudPlaceDecoyClicked));
+	BindRoleHudActionButton(TEXT("ActionButton_Throw"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudThrowClicked));
 	BindRoleHudActionButton(TEXT("ActionButton_Mark"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudMarkClicked));
 	BindRoleHudActionButton(TEXT("ActionButton_Accuse"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudAccuseClicked));
 	BindRoleHudActionButton(TEXT("ActionButton_Pressure"), GET_FUNCTION_NAME_CHECKED(AVNHPlayerController, HandleHudPressureClicked));
@@ -987,6 +1005,19 @@ void AVNHPlayerController::HandleHudFartClicked()
 void AVNHPlayerController::HandleHudPlaceDecoyClicked()
 {
 	HandlePlaceDecoyPressed();
+}
+
+void AVNHPlayerController::HandleHudThrowClicked()
+{
+	AVNHShopperCharacter* Shopper = GetPawn<AVNHShopperCharacter>();
+	if (!Shopper || !Shopper->GetHeldProp())
+	{
+		ClientReceiveInteractionText(TEXT("Pick up an item before throwing."));
+		return;
+	}
+
+	const FVector ThrowDirection = (GetControlRotation().Vector() + FVector(0.0f, 0.0f, 0.12f)).GetSafeNormal();
+	ServerThrowHeldProp(0.25f, ThrowDirection);
 }
 
 void AVNHPlayerController::HandleHudMarkClicked()
@@ -1625,6 +1656,13 @@ void AVNHPlayerController::ServerPerformUniversalAction_Implementation(EVNHUnive
 		ClientReceiveInteractionText(TEXT("Only the Alien can place a decoy."));
 		return;
 	}
+	if ((Action == EVNHUniversalAction::PickUp || Action == EVNHUniversalAction::Drop)
+		&& AssignedRole != EVNHPlayerRole::Human
+		&& AssignedRole != EVNHPlayerRole::Alien)
+	{
+		ClientReceiveInteractionText(TEXT("Only Humans and Aliens can carry props."));
+		return;
+	}
 	const bool bRoleAnimationAction = IsRoleAnimationAction(Action);
 	if ((bRoleAnimationAction || Action == EVNHUniversalAction::Fart) && AssignedRole == EVNHPlayerRole::Hunter)
 	{
@@ -1710,9 +1748,9 @@ void AVNHPlayerController::ServerPerformUniversalAction_Implementation(EVNHUnive
 		break;
 
 	case EVNHUniversalAction::PickUp:
-		if (!IsVNHInteractable(EffectiveTarget) || Shopper->GetHeldProp())
+		if (!IsVNHInteractable(EffectiveTarget) || Shopper->IsHoldingProp(EffectiveTarget))
 		{
-			ClientReceiveInteractionText(Shopper->GetHeldProp() ? TEXT("Drop the held prop first.") : TEXT("No prop under the cursor."));
+			ClientReceiveInteractionText(TEXT("No available prop under the cursor."));
 			return;
 		}
 		Shopper->ApplyComposureDelta(IsVNHSuspicious(EffectiveTarget) ? -12.0f : 3.0f, IsVNHSuspicious(EffectiveTarget) ? TEXT("SuspiciousPickup") : TEXT("NormalPickup"));
@@ -1758,6 +1796,86 @@ void AVNHPlayerController::ServerPerformUniversalAction_Implementation(EVNHUnive
 	PlayRoleActionAnimation(AssignedRole, Shopper, Action);
 	Shopper->RegisterMeaningfulAction(Action, EffectiveTarget);
 	ClientReceiveInteractionText(FString::Printf(TEXT("%s // %s"), ToUniversalActionText(Action), EffectiveTarget ? *GetNameSafe(EffectiveTarget) : TEXT("NO TARGET")));
+}
+
+void AVNHPlayerController::ServerThrowHeldProp_Implementation(float ChargeAlpha, FVector_NetQuantizeNormal ThrowDirection)
+{
+	AVNHShopperCharacter* Shopper = GetPawn<AVNHShopperCharacter>();
+	const AVNHPlayerState* VNHPlayerState = GetPlayerState<AVNHPlayerState>();
+	const EVNHPlayerRole AssignedRole = VNHPlayerState ? VNHPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
+	AActor* Prop = Shopper ? Shopper->GetHeldProp() : nullptr;
+	if (!Shopper || !Prop || (AssignedRole != EVNHPlayerRole::Human && AssignedRole != EVNHPlayerRole::Alien))
+	{
+		ClientReceiveInteractionText(TEXT("Only Humans and Aliens can throw a held item."));
+		return;
+	}
+
+	const FVector SafeThrowDirection = FVector(ThrowDirection).GetSafeNormal();
+	if (SafeThrowDirection.IsNearlyZero())
+	{
+		return;
+	}
+
+	const float ClampedChargeAlpha = FMath::Clamp(ChargeAlpha, 0.0f, 1.0f);
+	const float ThrowSpeed = FMath::Lerp(ThrowMinSpeed, ThrowMaxSpeed, ClampedChargeAlpha);
+	Prop->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	Prop->SetOwner(nullptr);
+	Prop->SetInstigator(Shopper);
+	Prop->SetActorLocation(Shopper->GetActorLocation() + SafeThrowDirection * 90.0f + FVector(0.0f, 0.0f, 55.0f));
+	Prop->Tags.AddUnique(TEXT("VNH.Thrown"));
+	Prop->OnActorHit.AddUniqueDynamic(this, &AVNHPlayerController::HandleThrownPropHit);
+
+	TInlineComponentArray<UPrimitiveComponent*> PrimitiveComponents;
+	Prop->GetComponents(PrimitiveComponents);
+	UPrimitiveComponent* PhysicsRoot = PrimitiveComponents.IsEmpty() ? nullptr : PrimitiveComponents[0];
+	if (PhysicsRoot && Prop->GetRootComponent() != PhysicsRoot)
+	{
+		PhysicsRoot->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+		Prop->SetRootComponent(PhysicsRoot);
+	}
+	for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+	{
+		if (PrimitiveComponent)
+		{
+			PrimitiveComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+			PrimitiveComponent->SetNotifyRigidBodyCollision(true);
+			PrimitiveComponent->SetSimulatePhysics(true);
+			PrimitiveComponent->SetPhysicsLinearVelocity(SafeThrowDirection * ThrowSpeed);
+			PrimitiveComponent->SetPhysicsAngularVelocityInDegrees(FVector(0.0f, 900.0f, 180.0f));
+		}
+	}
+
+	Shopper->SetHeldProp(nullptr);
+	PlayRoleActionAnimation(AssignedRole, Shopper, EVNHUniversalAction::Throw);
+	Shopper->RegisterMeaningfulAction(EVNHUniversalAction::Throw, Prop);
+	ClientReceiveInteractionText(FString::Printf(TEXT("THROW // %.0f%% POWER"), ClampedChargeAlpha * 100.0f));
+}
+
+void AVNHPlayerController::HandleThrownPropHit(AActor* ThrownActor, AActor* OtherActor, FVector NormalImpulse, const FHitResult& Hit)
+{
+	if (!HasAuthority() || !ThrownActor || !ThrownActor->ActorHasTag(TEXT("VNH.Thrown"))
+		|| ThrownActor->GetInstigatorController() != this)
+	{
+		return;
+	}
+
+	AVNHShopperCharacter* HitShopper = Cast<AVNHShopperCharacter>(OtherActor);
+	if (!HitShopper || HitShopper == GetPawn())
+	{
+		return;
+	}
+
+	const AVNHPlayerState* HitPlayerState = HitShopper->GetPlayerState<AVNHPlayerState>();
+	const EVNHPlayerRole HitRole = HitPlayerState ? HitPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
+	if (HitRole != EVNHPlayerRole::Human && HitRole != EVNHPlayerRole::Alien && HitRole != EVNHPlayerRole::Hunter)
+	{
+		return;
+	}
+
+	ThrownActor->Tags.Remove(TEXT("VNH.Thrown"));
+	ThrownActor->OnActorHit.RemoveDynamic(this, &AVNHPlayerController::HandleThrownPropHit);
+	const APawn* ThrowingPawn = ThrownActor->GetInstigator();
+	HitShopper->PlayDirectionalKnockdown(ThrowingPawn ? ThrowingPawn->GetActorLocation() : Hit.ImpactPoint - Hit.ImpactNormal * 50.0f);
 }
 
 void AVNHPlayerController::ServerRequestPressure_Implementation(AVNHShopperCharacter* PressuredShopper)
@@ -1962,7 +2080,8 @@ void AVNHPlayerController::BindAlienInputActions()
 
 	if (AlienActNaturalAction)
 	{
-		EnhancedInputComponent->BindAction(AlienActNaturalAction, ETriggerEvent::Triggered, this, &AVNHPlayerController::RequestActNatural);
+		EnhancedInputComponent->BindAction(AlienActNaturalAction, ETriggerEvent::Started, this, &AVNHPlayerController::HandleThrowChargePressed);
+		EnhancedInputComponent->BindAction(AlienActNaturalAction, ETriggerEvent::Completed, this, &AVNHPlayerController::HandleThrowChargeReleased);
 	}
 }
 
@@ -2029,7 +2148,7 @@ void AVNHPlayerController::HandleTurnAxis(float Value)
 		return;
 	}
 
-	AddYawInput(Value * GetSavedLookSensitivityMultiplier());
+	AddYawInput(Value * GetSavedLookSensitivityMultiplier() * 1.6f);
 }
 
 void AVNHPlayerController::HandleLookUpAxis(float Value)
@@ -2064,6 +2183,40 @@ void AVNHPlayerController::HandleTargetFocusPressed()
 void AVNHPlayerController::HandleInspectPressed()
 {
 	RequestUniversalAction(EVNHUniversalAction::Inspect);
+}
+
+void AVNHPlayerController::HandleCursorXAxis(float Value)
+{
+	int32 ViewportX = 0;
+	int32 ViewportY = 0;
+	GetViewportSize(ViewportX, ViewportY);
+	if (ViewportX <= 0 || ViewportY <= 0)
+	{
+		return;
+	}
+	if (!bVirtualCursorInitialized)
+	{
+		VirtualCursorPosition = FVector2D(ViewportX * 0.5f, ViewportY * 0.5f);
+		bVirtualCursorInitialized = true;
+	}
+	VirtualCursorPosition.X = FMath::Clamp(VirtualCursorPosition.X + Value * 18.0f, 4.0f, ViewportX - 4.0f);
+}
+
+void AVNHPlayerController::HandleCursorYAxis(float Value)
+{
+	int32 ViewportX = 0;
+	int32 ViewportY = 0;
+	GetViewportSize(ViewportX, ViewportY);
+	if (ViewportX <= 0 || ViewportY <= 0)
+	{
+		return;
+	}
+	if (!bVirtualCursorInitialized)
+	{
+		VirtualCursorPosition = FVector2D(ViewportX * 0.5f, ViewportY * 0.5f);
+		bVirtualCursorInitialized = true;
+	}
+	VirtualCursorPosition.Y = FMath::Clamp(VirtualCursorPosition.Y - Value * 18.0f, 4.0f, ViewportY - 4.0f);
 }
 
 void AVNHPlayerController::HandlePointPressed()
@@ -2163,6 +2316,47 @@ void AVNHPlayerController::HandleDropPressed()
 	RequestUniversalAction(EVNHUniversalAction::Drop);
 }
 
+void AVNHPlayerController::HandleThrowChargePressed()
+{
+	if (bThrowInputDown)
+	{
+		return;
+	}
+	bThrowInputDown = true;
+
+	const AVNHPlayerState* VNHPlayerState = GetPlayerState<AVNHPlayerState>();
+	const EVNHPlayerRole AssignedRole = VNHPlayerState ? VNHPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
+	AVNHShopperCharacter* Shopper = GetPawn<AVNHShopperCharacter>();
+	if ((AssignedRole == EVNHPlayerRole::Human || AssignedRole == EVNHPlayerRole::Alien) && Shopper && Shopper->GetHeldProp())
+	{
+		bThrowChargeActive = true;
+		ThrowChargeStartedAtSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		ClientReceiveInteractionText(TEXT("Charging throw... release Q to throw."));
+		return;
+	}
+
+	RequestActNatural();
+}
+
+void AVNHPlayerController::HandleThrowChargeReleased()
+{
+	if (!bThrowInputDown)
+	{
+		return;
+	}
+	bThrowInputDown = false;
+	if (!bThrowChargeActive)
+	{
+		return;
+	}
+
+	bThrowChargeActive = false;
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : ThrowChargeStartedAtSeconds;
+	const float ChargeAlpha = FMath::Clamp((Now - ThrowChargeStartedAtSeconds) / ThrowMaxChargeSeconds, 0.0f, 1.0f);
+	const FVector ThrowDirection = (GetControlRotation().Vector() + FVector(0.0f, 0.0f, 0.12f)).GetSafeNormal();
+	ServerThrowHeldProp(ChargeAlpha, ThrowDirection);
+}
+
 void AVNHPlayerController::HandleInteractPressed()
 {
 	HandleInspectPressed();
@@ -2259,6 +2453,7 @@ void AVNHPlayerController::ToggleDebugHud()
 
 void AVNHPlayerController::ApplyDebugHudInputMode(bool bDebugHudVisible)
 {
+	bGameplayInputModeApplied = false;
 	bShowMouseCursor = true;
 	bEnableClickEvents = true;
 	bEnableMouseOverEvents = true;
@@ -2278,16 +2473,16 @@ void AVNHPlayerController::RestoreGameplayInputMode()
 		return;
 	}
 
-	bShowMouseCursor = true;
-	bEnableClickEvents = true;
-	bEnableMouseOverEvents = true;
+	bShowMouseCursor = false;
+	bEnableClickEvents = false;
+	bEnableMouseOverEvents = false;
 	DefaultMouseCursor = EMouseCursor::Default;
-	UpdateGameplayCursor();
+	CurrentMouseCursor = EMouseCursor::None;
 
-	FInputModeGameAndUI InputMode;
-	InputMode.SetHideCursorDuringCapture(false);
-	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	FInputModeGameOnly InputMode;
+	InputMode.SetConsumeCaptureMouseDown(false);
 	SetInputMode(InputMode);
+	bGameplayInputModeApplied = true;
 }
 
 void AVNHPlayerController::UpdatePreRoundCustomizationFlow()
@@ -2389,6 +2584,7 @@ void AVNHPlayerController::ShowLobbyMenu()
 	NewLobbyMenu->SetDesiredSizeInViewport(FVector2D(FMath::Max(1, NewViewportX), FMath::Max(1, NewViewportY)) / NewViewportScale);
 	NewLobbyMenu->SetVisibility(ESlateVisibility::Visible);
 	LobbyMenuWidget = NewLobbyMenu;
+	bGameplayInputModeApplied = false;
 
 	bShowMouseCursor = true;
 	bEnableClickEvents = true;
@@ -3018,7 +3214,11 @@ void AVNHPlayerController::PollAlienKeyboardInput()
 	if (bActNaturalDown && !bWasPolledActNaturalDown)
 	{
 		++PolledActNaturalSamples;
-		RequestActNatural();
+		HandleThrowChargePressed();
+	}
+	else if (!bActNaturalDown && bWasPolledActNaturalDown)
+	{
+		HandleThrowChargeReleased();
 	}
 
 	if (bInteractDown && !bWasPolledInteractDown)
@@ -3100,18 +3300,18 @@ void AVNHPlayerController::UpdateGameplayCursor()
 		return;
 	}
 
-	EMouseCursor::Type DesiredCursor = EMouseCursor::Default;
+	EMouseCursor::Type DesiredCursor = EMouseCursor::None;
 	if (IsCharacterCustomizerScreenOpen(this))
 	{
 		DesiredCursor = EMouseCursor::Default;
 	}
-	else if (IsAssignedHunter() && FocusedShopper.IsValid())
+	else if (bDebugDeckVisible)
 	{
-		DesiredCursor = EMouseCursor::Crosshairs;
+		DesiredCursor = EMouseCursor::Default;
 	}
-	else if (FocusedShopper.IsValid() || FocusedLobbyPlayButton.IsValid() || FocusedInteractable.IsValid())
+	else if (GetWorld() && GetWorld()->GetMapName().Contains(TEXT("Lobby")))
 	{
-		DesiredCursor = EMouseCursor::Hand;
+		DesiredCursor = EMouseCursor::Default;
 	}
 
 	CurrentMouseCursor = DesiredCursor;
@@ -3175,6 +3375,106 @@ void AVNHPlayerController::UpdateRoleCameraMode()
 	if (AVNHShopperCharacter* Shopper = Cast<AVNHShopperCharacter>(GetPawn()))
 	{
 		Shopper->SetFirstPersonViewEnabled(false);
+	}
+
+	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
+	if (IsCharacterCustomizerScreenOpen(this))
+	{
+		bGameplayInputModeApplied = false;
+	}
+	if (!MapName.Contains(TEXT("Lobby"))
+		&& !IsCharacterCustomizerScreenOpen(this)
+		&& !bDebugDeckVisible
+		&& !bGameplayInputModeApplied)
+	{
+		RestoreGameplayInputMode();
+	}
+}
+
+void AVNHPlayerController::UpdateCursorReticleAndHeadLook(float DeltaTime)
+{
+	if (!IsLocalController() || !RoleHudWidget.IsValid() || IsCharacterCustomizerScreenOpen(this) || bDebugDeckVisible)
+	{
+		return;
+	}
+
+	int32 ViewportX = 0;
+	int32 ViewportY = 0;
+	GetViewportSize(ViewportX, ViewportY);
+	if (ViewportX <= 0 || ViewportY <= 0)
+	{
+		return;
+	}
+	if (!bVirtualCursorInitialized)
+	{
+		VirtualCursorPosition = FVector2D(ViewportX * 0.5f, ViewportY * 0.5f);
+		bVirtualCursorInitialized = true;
+	}
+
+	const float ViewportScale = FMath::Max(UWidgetLayoutLibrary::GetViewportScale(RoleHudWidget.Get()), 0.01f);
+	const FVector2D ReticlePosition = VirtualCursorPosition / ViewportScale;
+	for (const FName ReticleName : {FName(TEXT("CenterReticleShadow")), FName(TEXT("CenterReticleDot"))})
+	{
+		if (UWidget* ReticleWidget = RoleHudWidget->GetWidgetFromName(ReticleName))
+		{
+			if (UCanvasPanelSlot* ReticleSlot = Cast<UCanvasPanelSlot>(ReticleWidget->Slot))
+			{
+				ReticleSlot->SetPosition(ReticlePosition);
+			}
+		}
+	}
+
+	AVNHShopperCharacter* Shopper = GetPawn<AVNHShopperCharacter>();
+	float TargetHeadLookYaw = 0.0f;
+	float TargetHeadLookPitch = 0.0f;
+	if (Shopper && Shopper->GetMesh())
+	{
+		FVector CursorWorldLocation = FVector::ZeroVector;
+		FVector CursorWorldDirection = FVector::ForwardVector;
+		if (DeprojectScreenPositionToWorld(VirtualCursorPosition.X, VirtualCursorPosition.Y, CursorWorldLocation, CursorWorldDirection))
+		{
+			const FVector CursorTraceEnd = CursorWorldLocation + CursorWorldDirection * 5000.0f;
+			FCollisionQueryParams HeadLookQueryParams(SCENE_QUERY_STAT(VNHHeadLookCursorTrace), false, Shopper);
+			FHitResult HeadLookHit;
+			const FVector CursorTarget = GetWorld() && GetWorld()->LineTraceSingleByChannel(
+				HeadLookHit,
+				CursorWorldLocation,
+				CursorTraceEnd,
+				ECC_Visibility,
+				HeadLookQueryParams)
+				? HeadLookHit.ImpactPoint
+				: CursorTraceEnd;
+			const FVector HeadWorldLocation = Shopper->GetMesh()->GetBoneLocation(TEXT("Head"));
+			const FVector LocalLookDirection = Shopper->GetActorTransform().InverseTransformVectorNoScale(
+				CursorTarget - HeadWorldLocation);
+			if (LocalLookDirection.X > 10.0f)
+			{
+				TargetHeadLookYaw = FMath::Clamp(
+					FMath::RadiansToDegrees(FMath::Atan2(LocalLookDirection.Y, LocalLookDirection.X)),
+					-60.0f,
+					60.0f);
+				TargetHeadLookPitch = FMath::Clamp(
+					FMath::RadiansToDegrees(FMath::Atan2(LocalLookDirection.Z, LocalLookDirection.Size2D())),
+					-30.0f,
+					30.0f);
+			}
+		}
+	}
+	SmoothedHeadLookYaw = FMath::FInterpTo(SmoothedHeadLookYaw, TargetHeadLookYaw, DeltaTime, 7.0f);
+	SmoothedHeadLookPitch = FMath::FInterpTo(SmoothedHeadLookPitch, TargetHeadLookPitch, DeltaTime, 7.0f);
+
+	UAnimInstance* AnimInstance = Shopper && Shopper->GetMesh() ? Shopper->GetMesh()->GetAnimInstance() : nullptr;
+	if (!AnimInstance)
+	{
+		return;
+	}
+	if (FFloatProperty* YawProperty = FindFProperty<FFloatProperty>(AnimInstance->GetClass(), TEXT("HeadLookYaw")))
+	{
+		YawProperty->SetPropertyValue_InContainer(AnimInstance, SmoothedHeadLookYaw);
+	}
+	if (FFloatProperty* PitchProperty = FindFProperty<FFloatProperty>(AnimInstance->GetClass(), TEXT("HeadLookPitch")))
+	{
+		PitchProperty->SetPropertyValue_InContainer(AnimInstance, SmoothedHeadLookPitch);
 	}
 }
 
@@ -3353,20 +3653,17 @@ void AVNHPlayerController::UpdateFocusedShopper()
 		return;
 	}
 
-	FVector MouseWorldLocation = FVector::ZeroVector;
-	FVector MouseWorldDirection = FVector::ForwardVector;
-	if (!DeprojectMousePositionToWorld(MouseWorldLocation, MouseWorldDirection))
+	FVector CursorWorldLocation = FVector::ZeroVector;
+	FVector CursorWorldDirection = FVector::ForwardVector;
+	if (!bVirtualCursorInitialized || !DeprojectScreenPositionToWorld(
+		VirtualCursorPosition.X,
+		VirtualCursorPosition.Y,
+		CursorWorldLocation,
+		CursorWorldDirection))
 	{
-		if (PreviousFocusedShopper)
-		{
-			RefreshShopperOutline(PreviousFocusedShopper, false);
-		}
-		SetInteractableOutline(PreviousFocusedLobbyPlayButton, false);
-		SetInteractableOutline(PreviousFocusedInteractable, false);
 		return;
 	}
-
-	const FVector MouseTraceEnd = MouseWorldLocation + MouseWorldDirection * 2500.0f;
+	const FVector CursorTraceEnd = CursorWorldLocation + CursorWorldDirection * 2500.0f;
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(VNHInteractionCursorTrace), false);
 	if (APawn* ControlledPawn = GetPawn())
 	{
@@ -3374,7 +3671,7 @@ void AVNHPlayerController::UpdateFocusedShopper()
 	}
 
 	FHitResult Hit;
-	if (GetWorld()->LineTraceSingleByChannel(Hit, MouseWorldLocation, MouseTraceEnd, ECC_Visibility, QueryParams))
+	if (GetWorld()->LineTraceSingleByChannel(Hit, CursorWorldLocation, CursorTraceEnd, ECC_Visibility, QueryParams))
 	{
 		if (AVNHLobbyPlayButton* LobbyPlayButton = Cast<AVNHLobbyPlayButton>(Hit.GetActor()))
 		{
@@ -3420,7 +3717,7 @@ void AVNHPlayerController::UpdateFocusedShopper()
 		ClearTargetedShopper();
 	}
 
-	if (GetWorld()->LineTraceSingleByChannel(Hit, MouseWorldLocation, MouseTraceEnd, ECC_Pawn, QueryParams))
+	if (GetWorld()->LineTraceSingleByChannel(Hit, CursorWorldLocation, CursorTraceEnd, ECC_Pawn, QueryParams))
 	{
 		if (AVNHShopperCharacter* Shopper = Cast<AVNHShopperCharacter>(Hit.GetActor()))
 		{
@@ -3573,7 +3870,7 @@ void AVNHPlayerController::PlayRoleActionAnimation(EVNHPlayerRole PlayerRole, AV
 
 void AVNHPlayerController::PerformPickUp(AVNHShopperCharacter* Shopper, AActor* Prop)
 {
-	if (!Shopper || !Prop || Shopper->GetHeldProp())
+	if (!Shopper || !Prop || Shopper->IsHoldingProp(Prop))
 	{
 		return;
 	}
@@ -3581,6 +3878,9 @@ void AVNHPlayerController::PerformPickUp(AVNHShopperCharacter* Shopper, AActor* 
 	Prop->SetReplicates(true);
 	Prop->SetReplicateMovement(true);
 	Prop->SetOwner(Shopper);
+	Prop->SetInstigator(nullptr);
+	Prop->Tags.Remove(TEXT("VNH.Thrown"));
+	Prop->OnActorHit.RemoveDynamic(this, &AVNHPlayerController::HandleThrownPropHit);
 	TInlineComponentArray<UPrimitiveComponent*> PrimitiveComponents;
 	Prop->GetComponents(PrimitiveComponents);
 	for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
@@ -3595,7 +3895,8 @@ void AVNHPlayerController::PerformPickUp(AVNHShopperCharacter* Shopper, AActor* 
 	USkeletalMeshComponent* Mesh = Shopper->GetMesh();
 	const FName AttachSocket = Mesh && Mesh->DoesSocketExist(TEXT("hand_r")) ? FName(TEXT("hand_r")) : NAME_None;
 	Prop->AttachToComponent(Mesh ? static_cast<USceneComponent*>(Mesh) : Shopper->GetRootComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, AttachSocket);
-	Prop->SetActorRelativeLocation(FVector(8.0f, 0.0f, 0.0f));
+	const int32 HeldPropIndex = Shopper->GetHeldPropCount();
+	Prop->SetActorRelativeLocation(FVector(8.0f, (HeldPropIndex % 3 - 1) * 8.0f, (HeldPropIndex / 3) * 6.0f));
 	Shopper->SetHeldProp(Prop);
 	SetInteractableOutline(Prop, false);
 }
@@ -3610,6 +3911,9 @@ void AVNHPlayerController::PerformDrop(AVNHShopperCharacter* Shopper)
 
 	Prop->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
 	Prop->SetOwner(nullptr);
+	Prop->SetInstigator(nullptr);
+	Prop->Tags.Remove(TEXT("VNH.Thrown"));
+	Prop->OnActorHit.RemoveDynamic(this, &AVNHPlayerController::HandleThrownPropHit);
 	Prop->SetActorLocation(Shopper->GetActorLocation() + Shopper->GetActorForwardVector() * 95.0f + FVector(0.0f, 0.0f, 30.0f));
 	TInlineComponentArray<UPrimitiveComponent*> PrimitiveComponents;
 	Prop->GetComponents(PrimitiveComponents);

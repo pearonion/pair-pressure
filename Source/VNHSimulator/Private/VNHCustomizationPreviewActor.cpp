@@ -81,7 +81,9 @@ AVNHCustomizationPreviewActor::AVNHCustomizationPreviewActor()
 	SceneCaptureComponent->SetRelativeLocation(FVector(335.0f, 0.0f, 58.0f));
 	SceneCaptureComponent->SetRelativeRotation(FRotator(0.0f, 180.0f, 0.0f));
 	SceneCaptureComponent->FOVAngle = 34.0f;
-	SceneCaptureComponent->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
+	SceneCaptureComponent->CaptureSource = ESceneCaptureSource::SCS_FinalColorHDR;
+	SceneCaptureComponent->CompositeMode = ESceneCaptureCompositeMode::SCCM_Overwrite;
+	SceneCaptureComponent->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
 	SceneCaptureComponent->bCaptureEveryFrame = true;
 	SceneCaptureComponent->bCaptureOnMovement = false;
 	SceneCaptureComponent->bAlwaysPersistRenderingState = true;
@@ -90,23 +92,39 @@ AVNHCustomizationPreviewActor::AVNHCustomizationPreviewActor()
 	SceneCaptureComponent->ShowFlags.SetEyeAdaptation(false);
 	SceneCaptureComponent->ShowFlags.SetBloom(false);
 	SceneCaptureComponent->ShowFlags.SetMotionBlur(false);
+	SceneCaptureComponent->ShowFlags.SetAtmosphere(false);
+	SceneCaptureComponent->ShowFlags.SetFog(false);
+	SceneCaptureComponent->ShowFlags.SetSkyLighting(false);
+	SceneCaptureComponent->ShowOnlyComponent(BodyMeshComponent);
+	SceneCaptureComponent->ShowOnlyComponent(HairMeshComponent);
+	SceneCaptureComponent->ShowOnlyComponent(FaceMeshComponent);
+	SceneCaptureComponent->ShowOnlyComponent(HatMeshComponent);
+	SceneCaptureComponent->ShowOnlyComponent(MustacheMeshComponent);
+	SceneCaptureComponent->ShowOnlyComponent(OutfitMeshComponent);
+	SceneCaptureComponent->ShowOnlyComponent(OutwearMeshComponent);
+	SceneCaptureComponent->ShowOnlyComponent(PantsMeshComponent);
+	SceneCaptureComponent->ShowOnlyComponent(ShoesMeshComponent);
+	SceneCaptureComponent->ShowOnlyComponent(AccessoryMeshComponent);
 
 	UPointLightComponent* KeyLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("PreviewKeyLight"));
 	KeyLight->SetupAttachment(PreviewRoot);
 	KeyLight->SetRelativeLocation(FVector(240.0f, -220.0f, 240.0f));
 	KeyLight->SetIntensity(185000.0f);
 	KeyLight->SetAttenuationRadius(1400.0f);
+	KeyLight->SetCastShadows(false);
 
 	UPointLightComponent* FillLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("PreviewFillLight"));
 	FillLight->SetupAttachment(PreviewRoot);
 	FillLight->SetRelativeLocation(FVector(120.0f, 260.0f, 130.0f));
 	FillLight->SetIntensity(85000.0f);
 	FillLight->SetAttenuationRadius(1200.0f);
+	FillLight->SetCastShadows(false);
 
 	UDirectionalLightComponent* RimLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("PreviewRimLight"));
 	RimLight->SetupAttachment(PreviewRoot);
 	RimLight->SetRelativeRotation(FRotator(-28.0f, -145.0f, 0.0f));
 	RimLight->SetIntensity(2.0f);
+	RimLight->SetCastShadows(false);
 }
 
 void AVNHCustomizationPreviewActor::BeginPlay()
@@ -272,7 +290,8 @@ void AVNHCustomizationPreviewActor::EnsureRenderTarget()
 	RenderTarget = NewObject<UTextureRenderTarget2D>(this, TEXT("CustomizerPreviewRT"));
 	if (RenderTarget)
 	{
-		RenderTarget->ClearColor = FLinearColor(0.005f, 0.018f, 0.024f, 1.0f);
+		RenderTarget->RenderTargetFormat = ETextureRenderTargetFormat::RTF_RGBA8_SRGB;
+		RenderTarget->ClearColor = FLinearColor::Transparent;
 		RenderTarget->InitAutoFormat(PreviewRenderTargetWidth, PreviewRenderTargetHeight);
 		RenderTarget->UpdateResourceImmediate(true);
 		if (SceneCaptureComponent)
@@ -304,7 +323,7 @@ void AVNHCustomizationPreviewActor::ConfigureMeshComponent(USkeletalMeshComponen
 	MeshComponent->bEnableUpdateRateOptimizations = false;
 	MeshComponent->bPauseAnims = false;
 	MeshComponent->GlobalAnimRateScale = 1.0f;
-	MeshComponent->SetCastShadow(true);
+	MeshComponent->SetCastShadow(false);
 
 	if (MeshComponent != BodyMeshComponent)
 	{

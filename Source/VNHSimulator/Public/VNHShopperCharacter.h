@@ -101,7 +101,13 @@ public:
 	EVNHUniversalAction GetLastUniversalAction() const { return LastUniversalAction; }
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Interaction")
-	AActor* GetHeldProp() const { return HeldProp; }
+	AActor* GetHeldProp() const { return HeldProps.IsEmpty() ? nullptr : HeldProps.Last(); }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Interaction")
+	int32 GetHeldPropCount() const { return HeldProps.Num(); }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Interaction")
+	bool IsHoldingProp(const AActor* Prop) const { return HeldProps.Contains(Prop); }
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Composure")
 	bool IsBeingWatchedByHunter() const { return bWasWatchedByHunter; }
@@ -123,6 +129,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "VNH|Interaction")
 	void SetHeldProp(AActor* NewHeldProp);
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Interaction")
+	void PlayDirectionalKnockdown(const FVector& ImpactOrigin);
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Shopper|Debug")
 	FString DescribeAnimationDebugState() const;
@@ -146,6 +155,8 @@ public:
 	FVNHPublicTestReceived OnPublicTestReceived;
 
 private:
+	void UpdateAdaptiveFollowCamera(float DeltaSeconds);
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Shopper", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UVNHRoutineComponent> RoutineComponent;
 
@@ -234,7 +245,7 @@ private:
 	EVNHUniversalAction LastUniversalAction = EVNHUniversalAction::None;
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Interaction", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<AActor> HeldProp = nullptr;
+	TArray<TObjectPtr<AActor>> HeldProps;
 
 	UPROPERTY(ReplicatedUsing = OnRep_CharacterCustomization, BlueprintReadOnly, Category = "VNH|Customization", meta = (AllowPrivateAccess = "true"))
 	FVNHCharacterCustomization CharacterCustomization;

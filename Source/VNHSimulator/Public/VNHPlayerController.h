@@ -180,6 +180,9 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerPerformUniversalAction(EVNHUniversalAction Action, AActor* Target);
 
+	UFUNCTION(Server, Reliable)
+	void ServerThrowHeldProp(float ChargeAlpha, FVector_NetQuantizeNormal ThrowDirection);
+
 	UFUNCTION(Client, Reliable)
 	void ClientReceiveInteractionText(const FString& InteractionText);
 
@@ -227,6 +230,8 @@ private:
 	void HandleAlienMoveRightAxis(float Value);
 	void HandleTurnAxis(float Value);
 	void HandleLookUpAxis(float Value);
+	void HandleCursorXAxis(float Value);
+	void HandleCursorYAxis(float Value);
 	void HandleTargetFocusPressed();
 	void HandleInspectPressed();
 	void HandlePointPressed();
@@ -246,6 +251,8 @@ private:
 	void HandleRoleHudActionSlot6Pressed();
 	void HandlePickUpPressed();
 	void HandleDropPressed();
+	void HandleThrowChargePressed();
+	void HandleThrowChargeReleased();
 	void HandleInteractPressed();
 	void UpdateLobbyStartHold(float DeltaTime);
 	void ResetLobbyStartHold();
@@ -295,6 +302,10 @@ private:
 	void HandleHudFartClicked();
 	UFUNCTION()
 	void HandleHudPlaceDecoyClicked();
+	UFUNCTION()
+	void HandleHudThrowClicked();
+	UFUNCTION()
+	void HandleThrownPropHit(AActor* ThrownActor, AActor* OtherActor, FVector NormalImpulse, const FHitResult& Hit);
 	FString GetRoundTimerText() const;
 	void UpdateRoleHudWidgetRuntimeLabels(float DeltaTime);
 	void UpdateDebugDeckRuntimeLabels(float DeltaTime);
@@ -307,6 +318,7 @@ private:
 	void RegisterGameplayHardwareCursors();
 	void UpdateGameplayCursor();
 	void UpdateRoleCameraMode();
+	void UpdateCursorReticleAndHeadLook(float DeltaTime);
 	void PushLegacyAlienMoveInput();
 	void PollAlienKeyboardInput();
 	void PollInteractionInput();
@@ -346,6 +358,9 @@ private:
 	bool bWasPolledCancelTargetDown = false;
 	bool bWasPolledMarkDown = false;
 	bool bWasPolledFakeAccuseDown = false;
+	bool bThrowInputDown = false;
+	bool bThrowChargeActive = false;
+	float ThrowChargeStartedAtSeconds = 0.0f;
 	bool bLobbyStartHoldActive = false;
 	bool bLobbyStartRequestSent = false;
 	float LobbyStartHoldSeconds = 0.0f;
@@ -400,11 +415,16 @@ private:
 	float TimeUntilRoleHudWidgetLookup = 0.0f;
 	float TimeUntilDebugDeckLabelLookup = 0.0f;
 	bool bDebugDeckVisible = false;
+	bool bGameplayInputModeApplied = false;
 	float TimeUntilMarkedWidgetLookup = 0.0f;
 	float TimeUntilComposureWidgetLookup = 0.0f;
 	float RoleHudDisplayedFartCooldownRemaining = 0.0f;
 	float RoleHudLastReplicatedFartCooldownRemaining = 0.0f;
 	EVNHPlayerRole ActiveRoleHudRole = EVNHPlayerRole::Unassigned;
+	float SmoothedHeadLookYaw = 0.0f;
+	float SmoothedHeadLookPitch = 0.0f;
+	FVector2D VirtualCursorPosition = FVector2D::ZeroVector;
+	bool bVirtualCursorInitialized = false;
 	int32 DismissedHunterCommandPromptSerial = INDEX_NONE;
 	int32 LastMarkedRoundNumber = INDEX_NONE;
 	int32 LastPreRoundCustomizerRound = INDEX_NONE;

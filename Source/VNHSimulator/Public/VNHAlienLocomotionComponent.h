@@ -96,7 +96,7 @@ protected:
 	float DefaultManualBrakeMultiplier = 2.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "0.0"))
-	float DefaultBodyTurnRateDegrees = 110.0f;
+	float DefaultBodyTurnRateDegrees = 220.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "0.0", ClampMax = "180.0"))
 	float DefaultCorrectionStepAngleDegrees = 120.0f;
