@@ -40,6 +40,7 @@
 #include "VNHLog.h"
 #include "VNHPlayerState.h"
 #include "VNHShopperCharacter.h"
+#include "PairPressure/PPPlayerActionRouterComponent.h"
 
 namespace
 {
@@ -457,6 +458,7 @@ void AVNHPlayerController::BeginPlay()
 		EnsureMarkedSuspectsWidget();
 		RemoveComposureWidget();
 		RegisterGameplayHardwareCursors();
+		EnsurePairPressureHUD();
 	}
 
 	if (MapName.Contains(TEXT("Lobby")))
@@ -515,7 +517,8 @@ void AVNHPlayerController::EnsureTargetOutlinePostProcess()
 
 void AVNHPlayerController::EnsureRoleHudWidget()
 {
-	if (!IsLocalController() || IsPlayerControllerMainMenuWorld(GetWorld()))
+	if (!IsLocalController() || IsPlayerControllerMainMenuWorld(GetWorld())
+		|| (GetWorld() && GetWorld()->GetMapName().Contains(TEXT("PP_"))))
 	{
 		return;
 	}
@@ -629,7 +632,8 @@ void AVNHPlayerController::EnsureRoleHudWidget()
 
 void AVNHPlayerController::EnsureMarkedSuspectsWidget()
 {
-	if (!IsLocalController() || MarkedSuspectsWidget.IsValid())
+	if (!IsLocalController() || MarkedSuspectsWidget.IsValid()
+		|| (GetWorld() && GetWorld()->GetMapName().Contains(TEXT("PP_"))))
 	{
 		return;
 	}
@@ -654,7 +658,8 @@ void AVNHPlayerController::EnsureMarkedSuspectsWidget()
 
 void AVNHPlayerController::EnsureComposureWidget()
 {
-	if (!IsLocalController() || ComposureWidget.IsValid() || IsPlayerControllerMainMenuWorld(GetWorld()))
+	if (!IsLocalController() || ComposureWidget.IsValid() || IsPlayerControllerMainMenuWorld(GetWorld())
+		|| (GetWorld() && GetWorld()->GetMapName().Contains(TEXT("PP_"))))
 	{
 		return;
 	}
@@ -740,6 +745,7 @@ void AVNHPlayerController::AcknowledgePossession(APawn* PossessedPawn)
 	UpdateRoleCameraMode();
 	RegisterGameplayHardwareCursors();
 	ApplySavedCharacterCustomization();
+	EnsurePairPressureHUD();
 	UE_LOG(LogVNH, Display, TEXT("AlienInput: acknowledged possession. Controller=%s Pawn=%s InputComponent=%s"),
 		*GetClass()->GetName(),
 		*GetNameSafe(PossessedPawn),
@@ -790,11 +796,81 @@ void AVNHPlayerController::SetupInputComponent()
 	InputComponent->BindAction(TEXT("VNH_QuickChat_NoThanks"), IE_Pressed, this, &AVNHPlayerController::HandleQuickChatNoThanksPressed);
 	InputComponent->BindAction(TEXT("VNH_QuickChat_WrongSize"), IE_Pressed, this, &AVNHPlayerController::HandleQuickChatFoundWrongSizePressed);
 	InputComponent->BindAction(TEXT("VNH_ToggleDebugHud"), IE_Pressed, this, &AVNHPlayerController::ToggleDebugHud);
+	InputComponent->BindAction(TEXT("PP_Dive"), IE_Pressed, this, &AVNHPlayerController::HandlePairPressureDivePressed);
+	InputComponent->BindAction(TEXT("PP_Assist"), IE_Pressed, this, &AVNHPlayerController::HandlePairPressureAssistPressed);
+	InputComponent->BindAction(TEXT("PP_Assist"), IE_Released, this, &AVNHPlayerController::HandlePairPressureAssistReleased);
+	InputComponent->BindAction(TEXT("PP_Grab"), IE_Pressed, this, &AVNHPlayerController::HandlePairPressureAssistPressed);
+	InputComponent->BindAction(TEXT("PP_Grab"), IE_Released, this, &AVNHPlayerController::HandlePairPressureAssistReleased);
 
 	UE_LOG(LogVNH, Display, TEXT("AlienInput: setup complete. Controller=%s InputComponent=%s EnhancedComponent=%s"),
 		*GetClass()->GetName(),
 		*GetNameSafe(InputComponent),
 		Cast<UEnhancedInputComponent>(InputComponent) ? TEXT("true") : TEXT("false"));
+}
+
+void AVNHPlayerController::HandlePairPressureDivePressed()
+{
+	if (!GetWorld() || !GetWorld()->GetMapName().Contains(TEXT("PP_")))
+	{
+		return;
+	}
+
+	if (APawn* ControlledPawn = GetPawn())
+	{
+		if (UPPPlayerActionRouterComponent* ActionRouter = ControlledPawn->FindComponentByClass<UPPPlayerActionRouterComponent>())
+		{
+			ActionRouter->RequestDive();
+		}
+	}
+}
+
+void AVNHPlayerController::HandlePairPressureAssistPressed()
+{
+	if (!GetWorld() || !GetWorld()->GetMapName().Contains(TEXT("PP_")))
+	{
+		return;
+	}
+
+	if (APawn* ControlledPawn = GetPawn())
+	{
+		if (UPPPlayerActionRouterComponent* ActionRouter = ControlledPawn->FindComponentByClass<UPPPlayerActionRouterComponent>())
+		{
+			ActionRouter->BeginAssist();
+		}
+	}
+}
+
+void AVNHPlayerController::HandlePairPressureAssistReleased()
+{
+	if (APawn* ControlledPawn = GetPawn())
+	{
+		if (UPPPlayerActionRouterComponent* ActionRouter = ControlledPawn->FindComponentByClass<UPPPlayerActionRouterComponent>())
+		{
+			ActionRouter->EndAssist();
+		}
+	}
+}
+
+void AVNHPlayerController::EnsurePairPressureHUD()
+{
+	if (!IsLocalController() || !GetLocalPlayer() || !GetWorld()
+		|| !GetWorld()->GetMapName().Contains(TEXT("PP_")) || PairPressureHUDWidget.IsValid())
+	{
+		return;
+	}
+
+	UClass* HUDClass = LoadClass<UUserWidget>(nullptr, TEXT("/Game/PairPressure/UI/HUD/WBP_PP_HUD_Root.WBP_PP_HUD_Root_C"));
+	if (!HUDClass)
+	{
+		return;
+	}
+
+	UUserWidget* NewHUDWidget = CreateWidget<UUserWidget>(this, HUDClass);
+	if (NewHUDWidget)
+	{
+		NewHUDWidget->AddToViewport(25);
+		PairPressureHUDWidget = NewHUDWidget;
+	}
 }
 
 void AVNHPlayerController::PlayerTick(float DeltaTime)

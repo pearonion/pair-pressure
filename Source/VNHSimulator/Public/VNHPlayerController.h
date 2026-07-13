@@ -251,6 +251,9 @@ private:
 	void HandleRoleHudActionSlot6Pressed();
 	void HandlePickUpPressed();
 	void HandleDropPressed();
+	void HandlePairPressureDivePressed();
+	void HandlePairPressureAssistPressed();
+	void HandlePairPressureAssistReleased();
 	void HandleThrowChargePressed();
 	void HandleThrowChargeReleased();
 	void HandleInteractPressed();
@@ -270,6 +273,7 @@ private:
 	void EnsureRoleHudWidget();
 	void EnsureMarkedSuspectsWidget();
 	void EnsureComposureWidget();
+	void EnsurePairPressureHUD();
 	void RemoveComposureWidget();
 	void BindRoleHudActionButtons();
 	void BindRoleHudActionButton(FName ButtonName, FName HandlerName);
@@ -403,6 +407,7 @@ private:
 	TWeakObjectPtr<UTextBlock> MarkedSuspectsListTextBlock;
 	TWeakObjectPtr<UWidget> MarkedSuspectsPanelWidget;
 	TWeakObjectPtr<UUserWidget> ComposureWidget;
+	TWeakObjectPtr<UUserWidget> PairPressureHUDWidget;
 	TWeakObjectPtr<UWidget> ComposurePanelWidget;
 	TWeakObjectPtr<UTextBlock> ComposureStateTextBlock;
 	TWeakObjectPtr<UTextBlock> ComposureValueTextBlock;

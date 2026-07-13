@@ -26,6 +26,11 @@
 #include "UObject/ConstructorHelpers.h"
 #include "UObject/UnrealType.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "PairPressure/PPCarryComponent.h"
+#include "PairPressure/PPImpactSensorComponent.h"
+#include "PairPressure/PPPhysicalStateComponent.h"
+#include "PairPressure/PPPlayerActionRouterComponent.h"
+#include "PairPressure/PPTeamMemberComponent.h"
 #include "VNHAlienLocomotionComponent.h"
 #include "VNHGameState.h"
 #include "VNHLog.h"
@@ -149,6 +154,11 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 
 	RoutineComponent = CreateDefaultSubobject<UVNHRoutineComponent>(TEXT("RoutineComponent"));
 	AlienLocomotionComponent = CreateDefaultSubobject<UVNHAlienLocomotionComponent>(TEXT("AlienLocomotionComponent"));
+	PairPressurePhysicalState = CreateDefaultSubobject<UPPPhysicalStateComponent>(TEXT("PairPressurePhysicalState"));
+	PairPressureTeamMember = CreateDefaultSubobject<UPPTeamMemberComponent>(TEXT("PairPressureTeamMember"));
+	PairPressureCarry = CreateDefaultSubobject<UPPCarryComponent>(TEXT("PairPressureCarry"));
+	PairPressureImpactSensor = CreateDefaultSubobject<UPPImpactSensorComponent>(TEXT("PairPressureImpactSensor"));
+	PairPressureActionRouter = CreateDefaultSubobject<UPPPlayerActionRouterComponent>(TEXT("PairPressureActionRouter"));
 
 	FollowCameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("FollowCameraBoom"));
 	FollowCameraBoom->SetupAttachment(RootComponent);
@@ -269,7 +279,8 @@ void AVNHShopperCharacter::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	UpdateAdaptiveFollowCamera(DeltaSeconds);
 
-	if (HasAuthority() && IsPlayerControlled())
+	const bool bIsPairPressureMap = GetWorld() && GetWorld()->GetMapName().Contains(TEXT("PP_"));
+	if (!bIsPairPressureMap && HasAuthority() && IsPlayerControlled())
 	{
 		UpdateComposureSystem(DeltaSeconds);
 	}
@@ -442,7 +453,8 @@ void AVNHShopperCharacter::PrepareForPlayerPossession()
 
 bool AVNHShopperCharacter::UseActNatural()
 {
-	if (!HasAuthority() || !IsPlayerControlled() || !bActNaturalAvailable || !RoutineComponent)
+	if ((GetWorld() && GetWorld()->GetMapName().Contains(TEXT("PP_")))
+		|| !HasAuthority() || !IsPlayerControlled() || !bActNaturalAvailable || !RoutineComponent)
 	{
 		return false;
 	}
@@ -473,7 +485,8 @@ FText AVNHShopperCharacter::GetComposureStateText() const
 
 void AVNHShopperCharacter::ApplyComposureDelta(float Delta, FName Reason)
 {
-	if (!HasAuthority() || FMath::IsNearlyZero(Delta))
+	if ((GetWorld() && GetWorld()->GetMapName().Contains(TEXT("PP_")))
+		|| !HasAuthority() || FMath::IsNearlyZero(Delta))
 	{
 		return;
 	}
@@ -688,7 +701,7 @@ void AVNHShopperCharacter::ResetInactivity()
 
 bool AVNHShopperCharacter::TriggerFart()
 {
-	if (!HasAuthority())
+	if ((GetWorld() && GetWorld()->GetMapName().Contains(TEXT("PP_"))) || !HasAuthority())
 	{
 		return false;
 	}

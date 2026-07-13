@@ -1,0 +1,56 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Components/ActorComponent.h"
+#include "PPImpactSensorComponent.generated.h"
+
+class UPrimitiveComponent;
+
+UCLASS(ClassGroup = (PairPressure), BlueprintType, Blueprintable, meta = (BlueprintSpawnableComponent))
+class VNHSIMULATOR_API UPPImpactSensorComponent : public UActorComponent
+{
+	GENERATED_BODY()
+
+public:
+	UPPImpactSensorComponent();
+
+	virtual void BeginPlay() override;
+
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Pair Pressure|Impact")
+	void ReportImpact(float Severity, AActor* InstigatorActor, FName BodyRegion = NAME_None, bool bHeavyObstacle = false);
+
+private:
+	UFUNCTION()
+	void HandleComponentHit(
+		UPrimitiveComponent* HitComponent,
+		AActor* OtherActor,
+		UPrimitiveComponent* OtherComponent,
+		FVector NormalImpulse,
+		const FHitResult& Hit);
+
+	float CalculateImpactSeverity(
+		const UPrimitiveComponent* HitComponent,
+		const UPrimitiveComponent* OtherComponent,
+		const FVector& NormalImpulse,
+		const FHitResult& Hit) const;
+
+	bool CanReportImpact(AActor* OtherActor) const;
+	void RememberImpact(AActor* OtherActor);
+
+	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Impact", meta = (ClampMin = "0.0"))
+	float MinimumReportedSeverity = 8.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Impact", meta = (ClampMin = "1.0"))
+	float HeavyRelativeSpeed = 1800.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Impact", meta = (ClampMin = "1.0"))
+	float HeavyNormalImpulse = 70000.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Impact", meta = (ClampMin = "0.0"))
+	float SameActorCooldownSeconds = 0.25f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Impact")
+	FName HeavyObstacleTag = TEXT("PP_HeavyObstacle");
+
+	TMap<TWeakObjectPtr<AActor>, double> LastImpactTimes;
+};

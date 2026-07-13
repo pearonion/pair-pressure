@@ -7,6 +7,11 @@
 #include "VNHShopperCharacter.generated.h"
 
 class UVNHAlienLocomotionComponent;
+class UPPCarryComponent;
+class UPPImpactSensorComponent;
+class UPPPhysicalStateComponent;
+class UPPPlayerActionRouterComponent;
+class UPPTeamMemberComponent;
 class UAnimMontage;
 class UCameraComponent;
 class UDataTable;
@@ -37,6 +42,21 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Shopper")
 	UVNHAlienLocomotionComponent* GetAlienLocomotionComponent() const { return AlienLocomotionComponent; }
+
+	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Features")
+	UPPPhysicalStateComponent* GetPairPressurePhysicalState() const { return PairPressurePhysicalState; }
+
+	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Features")
+	UPPTeamMemberComponent* GetPairPressureTeamMember() const { return PairPressureTeamMember; }
+
+	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Features")
+	UPPCarryComponent* GetPairPressureCarry() const { return PairPressureCarry; }
+
+	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Features")
+	UPPImpactSensorComponent* GetPairPressureImpactSensor() const { return PairPressureImpactSensor; }
+
+	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Features")
+	UPPPlayerActionRouterComponent* GetPairPressureActionRouter() const { return PairPressureActionRouter; }
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Shopper")
 	USpringArmComponent* GetFollowCameraBoom() const { return FollowCameraBoom; }
@@ -162,6 +182,21 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Shopper", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UVNHAlienLocomotionComponent> AlienLocomotionComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pair Pressure|Features", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPPPhysicalStateComponent> PairPressurePhysicalState;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pair Pressure|Features", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPPTeamMemberComponent> PairPressureTeamMember;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pair Pressure|Features", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPPCarryComponent> PairPressureCarry;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pair Pressure|Features", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPPImpactSensorComponent> PairPressureImpactSensor;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pair Pressure|Features", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPPPlayerActionRouterComponent> PairPressureActionRouter;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Shopper", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USpringArmComponent> FollowCameraBoom;
