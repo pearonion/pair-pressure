@@ -154,7 +154,7 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 
 	RoutineComponent = CreateDefaultSubobject<UVNHRoutineComponent>(TEXT("RoutineComponent"));
 	AlienLocomotionComponent = CreateDefaultSubobject<UVNHAlienLocomotionComponent>(TEXT("AlienLocomotionComponent"));
-	PairPressurePhysicalState = CreateDefaultSubobject<UPPPhysicalStateComponent>(TEXT("PairPressurePhysicalState"));
+	PairPressurePhysicalStateComponent = CreateDefaultSubobject<UPPPhysicalStateComponent>(TEXT("PairPressurePhysicalState"));
 	PairPressureTeamMember = CreateDefaultSubobject<UPPTeamMemberComponent>(TEXT("PairPressureTeamMember"));
 	PairPressureCarry = CreateDefaultSubobject<UPPCarryComponent>(TEXT("PairPressureCarry"));
 	PairPressureImpactSensor = CreateDefaultSubobject<UPPImpactSensorComponent>(TEXT("PairPressureImpactSensor"));

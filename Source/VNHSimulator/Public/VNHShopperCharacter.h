@@ -44,7 +44,7 @@ public:
 	UVNHAlienLocomotionComponent* GetAlienLocomotionComponent() const { return AlienLocomotionComponent; }
 
 	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Features")
-	UPPPhysicalStateComponent* GetPairPressurePhysicalState() const { return PairPressurePhysicalState; }
+	UPPPhysicalStateComponent* GetPairPressurePhysicalState() const { return PairPressurePhysicalStateComponent; }
 
 	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Features")
 	UPPTeamMemberComponent* GetPairPressureTeamMember() const { return PairPressureTeamMember; }
@@ -184,7 +184,7 @@ private:
 	TObjectPtr<UVNHAlienLocomotionComponent> AlienLocomotionComponent;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pair Pressure|Features", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UPPPhysicalStateComponent> PairPressurePhysicalState;
+	TObjectPtr<UPPPhysicalStateComponent> PairPressurePhysicalStateComponent;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pair Pressure|Features", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UPPTeamMemberComponent> PairPressureTeamMember;
