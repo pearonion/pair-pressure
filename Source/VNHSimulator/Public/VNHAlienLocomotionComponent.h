@@ -79,6 +79,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Alien Locomotion")
 	void SetGrabTurnMultiplier(float NewGrabTurnMultiplier);
 
+	UFUNCTION(BlueprintCallable, Category = "VNH|Alien Locomotion|Airborne")
+	void SetTetherTensionNormalized(float NewTetherTensionNormalized);
+
 	UFUNCTION(BlueprintPure, Category = "VNH|Alien Locomotion")
 	FVNHAlienLocomotionState GetLocomotionState() const { return LocomotionState; }
 
@@ -115,6 +118,27 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "0.0", ClampMax = "180.0"))
 	float DefaultCorrectionStepAngleDegrees = 120.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Airborne", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float DefaultAirControl = 0.24f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Airborne", meta = (ClampMin = "0.0"))
+	float AirborneAcceleration = 320.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Airborne", meta = (ClampMin = "0.0"))
+	float AirborneSteeringDegreesPerSecond = 78.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Airborne", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float ExternalLaunchAirControlMultiplier = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Airborne", meta = (ClampMin = "0.0"))
+	float ExternalLaunchVelocityDeltaThreshold = 275.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Airborne", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float HeavyCarryAirControlMultiplier = 0.45f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Airborne", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float FullTetherTensionAirControlMultiplier = 0.40f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.0"))
 	float StabilityBuildRate = 1.25f;
@@ -156,6 +180,11 @@ private:
 	bool bCameraOrbitActive = false;
 	float GrabMovementMultiplier = 1.0f;
 	float GrabTurnMultiplier = 1.0f;
+	float TetherTensionNormalized = 0.0f;
+	float AirborneHorizontalSpeedCap = 0.0f;
+	float PreviousAirborneHorizontalSpeed = 0.0f;
+	bool bWasFalling = false;
+	bool bExternalLaunchDetected = false;
 
 	TWeakObjectPtr<ACharacter> OwnerCharacter;
 	TWeakObjectPtr<UCharacterMovementComponent> MovementComponent;
@@ -173,6 +202,9 @@ private:
 	float GetBodyTurnRateDegrees() const;
 	float GetCorrectionStepAngleDegrees() const;
 	void UpdateSpeed(float DeltaTime, const FVector& DesiredDirection);
-	void ApplyMovement(const FVector& DesiredDirection);
+	void ApplyMovement(float DeltaTime, const FVector& DesiredDirection);
 	void UpdateBodyFacing(float DeltaTime, const FVector& DesiredDirection);
+	float GetAirborneControlMultiplier() const;
+	bool IsControlledAirSteeringAllowed() const;
+	void UpdateTetherTensionFromWorld();
 };

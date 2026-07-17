@@ -11,7 +11,9 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "PairPressure/PPGameplayTypes.h"
+#include "PairPressure/PPGrabberComponent.h"
 #include "PhysicsEngine/PhysicsAsset.h"
+#include "PhysicsEngine/BodyInstance.h"
 #include "TimerManager.h"
 
 namespace
@@ -357,6 +359,14 @@ void UPPPhysicalStateComponent::EnterRagdollVisualState()
 	{
 		return;
 	}
+	if (OwnerCharacter->HasAuthority())
+	{
+		if (UPPGrabberComponent* GrabberComponent = OwnerCharacter->FindComponentByClass<UPPGrabberComponent>();
+			GrabberComponent && GrabberComponent->GetGrabState_Implementation() != EPPGrabState::None)
+		{
+			GrabberComponent->ReleaseGrab_Implementation();
+		}
+	}
 
 	if (UCharacterMovementComponent* MovementComponent = OwnerCharacter->GetCharacterMovement())
 	{
@@ -377,6 +387,23 @@ void UPPPhysicalStateComponent::EnterRagdollVisualState()
 		CharacterMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 		CharacterMesh->SetAllUseCCD(true);
 		CharacterMesh->SetEnableGravity(true);
+		for (FBodyInstance* BodyInstance : CharacterMesh->Bodies)
+		{
+			if (BodyInstance)
+			{
+				BodyInstance->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+				BodyInstance->LinearDamping = 0.35f;
+				BodyInstance->AngularDamping = 1.15f;
+				BodyInstance->UpdateDampingProperties();
+			}
+		}
+		CharacterMesh->SetAllMotorsAngularPositionDrive(false, false, false);
+		CharacterMesh->SetAllMotorsAngularVelocityDrive(false, false, false);
+		CharacterMesh->SetAllMotorsAngularDriveParams(0.0f, 0.0f, 0.0f, false);
+		CharacterMesh->SetEnablePhysicsBlending(true);
+		// A full knockdown is controlled by Chaos only. Keeping the compact Penguin
+		// rig's locomotion pose evaluating here makes it hover and inflate against
+		// its own constraints instead of falling naturally under gravity.
 		CharacterMesh->bPauseAnims = true;
 		const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
 		if (!RagdollRootBone.IsNone())
@@ -417,6 +444,7 @@ void UPPPhysicalStateComponent::ExitRagdollVisualState()
 		}
 		CharacterMesh->SetAllBodiesSimulatePhysics(false);
 		CharacterMesh->SetAllUseCCD(false);
+		CharacterMesh->SetEnablePhysicsBlending(false);
 		CharacterMesh->bPauseAnims = false;
 		CharacterMesh->SetCollisionProfileName(TEXT("CharacterMesh"));
 		CharacterMesh->SetRelativeTransform(InitialMeshRelativeTransform);
@@ -438,7 +466,6 @@ void UPPPhysicalStateComponent::BeginGroundedRecovery(float RequiredGroundedSeco
 	{
 		return;
 	}
-
 	TWeakObjectPtr<UPPPhysicalStateComponent> WeakPhysicalState(this);
 	const TSharedRef<float> GroundedSeconds = MakeShared<float>(0.0f);
 	FTimerDelegate GroundedRecoveryDelegate;

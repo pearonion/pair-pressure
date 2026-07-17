@@ -2642,6 +2642,11 @@ void AVNHPlayerController::HandleJumpPressed()
 	{
 		if (UPPGrabberComponent* GrabberComponent = ControlledCharacter->FindComponentByClass<UPPGrabberComponent>())
 		{
+			if (GrabberComponent->IsHangingFromLedge())
+			{
+				GrabberComponent->RequestLedgeClimb();
+				return;
+			}
 			if (GrabberComponent->GetIncomingGrabber())
 			{
 				const UVNHAlienLocomotionComponent* LocomotionComponent = ControlledCharacter->FindComponentByClass<UVNHAlienLocomotionComponent>();
@@ -2656,15 +2661,7 @@ void AVNHPlayerController::HandleJumpPressed()
 				return;
 			}
 		}
-		const bool bCanStartJump = ControlledCharacter->CanJump();
 		ControlledCharacter->Jump();
-		if (bCanStartJump)
-		{
-			if (UPPPlayerActionRouterComponent* ActionRouter = ControlledCharacter->FindComponentByClass<UPPPlayerActionRouterComponent>())
-			{
-				ActionRouter->NotifyJumpStarted();
-			}
-		}
 	}
 }
 

@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "PairPressure/PPGameplayTypes.h"
 #include "TimerManager.h"
 #include "VNHRoutineComponent.h"
 #include "VNHShopperCharacter.generated.h"
@@ -15,6 +16,7 @@ class UPPPhysicalStateComponent;
 class UPPPlayerActionRouterComponent;
 class UPPTeamMemberComponent;
 class UAnimMontage;
+class UAnimSequence;
 class UCameraComponent;
 class UDataTable;
 class USoundBase;
@@ -34,6 +36,7 @@ class VNHSIMULATOR_API AVNHShopperCharacter : public ACharacter
 public:
 	AVNHShopperCharacter();
 	virtual bool CanJumpInternal_Implementation() const override;
+	virtual void OnJumped_Implementation() override;
 	virtual void Landed(const FHitResult& Hit) override;
 
 	virtual void BeginPlay() override;
@@ -189,6 +192,31 @@ private:
 	void UpdateAdaptiveFollowCamera(float DeltaSeconds);
 	void UpdateRagdollCameraAnchor(float DeltaSeconds);
 	bool ShouldUsePairPressureMascotVisuals() const;
+	void UpdatePairPressureAnimationPresentation();
+	void PlayPairPressureMascotAnimation(UAnimSequence* Animation, bool bLooping);
+	void RestorePairPressureLocomotionAnimation();
+	UAnimSequence* ResolvePairPressureMascotAnimation(EPPGrabState GrabState) const;
+
+	UFUNCTION()
+	void HandlePairPressureGrabStateChanged(EPPGrabState NewGrabState, AActor* NewTarget);
+
+	UFUNCTION()
+	void HandlePairPressureGrabFailed();
+
+	UFUNCTION()
+	void HandlePairPressureAirDiveStateChanged(bool bIsDiving);
+
+	UFUNCTION()
+	void HandlePairPressureAirDiveRecoveryStateChanged(bool bIsRecovering);
+
+	UFUNCTION()
+	void HandlePairPressureGrabReleasedPresentation(bool bDroppedItem, bool bLedgeClimb);
+
+	UFUNCTION()
+	void HandlePairPressureGrabThrowPresentation(bool bChargedThrow);
+
+	void FinishPairPressureActionPresentation();
+	void PlayPairPressureDiveRecoveryAnimation();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Shopper", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UVNHRoutineComponent> RoutineComponent;
@@ -313,6 +341,10 @@ private:
 	FTimerHandle FreezeTestTimerHandle;
 	FTimerHandle PublicTestReactionTimerHandle;
 	FTimerHandle UniversalActionMovementLockTimerHandle;
+	FTimerHandle PairPressurePresentationTimerHandle;
+	FTimerHandle PairPressureDiveRecoveryPresentationTimerHandle;
+	double PairPressureDivePresentationStartTimeSeconds = -1.0;
+	bool bPairPressureActionPresentationActive = false;
 	bool bFirstPersonViewEnabled = false;
 	bool bStandingStillPenaltyApplied = false;
 	bool bWasWatchedByHunter = false;

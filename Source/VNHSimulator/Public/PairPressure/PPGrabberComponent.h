@@ -11,6 +11,8 @@ class USkeletalMeshComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FPPGrabStateChanged, EPPGrabState, NewGrabState, AActor*, NewTarget);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FPPGrabFailed);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FPPGrabReleasedPresentation, bool, bDroppedItem, bool, bLedgeClimb);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FPPGrabThrowPresentation, bool, bChargedThrow);
 
 UCLASS(ClassGroup = (PairPressure), BlueprintType, Blueprintable, meta = (BlueprintSpawnableComponent))
 class VNHSIMULATOR_API UPPGrabberComponent : public UActorComponent, public IPPGrabber
@@ -49,6 +51,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Grab")
 	bool CanJumpOrDive() const { return IncomingGrabber == nullptr && GrabState != EPPGrabState::HangingFromLedge; }
 
+	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Grab|Ledge")
+	bool IsHangingFromLedge() const { return GrabState == EPPGrabState::HangingFromLedge; }
+
 	UFUNCTION(BlueprintCallable, Category = "Pair Pressure|Grab")
 	void RequestHeldItemThrow(const FVector& ThrowDirection);
 
@@ -57,11 +62,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Pair Pressure|Grab")
 	void RequestDirectionalEscape(const FVector& EscapeDirection);
 
+	UFUNCTION(BlueprintCallable, Category = "Pair Pressure|Grab|Ledge")
+	void RequestLedgeClimb();
+
 	UPROPERTY(BlueprintAssignable, Category = "Pair Pressure|Grab")
 	FPPGrabStateChanged OnGrabStateChanged;
 
 	UPROPERTY(BlueprintAssignable, Category = "Pair Pressure|Grab")
 	FPPGrabFailed OnGrabFailed;
+
+	UPROPERTY(BlueprintAssignable, Category = "Pair Pressure|Grab|Presentation")
+	FPPGrabReleasedPresentation OnGrabReleasedPresentation;
+
+	UPROPERTY(BlueprintAssignable, Category = "Pair Pressure|Grab|Presentation")
+	FPPGrabThrowPresentation OnGrabThrowPresentation;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pair Pressure|Grab|Detection", meta = (ClampMin = "25.0"))
 	float SearchReach = 250.0f;
@@ -115,6 +129,9 @@ public:
 	float PlayerHoldDistance = 105.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pair Pressure|Grab|Player", meta = (ClampMin = "0.0"))
+	float PlayerHoldHeight = 165.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pair Pressure|Grab|Player", meta = (ClampMin = "0.0"))
 	float TeammateRescueStrengthMultiplier = 1.35f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pair Pressure|Grab|Ledge", meta = (ClampMin = "0.0"))
@@ -133,8 +150,17 @@ private:
 	UFUNCTION(Server, Reliable)
 	void ServerRequestDirectionalEscape(FVector_NetQuantizeNormal EscapeDirection);
 
+	UFUNCTION(Server, Reliable)
+	void ServerRequestLedgeClimb();
+
 	UFUNCTION(Client, Reliable)
 	void ClientGrabRejected();
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastGrabReleasedPresentation(bool bDroppedItem, bool bLedgeClimb);
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastGrabThrowPresentation(bool bChargedThrow);
 
 	UFUNCTION()
 	void OnRep_GrabPresentation();
@@ -148,7 +174,7 @@ private:
 	bool BuildTargetData(AActor* CandidateActor, const FVector& TraceStart, const FVector& CameraForward, FPPGrabTargetData& OutTargetData) const;
 	bool HasClearLineOfSight(const FVector& TraceStart, const FPPGrabTargetData& TargetData) const;
 	void StartGrabAuthoritative(const FPPGrabTargetData& TargetData);
-	void ReleaseGrabAuthoritative(bool bPlayRecoveryAnimation = true);
+	void ReleaseGrabAuthoritative(bool bPlayRecoveryAnimation = true, bool bPlayLedgeClimbAnimation = false);
 	void UpdateReachSearch(float DeltaTime);
 	void UpdateHeldItem(float DeltaTime);
 	void UpdatePlayerGrab(float DeltaTime);
@@ -162,6 +188,7 @@ private:
 	void PerformHeldItemThrow(const FVector& ThrowDirection, float ChargeAlpha);
 	void PlayGetUpFrontAnimation(ACharacter* RecoveringCharacter);
 	void PerformDirectionalEscape(const FVector& EscapeDirection);
+	void PerformLedgeClimb();
 	void CancelReciprocalGrab(UPPGrabberComponent* OtherGrabber);
 	void ApplyMovementPresentation();
 	void ForceDropTargetItem(AActor* TargetActor) const;
@@ -171,6 +198,7 @@ private:
 	int32 GetDefaultPriority(EPPGrabTargetType TargetType) const;
 	FVector GetGrabOrigin() const;
 	FVector GetHandCarryLocation(float ForwardDistance) const;
+	FVector GetPlayerCarryLocation() const;
 	void SetGrabPresentation(EPPGrabState NewGrabState, AActor* NewGrabTarget);
 
 	UPROPERTY(Transient)
@@ -195,6 +223,9 @@ private:
 	FPPGrabProfile ActiveProfile;
 	FVector LastValidatedCameraForward = FVector::ForwardVector;
 	FVector FixedWorldGrabPoint = FVector::ZeroVector;
+	FVector LockedPushAxis = FVector::ForwardVector;
+	FRotator LockedOwnerRotation = FRotator::ZeroRotator;
+	FRotator LockedGrabbedRotation = FRotator::ZeroRotator;
 	FTransform IncomingGrabInitialMeshRelativeTransform;
 	FName ActivePlayerGrabBone = NAME_None;
 	float ConstraintForceEstimate = 0.0f;

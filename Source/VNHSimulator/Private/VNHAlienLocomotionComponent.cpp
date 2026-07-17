@@ -4,6 +4,13 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "EngineUtils.h"
+#include "PairPressure/PPGrabberComponent.h"
+#include "PairPressure/PPPhysicalStateComponent.h"
+#include "PairPressure/PPPlayerActionRouterComponent.h"
+#include "PairPressure/PPTeamMemberComponent.h"
+#include "UObject/StructOnScope.h"
+#include "UObject/UnrealType.h"
 #include "VNHMovementTuningData.h"
 
 UVNHAlienLocomotionComponent::UVNHAlienLocomotionComponent()
@@ -26,6 +33,8 @@ void UVNHAlienLocomotionComponent::BeginPlay()
 			MovementComponent->bOrientRotationToMovement = true;
 			MovementComponent->bUseControllerDesiredRotation = false;
 			MovementComponent->RotationRate = FRotator(0.0f, GetBodyTurnRateDegrees() * GrabTurnMultiplier, 0.0f);
+			MovementComponent->AirControl = DefaultAirControl;
+			MovementComponent->AirControlBoostMultiplier = 1.0f;
 		}
 	}
 }
@@ -50,10 +59,44 @@ void UVNHAlienLocomotionComponent::TickComponent(float DeltaTime, ELevelTick Tic
 		return;
 	}
 
+	const bool bIsFalling = MovementComponent->IsFalling();
+	if (bIsFalling)
+	{
+		UpdateTetherTensionFromWorld();
+	}
+	else
+	{
+		TetherTensionNormalized = 0.0f;
+	}
+	const float HorizontalSpeed = OwnerCharacter->GetVelocity().Size2D();
+	if (bIsFalling && !bWasFalling)
+	{
+		AirborneHorizontalSpeedCap = FMath::Max(HorizontalSpeed, GetWalkSpeed() * 0.35f);
+		PreviousAirborneHorizontalSpeed = HorizontalSpeed;
+		bExternalLaunchDetected = false;
+	}
+	else if (bIsFalling)
+	{
+		if (HorizontalSpeed - PreviousAirborneHorizontalSpeed > ExternalLaunchVelocityDeltaThreshold)
+		{
+			bExternalLaunchDetected = true;
+			AirborneHorizontalSpeedCap = FMath::Max(AirborneHorizontalSpeedCap, HorizontalSpeed);
+		}
+		PreviousAirborneHorizontalSpeed = HorizontalSpeed;
+	}
+	else if (bWasFalling)
+	{
+		AirborneHorizontalSpeedCap = 0.0f;
+		PreviousAirborneHorizontalSpeed = 0.0f;
+		bExternalLaunchDetected = false;
+		MovementComponent->AirControl = DefaultAirControl;
+	}
+	bWasFalling = bIsFalling;
+
 	const FVector DesiredDirection = BuildCameraRelativeMoveDirection();
 	UpdateInstability(DeltaTime, DesiredDirection);
 	UpdateSpeed(DeltaTime, DesiredDirection);
-	ApplyMovement(DesiredDirection);
+	ApplyMovement(DeltaTime, DesiredDirection);
 	UpdateBodyFacing(DeltaTime, DesiredDirection);
 	UpdateAnimationRate();
 }
@@ -103,6 +146,11 @@ void UVNHAlienLocomotionComponent::SetGrabTurnMultiplier(float NewGrabTurnMultip
 	}
 }
 
+void UVNHAlienLocomotionComponent::SetTetherTensionNormalized(float NewTetherTensionNormalized)
+{
+	TetherTensionNormalized = FMath::Clamp(NewTetherTensionNormalized, 0.0f, 1.0f);
+}
+
 FString UVNHAlienLocomotionComponent::DescribeLocomotionState() const
 {
 	return FString::Printf(
@@ -135,7 +183,11 @@ bool UVNHAlienLocomotionComponent::ShouldDriveLocomotion() const
 	}
 
 	const AController* Controller = OwnerCharacter->GetController();
-	return Controller && Controller->IsPlayerController() && OwnerCharacter->IsLocallyControlled();
+	const UPPPlayerActionRouterComponent* ActionRouter = GetOwner()
+		? GetOwner()->FindComponentByClass<UPPPlayerActionRouterComponent>()
+		: nullptr;
+	return Controller && Controller->IsPlayerController() && OwnerCharacter->IsLocallyControlled()
+		&& (!ActionRouter || !ActionRouter->IsAirDiveActive());
 }
 
 FVector UVNHAlienLocomotionComponent::BuildCameraRelativeMoveDirection() const
@@ -154,6 +206,22 @@ FVector UVNHAlienLocomotionComponent::BuildCameraRelativeMoveDirection() const
 	const FVector Forward = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
 	const FVector Right = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
 	const FVector DesiredDirection = Forward * MoveInput.Y + Right * MoveInput.X;
+	if (const UPPGrabberComponent* GrabberComponent = GetOwner()->FindComponentByClass<UPPGrabberComponent>())
+	{
+		const EPPGrabState CurrentGrabState = GrabberComponent->GetGrabState_Implementation();
+		if (CurrentGrabState == EPPGrabState::HangingFromLedge)
+		{
+			return FVector::ZeroVector;
+		}
+		if (CurrentGrabState == EPPGrabState::PushingObject)
+		{
+			const FVector LockedForward = OwnerCharacter->GetActorForwardVector().GetSafeNormal2D();
+			const float ForwardAmount = FVector::DotProduct(DesiredDirection, LockedForward);
+			return FMath::Abs(ForwardAmount) >= 0.2f
+				? LockedForward * FMath::Sign(ForwardAmount)
+				: FVector::ZeroVector;
+		}
+	}
 
 	return DesiredDirection.GetSafeNormal();
 }
@@ -215,12 +283,12 @@ void UVNHAlienLocomotionComponent::UpdateSpeed(float DeltaTime, const FVector& D
 
 	if (MovementComponent.IsValid())
 	{
-		MovementComponent->MaxAcceleration = GetAcceleration();
+		MovementComponent->MaxAcceleration = MovementComponent->IsFalling() ? AirborneAcceleration : GetAcceleration();
 		MovementComponent->BrakingDecelerationWalking = GetCoastBraking() * (LocomotionState.bManualBrake ? GetManualBrakeMultiplier() : 1.0f);
 	}
 }
 
-void UVNHAlienLocomotionComponent::ApplyMovement(const FVector& DesiredDirection)
+void UVNHAlienLocomotionComponent::ApplyMovement(float DeltaTime, const FVector& DesiredDirection)
 {
 	if (!OwnerCharacter.IsValid() || !MovementComponent.IsValid() || DesiredDirection.IsNearlyZero()
 		|| GrabMovementMultiplier <= KINDA_SMALL_NUMBER)
@@ -228,6 +296,37 @@ void UVNHAlienLocomotionComponent::ApplyMovement(const FVector& DesiredDirection
 		return;
 	}
 
+	if (MovementComponent->IsFalling())
+	{
+		if (!IsControlledAirSteeringAllowed())
+		{
+			MovementComponent->AirControl = 0.0f;
+			return;
+		}
+
+		const float AirControlMultiplier = GetAirborneControlMultiplier();
+		MovementComponent->AirControl = DefaultAirControl * AirControlMultiplier;
+		MovementComponent->MaxAcceleration = AirborneAcceleration;
+		MovementComponent->MaxWalkSpeed = FMath::Max(1.0f, AirborneHorizontalSpeedCap);
+
+		const FVector HorizontalVelocity = OwnerCharacter->GetVelocity().GetSafeNormal2D();
+		FVector LimitedDirection = DesiredDirection.GetSafeNormal2D();
+		if (!HorizontalVelocity.IsNearlyZero())
+		{
+			const float CurrentYaw = HorizontalVelocity.Rotation().Yaw;
+			const float DesiredYaw = LimitedDirection.Rotation().Yaw;
+			const float MaxYawStep = AirborneSteeringDegreesPerSecond * AirControlMultiplier * DeltaTime;
+			const float LimitedYaw = CurrentYaw + FMath::Clamp(
+				FMath::FindDeltaAngleDegrees(CurrentYaw, DesiredYaw),
+				-MaxYawStep,
+				MaxYawStep);
+			LimitedDirection = FRotator(0.0f, LimitedYaw, 0.0f).Vector();
+		}
+		OwnerCharacter->AddMovementInput(LimitedDirection, AirControlMultiplier);
+		return;
+	}
+
+	MovementComponent->AirControl = DefaultAirControl;
 	const FVector DriftRight = FVector::CrossProduct(FVector::UpVector, DesiredDirection).GetSafeNormal();
 	const float DriftAmount = FMath::Sin(WobblePhaseRadians) * LateralDriftStrength * LocomotionState.Instability;
 	const FVector UnstableDirection = (DesiredDirection + DriftRight * DriftAmount).GetSafeNormal();
@@ -243,6 +342,18 @@ void UVNHAlienLocomotionComponent::UpdateBodyFacing(float /*DeltaTime*/, const F
 	{
 		return;
 	}
+	if (const UPPGrabberComponent* GrabberComponent = GetOwner()->FindComponentByClass<UPPGrabberComponent>())
+	{
+		const EPPGrabState CurrentGrabState = GrabberComponent->GetGrabState_Implementation();
+		if (CurrentGrabState == EPPGrabState::PushingObject || CurrentGrabState == EPPGrabState::HangingFromLedge)
+		{
+			MovementComponent->bOrientRotationToMovement = false;
+			MovementComponent->RotationRate = FRotator::ZeroRotator;
+			LocomotionState.BodyYawDeltaDegrees = 0.0f;
+			return;
+		}
+	}
+	MovementComponent->bOrientRotationToMovement = true;
 
 	if (GrabMovementMultiplier <= KINDA_SMALL_NUMBER)
 	{
@@ -262,10 +373,95 @@ void UVNHAlienLocomotionComponent::UpdateBodyFacing(float /*DeltaTime*/, const F
 
 	const float WobbleYaw = !DesiredDirection.IsNearlyZero() ? LocomotionState.WobbleDegrees : 0.0f;
 	const float TargetBodyYaw = DesiredDirection.Rotation().Yaw + WobbleYaw;
-	MovementComponent->RotationRate = FRotator(0.0f, GetBodyTurnRateDegrees() * GrabTurnMultiplier, 0.0f);
+	const float AirborneTurnMultiplier = MovementComponent->IsFalling() ? 0.30f * GetAirborneControlMultiplier() : 1.0f;
+	MovementComponent->RotationRate = FRotator(0.0f, GetBodyTurnRateDegrees() * GrabTurnMultiplier * AirborneTurnMultiplier, 0.0f);
 	LocomotionState.BodyYawDeltaDegrees = FMath::FindDeltaAngleDegrees(
 		OwnerCharacter->GetActorRotation().Yaw,
 		TargetBodyYaw);
+}
+
+float UVNHAlienLocomotionComponent::GetAirborneControlMultiplier() const
+{
+	float ControlMultiplier = bExternalLaunchDetected ? ExternalLaunchAirControlMultiplier : 1.0f;
+	ControlMultiplier *= FMath::Lerp(1.0f, FullTetherTensionAirControlMultiplier, TetherTensionNormalized);
+
+	if (const AActor* OwnerActor = GetOwner())
+	{
+		if (const UPPGrabberComponent* GrabberComponent = OwnerActor->FindComponentByClass<UPPGrabberComponent>())
+		{
+			const EPPGrabState CurrentGrabState = GrabberComponent->GetGrabState_Implementation();
+			const FPPGrabProfile GrabProfile = GrabberComponent->GetActiveGrabProfile();
+			if ((CurrentGrabState == EPPGrabState::HoldingItem || CurrentGrabState == EPPGrabState::PushingObject)
+				&& (GrabProfile.bRequiresTwoHands || GrabProfile.MovementSpeedMultiplier <= 0.70f))
+			{
+				ControlMultiplier *= HeavyCarryAirControlMultiplier;
+			}
+		}
+	}
+	return FMath::Clamp(ControlMultiplier, 0.0f, 1.0f);
+}
+
+bool UVNHAlienLocomotionComponent::IsControlledAirSteeringAllowed() const
+{
+	const AActor* OwnerActor = GetOwner();
+	const UPPPhysicalStateComponent* PhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(OwnerActor);
+	const UPPPlayerActionRouterComponent* ActionRouter = OwnerActor
+		? OwnerActor->FindComponentByClass<UPPPlayerActionRouterComponent>()
+		: nullptr;
+	return (!PhysicalState || (!PhysicalState->IsRagdolled() && !PhysicalState->IsUnconscious()))
+		&& (!ActionRouter || !ActionRouter->IsAirDiveActive());
+}
+
+void UVNHAlienLocomotionComponent::UpdateTetherTensionFromWorld()
+{
+	TetherTensionNormalized = 0.0f;
+	UWorld* World = GetWorld();
+	const UPPTeamMemberComponent* TeamMember = GetOwner()
+		? GetOwner()->FindComponentByClass<UPPTeamMemberComponent>()
+		: nullptr;
+	if (!World || !TeamMember)
+	{
+		return;
+	}
+
+	const int32 OwnerTeamId = TeamMember->GetTeamId_Implementation();
+	if (OwnerTeamId == INDEX_NONE)
+	{
+		return;
+	}
+	for (TActorIterator<AActor> ActorIterator(World); ActorIterator; ++ActorIterator)
+	{
+		AActor* CandidateActor = *ActorIterator;
+		UFunction* PresentationFunction = CandidateActor
+			? CandidateActor->FindFunction(TEXT("GetTetherPresentation"))
+			: nullptr;
+		if (!PresentationFunction)
+		{
+			continue;
+		}
+
+		FStructOnScope Parameters(PresentationFunction);
+		CandidateActor->ProcessEvent(PresentationFunction, Parameters.GetStructMemory());
+		const FIntProperty* TeamIdProperty = FindFProperty<FIntProperty>(PresentationFunction, TEXT("TeamId"));
+		const FFloatProperty* TensionProperty = FindFProperty<FFloatProperty>(PresentationFunction, TEXT("TensionNormalized"));
+		const FBoolProperty* ConnectedProperty = FindFProperty<FBoolProperty>(PresentationFunction, TEXT("Connected"));
+		if (!TeamIdProperty || !TensionProperty || !ConnectedProperty)
+		{
+			continue;
+		}
+
+		const uint8* ParameterMemory = Parameters.GetStructMemory();
+		const int32 TetherTeamId = TeamIdProperty->GetPropertyValue_InContainer(ParameterMemory);
+		const bool bConnected = ConnectedProperty->GetPropertyValue_InContainer(ParameterMemory);
+		if (bConnected && TetherTeamId == OwnerTeamId)
+		{
+			TetherTensionNormalized = FMath::Clamp(
+				TensionProperty->GetPropertyValue_InContainer(ParameterMemory),
+				0.0f,
+				1.0f);
+			return;
+		}
+	}
 }
 
 void UVNHAlienLocomotionComponent::UpdateAnimationRate()

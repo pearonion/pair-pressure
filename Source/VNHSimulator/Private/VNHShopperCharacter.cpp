@@ -4,6 +4,7 @@
 #include "Animation/AnimationAsset.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Animation/AnimSequence.h"
 #include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -159,7 +160,7 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 		MovementComponent->BrakingFrictionFactor = 1.0f;
 		MovementComponent->JumpZVelocity = 650.0f;
 		MovementComponent->GravityScale = 1.65f;
-		MovementComponent->AirControl = 0.45f;
+		MovementComponent->AirControl = 0.24f;
 		MovementComponent->FallingLateralFriction = 0.15f;
 		MovementComponent->NavAgentProps.bCanCrouch = true;
 	}
@@ -173,11 +174,11 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 	PairPressureGrabber = CreateDefaultSubobject<UPPGrabberComponent>(TEXT("PairPressureGrabber"));
 	PairPressureGrabbable = CreateDefaultSubobject<UPPGrabbableComponent>(TEXT("PairPressureGrabbable"));
 	PairPressureGrabbable->GrabProfile.TargetType = EPPGrabTargetType::Player;
-	PairPressureGrabbable->GrabProfile.MaximumRange = 210.0f;
-	PairPressureGrabbable->GrabProfile.MaximumAngleDegrees = 52.0f;
-	PairPressureGrabbable->GrabProfile.LinearStiffness = 1800.0f;
-	PairPressureGrabbable->GrabProfile.LinearDamping = 360.0f;
-	PairPressureGrabbable->GrabProfile.BreakForce = 400000.0f;
+	PairPressureGrabbable->GrabProfile.MaximumRange = 260.0f;
+	PairPressureGrabbable->GrabProfile.MaximumAngleDegrees = 65.0f;
+	PairPressureGrabbable->GrabProfile.LinearStiffness = 5200.0f;
+	PairPressureGrabbable->GrabProfile.LinearDamping = 900.0f;
+	PairPressureGrabbable->GrabProfile.BreakForce = 1250000.0f;
 	PairPressureGrabbable->GrabProfile.MovementSpeedMultiplier = 0.72f;
 	PairPressureGrabbable->GripPointComponentName = TEXT("GrabAnchor");
 	PairPressureImpactSensor = CreateDefaultSubobject<UPPImpactSensorComponent>(TEXT("PairPressureImpactSensor"));
@@ -283,6 +284,18 @@ void AVNHShopperCharacter::BeginPlay()
 		// Camera anchoring must follow physics every frame while the capsule is
 		// disabled and the mascot body is being propelled or carried.
 		PrimaryActorTick.TickInterval = 0.0f;
+		if (PairPressureGrabber)
+		{
+			PairPressureGrabber->OnGrabStateChanged.AddUniqueDynamic(this, &AVNHShopperCharacter::HandlePairPressureGrabStateChanged);
+			PairPressureGrabber->OnGrabFailed.AddUniqueDynamic(this, &AVNHShopperCharacter::HandlePairPressureGrabFailed);
+			PairPressureGrabber->OnGrabReleasedPresentation.AddUniqueDynamic(this, &AVNHShopperCharacter::HandlePairPressureGrabReleasedPresentation);
+			PairPressureGrabber->OnGrabThrowPresentation.AddUniqueDynamic(this, &AVNHShopperCharacter::HandlePairPressureGrabThrowPresentation);
+		}
+		if (PairPressureActionRouter)
+		{
+			PairPressureActionRouter->OnAirDiveStateChanged.AddUniqueDynamic(this, &AVNHShopperCharacter::HandlePairPressureAirDiveStateChanged);
+			PairPressureActionRouter->OnAirDiveRecoveryStateChanged.AddUniqueDynamic(this, &AVNHShopperCharacter::HandlePairPressureAirDiveRecoveryStateChanged);
+		}
 	}
 	LastMeaningfulLocation = GetActorLocation();
 	LastMeaningfulControlRotation = GetControlRotation();
@@ -305,6 +318,7 @@ void AVNHShopperCharacter::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	UpdateRagdollCameraAnchor(DeltaSeconds);
 	UpdateAdaptiveFollowCamera(DeltaSeconds);
+	UpdatePairPressureAnimationPresentation();
 
 	const bool bIsPairPressureMap = GetWorld() && GetWorld()->GetMapName().Contains(TEXT("PP_"));
 	if (!bIsPairPressureMap && HasAuthority() && IsPlayerControlled())
@@ -1131,7 +1145,17 @@ void AVNHShopperCharacter::UpdateRagdollCameraAnchor(float DeltaSeconds)
 bool AVNHShopperCharacter::CanJumpInternal_Implementation() const
 {
 	return Super::CanJumpInternal_Implementation()
-		&& (!PairPressureGrabber || PairPressureGrabber->CanJumpOrDive());
+		&& (!PairPressureGrabber || PairPressureGrabber->CanJumpOrDive())
+		&& (!PairPressureActionRouter || !PairPressureActionRouter->IsAirDiveActive());
+}
+
+void AVNHShopperCharacter::OnJumped_Implementation()
+{
+	Super::OnJumped_Implementation();
+	if (PairPressureActionRouter)
+	{
+		PairPressureActionRouter->NotifyJumpStarted();
+	}
 }
 
 void AVNHShopperCharacter::Landed(const FHitResult& Hit)
@@ -1141,6 +1165,315 @@ void AVNHShopperCharacter::Landed(const FHitResult& Hit)
 	{
 		PairPressureActionRouter->NotifyLanded();
 	}
+}
+
+void AVNHShopperCharacter::UpdatePairPressureAnimationPresentation()
+{
+	if (!ShouldUsePairPressureMascotVisuals() || !PairPressureGrabber || !GetMesh())
+	{
+		return;
+	}
+
+	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
+	if (!AnimInstance)
+	{
+		return;
+	}
+
+	const EPPGrabState CurrentGrabState = PairPressureGrabber->GetGrabState_Implementation();
+	// This compact rig's arm chains share the torso, so procedural grab IK rolls
+	// the mascot while it runs. Carry is conveyed by the held physics object and
+	// dedicated action clips instead; keep the locomotion body completely neutral.
+	const bool bEnableGrabIK = false;
+	FVector WorldGrabPoint = PairPressureGrabber->GetPresentationGrabPoint();
+	if (WorldGrabPoint.IsNearlyZero())
+	{
+		WorldGrabPoint = GetActorLocation() + GetActorForwardVector() * 95.0f + FVector(0.0f, 0.0f, 54.0f);
+	}
+	const FVector HandSeparation = GetActorRightVector() * 17.0f;
+	const FTransform MeshTransform = GetMesh()->GetComponentTransform();
+	const FVector LeftEffector = MeshTransform.InverseTransformPositionNoScale(WorldGrabPoint - HandSeparation);
+	const FVector RightEffector = MeshTransform.InverseTransformPositionNoScale(WorldGrabPoint + HandSeparation);
+
+	if (FFloatProperty* AlphaProperty = FindFProperty<FFloatProperty>(AnimInstance->GetClass(), TEXT("GrabIKAlpha")))
+	{
+		AlphaProperty->SetPropertyValue_InContainer(AnimInstance, bEnableGrabIK ? 1.0f : 0.0f);
+	}
+	if (FStructProperty* LeftProperty = FindFProperty<FStructProperty>(AnimInstance->GetClass(), TEXT("LeftGrabIKEffector")))
+	{
+		if (LeftProperty->Struct == TBaseStructure<FVector>::Get())
+		{
+			*LeftProperty->ContainerPtrToValuePtr<FVector>(AnimInstance) = LeftEffector;
+		}
+	}
+	if (FStructProperty* RightProperty = FindFProperty<FStructProperty>(AnimInstance->GetClass(), TEXT("RightGrabIKEffector")))
+	{
+		if (RightProperty->Struct == TBaseStructure<FVector>::Get())
+		{
+			*RightProperty->ContainerPtrToValuePtr<FVector>(AnimInstance) = RightEffector;
+		}
+	}
+}
+
+void AVNHShopperCharacter::PlayPairPressureMascotAnimation(UAnimSequence* Animation, bool bLooping)
+{
+	USkeletalMeshComponent* CharacterMesh = GetMesh();
+	UAnimInstance* AnimInstance = CharacterMesh ? CharacterMesh->GetAnimInstance() : nullptr;
+	if (!Animation || !AnimInstance || CharacterMesh->IsAnySimulatingPhysics())
+	{
+		return;
+	}
+	GetWorldTimerManager().ClearTimer(PairPressurePresentationTimerHandle);
+	AnimInstance->StopSlotAnimation(0.08f, TEXT("DefaultSlot"));
+	AnimInstance->PlaySlotAnimationAsDynamicMontage(
+		Animation,
+		TEXT("DefaultSlot"),
+		0.08f,
+		0.12f,
+		1.0f,
+		bLooping ? 9999 : 1,
+		-1.0f,
+		0.0f);
+}
+
+void AVNHShopperCharacter::RestorePairPressureLocomotionAnimation()
+{
+	if (USkeletalMeshComponent* CharacterMesh = GetMesh())
+	{
+		if (UAnimInstance* AnimInstance = CharacterMesh->GetAnimInstance())
+		{
+			AnimInstance->StopSlotAnimation(0.12f, TEXT("DefaultSlot"));
+		}
+	}
+}
+
+UAnimSequence* AVNHShopperCharacter::ResolvePairPressureMascotAnimation(EPPGrabState GrabState) const
+{
+	if (GrabState == EPPGrabState::Releasing && PairPressureGrabber
+		&& PairPressureGrabber->GetActiveGrabProfile().TargetType == EPPGrabTargetType::LedgeOrHandle)
+	{
+		return LoadObject<UAnimSequence>(
+			nullptr,
+			TEXT("/Game/CuteChubbyPenguin_V2/Content/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_climb_all.AS_Penguin_UE_climb_all"));
+	}
+	const UDataTable* LoadedMascotTable = MascotAnimationTable.IsNull() ? nullptr : MascotAnimationTable.LoadSynchronous();
+	const FPPMascotAnimationRow* PenguinRow = LoadedMascotTable
+		? LoadedMascotTable->FindRow<FPPMascotAnimationRow>(FName(TEXT("Penguin")), TEXT("Pair Pressure presentation"), false)
+		: nullptr;
+	if (!PenguinRow)
+	{
+		return nullptr;
+	}
+	if (GrabState == EPPGrabState::HangingFromLedge)
+	{
+		return PenguinRow->Hanging.LoadSynchronous();
+	}
+	const TSoftObjectPtr<UAnimSequence>* RequestedAnimation = &PenguinRow->Grab;
+	switch (GrabState)
+	{
+	case EPPGrabState::Reaching:
+		RequestedAnimation = PenguinRow->Reach.IsNull() ? &PenguinRow->Grab : &PenguinRow->Reach;
+		break;
+	case EPPGrabState::HoldingItem:
+		RequestedAnimation = PenguinRow->HoldItem.IsNull() ? &PenguinRow->OverheadThrow : &PenguinRow->HoldItem;
+		break;
+	case EPPGrabState::GrabbingPlayer:
+		RequestedAnimation = PenguinRow->PlayerGrab.IsNull() ? &PenguinRow->Punch : &PenguinRow->PlayerGrab;
+		break;
+	case EPPGrabState::MutualGrab:
+		RequestedAnimation = PenguinRow->MutualGrab.IsNull() ? &PenguinRow->Crouch : &PenguinRow->MutualGrab;
+		break;
+	case EPPGrabState::PushingObject:
+		RequestedAnimation = PenguinRow->Push.IsNull() ? &PenguinRow->Crouch : &PenguinRow->Push;
+		break;
+	case EPPGrabState::Releasing:
+		RequestedAnimation = PenguinRow->GrabRelease.IsNull() ? &PenguinRow->Throw : &PenguinRow->GrabRelease;
+		break;
+	default:
+		break;
+	}
+	return RequestedAnimation->LoadSynchronous();
+}
+
+void AVNHShopperCharacter::HandlePairPressureGrabStateChanged(EPPGrabState NewGrabState, AActor* /*NewTarget*/)
+{
+	if (NewGrabState == EPPGrabState::None || NewGrabState == EPPGrabState::GrabCooldown)
+	{
+		if (!bPairPressureActionPresentationActive && (!PairPressureActionRouter || !PairPressureActionRouter->IsAirDiveActive()))
+		{
+			RestorePairPressureLocomotionAnimation();
+		}
+		return;
+	}
+	if (NewGrabState == EPPGrabState::Releasing)
+	{
+		UAnimSequence* ReleaseAnimation = ResolvePairPressureMascotAnimation(NewGrabState);
+		PlayPairPressureMascotAnimation(ReleaseAnimation, false);
+		GetWorldTimerManager().SetTimer(PairPressurePresentationTimerHandle, this, &AVNHShopperCharacter::RestorePairPressureLocomotionAnimation, 0.22f, false);
+		return;
+	}
+	if (NewGrabState == EPPGrabState::HangingFromLedge)
+	{
+		PlayPairPressureMascotAnimation(ResolvePairPressureMascotAnimation(NewGrabState), true);
+		return;
+	}
+	if (NewGrabState == EPPGrabState::Reaching)
+	{
+		// The authored reach clips are full-body climbing poses and tilt the mascot.
+		// Keep the normal locomotion graph and let the two-hand IK provide the grab
+		// gesture, including when no target is found.
+		GetWorldTimerManager().ClearTimer(PairPressurePresentationTimerHandle);
+		RestorePairPressureLocomotionAnimation();
+		return;
+	}
+	// Holding, player-grab and push presentation come from hand IK over the normal
+	// locomotion graph. This preserves the proper run cycle while carrying.
+	GetWorldTimerManager().ClearTimer(PairPressurePresentationTimerHandle);
+	RestorePairPressureLocomotionAnimation();
+}
+
+void AVNHShopperCharacter::HandlePairPressureGrabFailed()
+{
+	const UDataTable* LoadedMascotTable = MascotAnimationTable.IsNull() ? nullptr : MascotAnimationTable.LoadSynchronous();
+	const FPPMascotAnimationRow* PenguinRow = LoadedMascotTable
+		? LoadedMascotTable->FindRow<FPPMascotAnimationRow>(FName(TEXT("Penguin")), TEXT("Failed grab presentation"), false)
+		: nullptr;
+	bPairPressureActionPresentationActive = true;
+	PlayPairPressureMascotAnimation(PenguinRow
+		? (PenguinRow->FailedGrab.IsNull() ? PenguinRow->HitFront : PenguinRow->FailedGrab).LoadSynchronous()
+		: nullptr, false);
+	GetWorldTimerManager().SetTimer(PairPressurePresentationTimerHandle, this, &AVNHShopperCharacter::FinishPairPressureActionPresentation, 0.30f, false);
+}
+
+void AVNHShopperCharacter::HandlePairPressureAirDiveStateChanged(bool bIsDiving)
+{
+	if (!bIsDiving)
+	{
+		PairPressureDivePresentationStartTimeSeconds = -1.0;
+		GetWorldTimerManager().ClearTimer(PairPressureDiveRecoveryPresentationTimerHandle);
+		RestorePairPressureLocomotionAnimation();
+		return;
+	}
+	PairPressureDivePresentationStartTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	UAnimSequence* DiveAnimation = LoadObject<UAnimSequence>(
+		nullptr,
+		TEXT("/Game/CuteChubbyPenguin_V2/Content/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_falls_forward.AS_Penguin_UE_falls_forward"));
+	USkeletalMeshComponent* CharacterMesh = GetMesh();
+	UAnimInstance* AnimInstance = CharacterMesh ? CharacterMesh->GetAnimInstance() : nullptr;
+	if (DiveAnimation && AnimInstance && !CharacterMesh->IsAnySimulatingPhysics())
+	{
+		GetWorldTimerManager().ClearTimer(PairPressurePresentationTimerHandle);
+		AnimInstance->StopSlotAnimation(0.0f, TEXT("DefaultSlot"));
+		AnimInstance->PlaySlotAnimationAsDynamicMontage(
+			DiveAnimation,
+			TEXT("DefaultSlot"),
+			0.0f,
+			0.01f,
+			1.0f,
+			9999,
+			-1.0f,
+			0.0f);
+	}
+}
+
+void AVNHShopperCharacter::HandlePairPressureAirDiveRecoveryStateChanged(bool bIsRecovering)
+{
+	GetWorldTimerManager().ClearTimer(PairPressureDiveRecoveryPresentationTimerHandle);
+	if (!bIsRecovering || !GetWorld())
+	{
+		return;
+	}
+
+	UAnimSequence* DiveAnimation = LoadObject<UAnimSequence>(
+		nullptr,
+		TEXT("/Game/CuteChubbyPenguin_V2/Content/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_falls_forward.AS_Penguin_UE_falls_forward"));
+	USkeletalMeshComponent* CharacterMesh = GetMesh();
+	UAnimInstance* AnimInstance = CharacterMesh ? CharacterMesh->GetAnimInstance() : nullptr;
+	if (DiveAnimation && AnimInstance && !CharacterMesh->IsAnySimulatingPhysics())
+	{
+		AnimInstance->StopSlotAnimation(0.03f, TEXT("DefaultSlot"));
+		AnimInstance->PlaySlotAnimationAsDynamicMontage(
+			DiveAnimation,
+			TEXT("DefaultSlot"),
+			0.03f,
+			0.08f,
+			0.001f,
+			9999,
+			-1.0f,
+			FMath::Max(0.0f, DiveAnimation->GetPlayLength() - 0.02f));
+	}
+	GetWorldTimerManager().SetTimer(
+		PairPressureDiveRecoveryPresentationTimerHandle,
+		this,
+		&AVNHShopperCharacter::PlayPairPressureDiveRecoveryAnimation,
+		0.75f,
+		false);
+}
+
+void AVNHShopperCharacter::PlayPairPressureDiveRecoveryAnimation()
+{
+	if (!PairPressureActionRouter || !PairPressureActionRouter->IsAirDiveRecovering())
+	{
+		return;
+	}
+	UAnimSequence* DiveRecoveryAnimation = LoadObject<UAnimSequence>(
+		nullptr,
+		TEXT("/Game/CuteChubbyPenguin_V2/Content/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_falls_forward_UP.AS_Penguin_UE_falls_forward_UP"));
+	PlayPairPressureMascotAnimation(DiveRecoveryAnimation, false);
+}
+
+void AVNHShopperCharacter::HandlePairPressureGrabReleasedPresentation(bool bDroppedItem, bool bLedgeClimb)
+{
+	const UDataTable* LoadedMascotTable = MascotAnimationTable.IsNull() ? nullptr : MascotAnimationTable.LoadSynchronous();
+	const FPPMascotAnimationRow* PenguinRow = LoadedMascotTable
+		? LoadedMascotTable->FindRow<FPPMascotAnimationRow>(FName(TEXT("Penguin")), TEXT("Grab release presentation"), false)
+		: nullptr;
+	bPairPressureActionPresentationActive = true;
+	UAnimSequence* ReleaseAnimation = nullptr;
+	if (bLedgeClimb)
+	{
+		ReleaseAnimation = LoadObject<UAnimSequence>(
+			nullptr,
+			TEXT("/Game/CuteChubbyPenguin_V2/Content/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_climb_all.AS_Penguin_UE_climb_all"));
+	}
+	else if (PenguinRow)
+	{
+		const TSoftObjectPtr<UAnimSequence>& RequestedRelease = bDroppedItem
+			? (PenguinRow->ItemDrop.IsNull() ? PenguinRow->Throw : PenguinRow->ItemDrop)
+			: (PenguinRow->GrabRelease.IsNull() ? PenguinRow->Throw : PenguinRow->GrabRelease);
+		ReleaseAnimation = RequestedRelease.LoadSynchronous();
+	}
+	PlayPairPressureMascotAnimation(ReleaseAnimation, false);
+	const float ReleasePresentationSeconds = ReleaseAnimation
+		? FMath::Max(0.32f, ReleaseAnimation->GetPlayLength())
+		: 0.32f;
+	GetWorldTimerManager().SetTimer(
+		PairPressurePresentationTimerHandle,
+		this,
+		&AVNHShopperCharacter::FinishPairPressureActionPresentation,
+		ReleasePresentationSeconds,
+		false);
+}
+
+void AVNHShopperCharacter::HandlePairPressureGrabThrowPresentation(bool bChargedThrow)
+{
+	const UDataTable* LoadedMascotTable = MascotAnimationTable.IsNull() ? nullptr : MascotAnimationTable.LoadSynchronous();
+	const FPPMascotAnimationRow* PenguinRow = LoadedMascotTable
+		? LoadedMascotTable->FindRow<FPPMascotAnimationRow>(FName(TEXT("Penguin")), TEXT("Throw presentation"), false)
+		: nullptr;
+	UAnimSequence* ThrowAnimation = PenguinRow
+		? (bChargedThrow ? PenguinRow->OverheadThrow : PenguinRow->Throw).LoadSynchronous()
+		: nullptr;
+	bPairPressureActionPresentationActive = true;
+	PlayPairPressureMascotAnimation(ThrowAnimation, false);
+	const float PresentationSeconds = ThrowAnimation ? FMath::Clamp(ThrowAnimation->GetPlayLength(), 0.35f, 1.1f) : 0.45f;
+	GetWorldTimerManager().SetTimer(PairPressurePresentationTimerHandle, this, &AVNHShopperCharacter::FinishPairPressureActionPresentation, PresentationSeconds, false);
+}
+
+void AVNHShopperCharacter::FinishPairPressureActionPresentation()
+{
+	bPairPressureActionPresentationActive = false;
+	RestorePairPressureLocomotionAnimation();
 }
 
 void AVNHShopperCharacter::ApplyPublicTest(EVNHPublicTestType TestType)

@@ -63,6 +63,30 @@ struct FPPMascotAnimationRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Actions")
 	TSoftObjectPtr<UAnimSequence> Grab;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Grab Presentation")
+	TSoftObjectPtr<UAnimSequence> Reach;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Grab Presentation")
+	TSoftObjectPtr<UAnimSequence> HoldItem;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Grab Presentation")
+	TSoftObjectPtr<UAnimSequence> PlayerGrab;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Grab Presentation")
+	TSoftObjectPtr<UAnimSequence> MutualGrab;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Grab Presentation")
+	TSoftObjectPtr<UAnimSequence> Push;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Grab Presentation")
+	TSoftObjectPtr<UAnimSequence> GrabRelease;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Grab Presentation")
+	TSoftObjectPtr<UAnimSequence> FailedGrab;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Grab Presentation")
+	TSoftObjectPtr<UAnimSequence> ItemDrop;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Actions")
 	TSoftObjectPtr<UAnimSequence> OverheadThrow;
 

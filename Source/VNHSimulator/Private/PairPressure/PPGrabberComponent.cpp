@@ -7,6 +7,7 @@
 #include "Engine/EngineTypes.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -16,9 +17,11 @@
 #include "Engine/DataTable.h"
 #include "Net/UnrealNetwork.h"
 #include "PhysicsEngine/PhysicsAsset.h"
+#include "PhysicsEngine/BodyInstance.h"
 #include "PhysicsEngine/PhysicsHandleComponent.h"
 #include "PairPressure/PPGrabbableComponent.h"
 #include "PairPressure/PPPhysicalStateComponent.h"
+#include "PairPressure/PPPlayerActionRouterComponent.h"
 #include "PairPressure/PPTeamMemberComponent.h"
 #include "UObject/UnrealType.h"
 #include "VNHAlienLocomotionComponent.h"
@@ -50,6 +53,33 @@ void UPPGrabberComponent::BeginPlay()
 		if (const USkeletalMeshComponent* OwnerMesh = OwnerCharacter->GetMesh())
 		{
 			IncomingGrabInitialMeshRelativeTransform = OwnerMesh->GetRelativeTransform();
+		}
+	}
+	// Blueprint-authored Lobby fixtures can otherwise retain overlap-only defaults.
+	// Normalize every tagged pushable as solid world geometry before the player
+	// reaches it, not only after a grab has already started.
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AActor> ActorIterator(World); ActorIterator; ++ActorIterator)
+		{
+			AActor* CandidatePushable = *ActorIterator;
+			if (!CandidatePushable || !CandidatePushable->ActorHasTag(TEXT("PP.Grab.Pushable")))
+			{
+				continue;
+			}
+			TInlineComponentArray<UPrimitiveComponent*> PrimitiveComponents;
+			CandidatePushable->GetComponents(PrimitiveComponents);
+			for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+			{
+				if (!PrimitiveComponent || !PrimitiveComponent->IsSimulatingPhysics())
+				{
+					continue;
+				}
+				PrimitiveComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+				PrimitiveComponent->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+				PrimitiveComponent->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+				PrimitiveComponent->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
+			}
 		}
 	}
 }
@@ -105,6 +135,11 @@ void UPPGrabberComponent::BeginGrab_Implementation(const FVector& CameraForward)
 {
 	AActor* OwnerActor = GetOwner();
 	if (!OwnerActor || GrabState != EPPGrabState::None)
+	{
+		return;
+	}
+	if (const UPPPlayerActionRouterComponent* ActionRouter = OwnerActor->FindComponentByClass<UPPPlayerActionRouterComponent>();
+		ActionRouter && ActionRouter->IsAirDiveActive())
 	{
 		return;
 	}
@@ -237,6 +272,22 @@ void UPPGrabberComponent::RequestDirectionalEscape(const FVector& EscapeDirectio
 	PerformDirectionalEscape(SafeEscapeDirection);
 }
 
+void UPPGrabberComponent::RequestLedgeClimb()
+{
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor || GrabState != EPPGrabState::HangingFromLedge)
+	{
+		return;
+	}
+
+	if (!OwnerActor->HasAuthority())
+	{
+		ServerRequestLedgeClimb();
+		return;
+	}
+	PerformLedgeClimb();
+}
+
 void UPPGrabberComponent::ServerBeginGrab_Implementation(FVector_NetQuantizeNormal CameraForward)
 {
 	BeginGrab_Implementation(CameraForward);
@@ -261,6 +312,11 @@ void UPPGrabberComponent::ServerRequestDirectionalEscape_Implementation(FVector_
 	PerformDirectionalEscape(EscapeDirection);
 }
 
+void UPPGrabberComponent::ServerRequestLedgeClimb_Implementation()
+{
+	PerformLedgeClimb();
+}
+
 void UPPGrabberComponent::ClientGrabRejected_Implementation()
 {
 	if (AActor* OwnerActor = GetOwner())
@@ -273,6 +329,16 @@ void UPPGrabberComponent::ClientGrabRejected_Implementation()
 	}
 	OnGrabFailed.Broadcast();
 	OnGrabStateChanged.Broadcast(EPPGrabState::None, nullptr);
+}
+
+void UPPGrabberComponent::MulticastGrabReleasedPresentation_Implementation(bool bDroppedItem, bool bLedgeClimb)
+{
+	OnGrabReleasedPresentation.Broadcast(bDroppedItem, bLedgeClimb);
+}
+
+void UPPGrabberComponent::MulticastGrabThrowPresentation_Implementation(bool bChargedThrow)
+{
+	OnGrabThrowPresentation.Broadcast(bChargedThrow);
 }
 
 void UPPGrabberComponent::OnRep_GrabPresentation()
@@ -298,6 +364,7 @@ FPPGrabTargetData UPPGrabberComponent::FindBestTarget(const FVector& CameraForwa
 	FCollisionObjectQueryParams ObjectQueryParams;
 	ObjectQueryParams.AddObjectTypesToQuery(ECC_PhysicsBody);
 	ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+	ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldStatic);
 	ObjectQueryParams.AddObjectTypesToQuery(ECC_Pawn);
 
 	TArray<FHitResult> CandidateHits;
@@ -331,6 +398,26 @@ FPPGrabTargetData UPPGrabberComponent::FindBestTarget(const FVector& CameraForwa
 	for (const FOverlapResult& CloseOverlap : CloseOverlaps)
 	{
 		CandidateActors.AddUnique(CloseOverlap.GetActor());
+	}
+
+	// Ledge grips are intentionally forgiving: their authored grip point may sit
+	// above the player's chest sweep, so collect nearby tagged/contract targets
+	// before the target-specific range and facing checks below decide eligibility.
+	TArray<FOverlapResult> LedgeOverlaps;
+	World->OverlapMultiByObjectType(
+		LedgeOverlaps,
+		TraceStart + CameraForward * (SearchReach * 0.5f),
+		FQuat::Identity,
+		ObjectQueryParams,
+		FCollisionShape::MakeSphere(FMath::Max(SearchRadius * 2.5f, 175.0f)),
+		QueryParams);
+	for (const FOverlapResult& LedgeOverlap : LedgeOverlaps)
+	{
+		AActor* LedgeActor = LedgeOverlap.GetActor();
+		if (LedgeActor && (LedgeActor->ActorHasTag(TEXT("PP.Grab.Ledge")) || LedgeActor->ActorHasTag(TEXT("PP.Grab.Handle"))))
+		{
+			CandidateActors.AddUnique(LedgeActor);
+		}
 	}
 
 	TSet<AActor*> EvaluatedActors;
@@ -553,6 +640,7 @@ bool UPPGrabberComponent::BuildTargetData(
 	const FPPGrabProfile CandidateProfile = GrabbableComponent
 		? IPPGrabbable::Execute_GetGrabProfile(GrabbableComponent)
 		: GetBlueprintGrabProfile(CandidateActor);
+	const bool bLedgeTarget = CandidateProfile.TargetType == EPPGrabTargetType::LedgeOrHandle;
 	if (CandidateProfile.TargetType == EPPGrabTargetType::None)
 	{
 		return false;
@@ -616,7 +704,10 @@ bool UPPGrabberComponent::BuildTargetData(
 	}
 	const FVector ToCandidate = CandidateGrabPoint - TraceStart;
 	const float CandidateDistance = ToCandidate.Size();
-	if (CandidateDistance > FMath::Min(SearchReach, CandidateProfile.MaximumRange) || CandidateDistance <= UE_KINDA_SMALL_NUMBER)
+	const float EffectiveMaximumRange = bLedgeTarget
+		? FMath::Min(SearchReach, FMath::Max(CandidateProfile.MaximumRange, 250.0f))
+		: FMath::Min(SearchReach, CandidateProfile.MaximumRange);
+	if (CandidateDistance > EffectiveMaximumRange || CandidateDistance <= UE_KINDA_SMALL_NUMBER)
 	{
 		return false;
 	}
@@ -630,13 +721,21 @@ bool UPPGrabberComponent::BuildTargetData(
 	const bool bCloseGameplayItem = CandidateProfile.TargetType == EPPGrabTargetType::GameplayItem
 		&& HorizontalDistance <= ClosePickupRadius
 		&& FMath::Abs(ToCandidate.Z) <= ClosePickupRadius;
+	const bool bClosePlayer = CandidateProfile.TargetType == EPPGrabTargetType::Player
+		&& HorizontalDistance <= 155.0f
+		&& FMath::Abs(ToCandidate.Z) <= 145.0f;
 	const float HorizontalFacingAlignment = HorizontalDistance <= UE_KINDA_SMALL_NUMBER
 		? 1.0f
 		: FVector::DotProduct(OwnerActor->GetActorForwardVector().GetSafeNormal2D(), HorizontalOffset / HorizontalDistance);
-	if ((!bCloseGameplayItem
+	const bool bLedgeFacingValid = bLedgeTarget
+		&& HorizontalFacingAlignment >= -0.35f
+		&& CameraAlignment >= -0.2f;
+	if ((!bLedgeTarget && !bCloseGameplayItem && !bClosePlayer
 			&& (FacingAlignment <= 0.0f
 				|| CameraAlignment < FMath::Cos(FMath::DegreesToRadians(CandidateProfile.MaximumAngleDegrees))))
-		|| (bCloseGameplayItem && HorizontalFacingAlignment < -0.4f))
+		|| (bCloseGameplayItem && HorizontalFacingAlignment < -0.4f)
+		|| (bClosePlayer && HorizontalFacingAlignment < -0.05f)
+		|| (bLedgeTarget && !bLedgeFacingValid))
 	{
 		return false;
 	}
@@ -659,7 +758,8 @@ bool UPPGrabberComponent::BuildTargetData(
 		+ static_cast<float>(CandidatePriority) * PPGrabPriorityScoreWeight
 		- NormalizedDistance * PPGrabDistanceScoreWeight
 		+ PPGrabLineOfSightScore
-		+ (bCloseGameplayItem ? 300.0f : 0.0f);
+		+ (bCloseGameplayItem ? 300.0f : 0.0f)
+		+ (bClosePlayer ? 220.0f : 0.0f);
 	return true;
 }
 
@@ -687,6 +787,14 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 	}
 
 	ActiveProfile = TargetData.Profile;
+	if (ActiveProfile.TargetType == EPPGrabTargetType::Player)
+	{
+		ActiveProfile.MaximumRange = FMath::Max(ActiveProfile.MaximumRange, 260.0f);
+		ActiveProfile.MaximumAngleDegrees = FMath::Max(ActiveProfile.MaximumAngleDegrees, 65.0f);
+		ActiveProfile.LinearStiffness = FMath::Max(ActiveProfile.LinearStiffness, 5200.0f);
+		ActiveProfile.LinearDamping = FMath::Max(ActiveProfile.LinearDamping, 900.0f);
+		ActiveProfile.BreakForce = FMath::Max(ActiveProfile.BreakForce, 1250000.0f);
+	}
 	if (TargetData.TargetActor
 		&& TargetData.TargetActor->GetClass()->GetPathName().Contains(TEXT("BP_PP_GrabTestItem")))
 	{
@@ -709,6 +817,8 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 			FVector2D(0.85f, 0.35f),
 			GrabbedPrimitive->GetMass());
 		ActiveProfile.MovementSpeedMultiplier = FMath::Min(ActiveProfile.MovementSpeedMultiplier, MassMultiplier);
+		ActiveProfile.AngularStiffness = FMath::Max(ActiveProfile.AngularStiffness, 12000.0f);
+		ActiveProfile.AngularDamping = FMath::Max(ActiveProfile.AngularDamping, 2200.0f);
 	}
 	else if (ActiveProfile.TargetType == EPPGrabTargetType::GameplayItem && ActiveProfile.bRequiresTwoHands)
 	{
@@ -716,6 +826,9 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 	}
 	PresentationGrabPoint = TargetData.GrabPoint;
 	FixedWorldGrabPoint = TargetData.GrabPoint;
+	LockedOwnerRotation = GetOwner()->GetActorRotation();
+	LockedPushAxis = GetOwner()->GetActorForwardVector().GetSafeNormal2D();
+	LockedGrabbedRotation = GrabbedPrimitive ? GrabbedPrimitive->GetComponentRotation() : FRotator::ZeroRotator;
 	SustainedGrabSeconds = 0.0f;
 
 	if (ActiveProfile.TargetType == EPPGrabTargetType::Player)
@@ -745,13 +858,29 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 		PhysicsHandle->SetAngularStiffness(ActiveProfile.AngularStiffness);
 		PhysicsHandle->SetAngularDamping(ActiveProfile.AngularDamping);
 		PhysicsHandle->SetInterpolationSpeed(18.0f);
-		if (ActiveProfile.bMaintainRotation)
+		if (ActiveProfile.TargetType == EPPGrabTargetType::LargePushable)
+		{
+			GrabbedPrimitive->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+			GrabbedPrimitive->SetCollisionResponseToAllChannels(ECR_Block);
+			GrabbedPrimitive->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+			GrabbedPrimitive->SetNotifyRigidBodyCollision(true);
+			if (ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner()))
+			{
+				if (UCapsuleComponent* OwnerCapsule = OwnerCharacter->GetCapsuleComponent())
+				{
+					OwnerCapsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+					OwnerCapsule->SetCollisionResponseToChannel(ECC_PhysicsBody, ECR_Block);
+					OwnerCapsule->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
+				}
+			}
+		}
+		if (ActiveProfile.bMaintainRotation || ActiveProfile.TargetType == EPPGrabTargetType::LargePushable)
 		{
 			PhysicsHandle->GrabComponentAtLocationWithRotation(
 				GrabbedPrimitive,
 				NAME_None,
 				TargetData.GrabPoint,
-				GrabbedPrimitive->GetComponentRotation());
+				LockedGrabbedRotation);
 		}
 		else
 		{
@@ -773,7 +902,7 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 		ACharacter* TargetCharacter = Cast<ACharacter>(TargetData.TargetActor);
 		USkeletalMeshComponent* TargetMesh = TargetCharacter ? TargetCharacter->GetMesh() : nullptr;
 		UPPGrabberComponent* TargetGrabber = TargetData.TargetActor->FindComponentByClass<UPPGrabberComponent>();
-		if (!PhysicsHandle || !TargetMesh || !TargetGrabber)
+		if (!TargetCharacter || !TargetMesh || !TargetGrabber || !PhysicsHandle)
 		{
 			GrabbedPrimitive = nullptr;
 			SetGrabPresentation(EPPGrabState::None, nullptr);
@@ -783,6 +912,18 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 
 		TargetGrabber->BeginIncomingPlayerGrab(GetOwner());
 		ActivePlayerGrabBone = ResolvePlayerGrabBone(TargetMesh);
+		const FBodyInstance* PlayerGrabBodyInstance = ActivePlayerGrabBone.IsNone()
+			? nullptr
+			: TargetMesh->GetBodyInstance(ActivePlayerGrabBone);
+		if (!PlayerGrabBodyInstance || !PlayerGrabBodyInstance->IsValidBodyInstance()
+			|| !TargetMesh->IsAnySimulatingPhysics())
+		{
+			TargetGrabber->EndIncomingPlayerGrab(GetOwner(), false);
+			GrabbedPrimitive = nullptr;
+			SetGrabPresentation(EPPGrabState::None, nullptr);
+			ClientGrabRejected();
+			return;
+		}
 		const FVector PlayerGrabLocation = ActivePlayerGrabBone.IsNone()
 			? TargetMesh->GetComponentLocation()
 			: TargetMesh->GetBoneLocation(ActivePlayerGrabBone);
@@ -790,21 +931,25 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 		PhysicsHandle->SetLinearDamping(ActiveProfile.LinearDamping);
 		PhysicsHandle->SetAngularStiffness(ActiveProfile.AngularStiffness);
 		PhysicsHandle->SetAngularDamping(ActiveProfile.AngularDamping);
-		PhysicsHandle->SetInterpolationSpeed(14.0f);
-		PhysicsHandle->GrabComponentAtLocation(TargetMesh, ActivePlayerGrabBone, PlayerGrabLocation);
-		if (!PhysicsHandle->GetGrabbedComponent())
+		PhysicsHandle->SetInterpolationSpeed(18.0f);
+		LockedGrabbedRotation = TargetMesh->GetComponentRotation();
+		PhysicsHandle->GrabComponentAtLocationWithRotation(
+			TargetMesh,
+			ActivePlayerGrabBone,
+			PlayerGrabLocation,
+			LockedGrabbedRotation);
+		if (PhysicsHandle->GetGrabbedComponent() != TargetMesh)
 		{
 			TargetGrabber->EndIncomingPlayerGrab(GetOwner(), false);
-			ActivePlayerGrabBone = NAME_None;
 			GrabbedPrimitive = nullptr;
 			SetGrabPresentation(EPPGrabState::None, nullptr);
 			ClientGrabRejected();
 			return;
 		}
-		PhysicsHandle->SetTargetLocation(
-			GetHandCarryLocation(PlayerHoldDistance));
+		PhysicsHandle->SetTargetLocation(GetPlayerCarryLocation());
+		PhysicsHandle->SetTargetRotation(LockedGrabbedRotation);
 		GrabbedPrimitive = TargetMesh;
-		PresentationGrabPoint = PlayerGrabLocation;
+		PresentationGrabPoint = GetPlayerCarryLocation();
 		UE_LOG(LogVNH, Display, TEXT("PairPressureGrab: player hold started. Grabber=%s Target=%s Bone=%s"),
 			*GetNameSafe(GetOwner()),
 			*GetNameSafe(TargetCharacter),
@@ -843,8 +988,15 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 		{
 			if (UCharacterMovementComponent* OwnerMovement = OwnerCharacter->GetCharacterMovement())
 			{
-				OwnerMovement->SetMovementMode(MOVE_Falling);
+				OwnerMovement->StopMovementImmediately();
+				OwnerMovement->SetMovementMode(MOVE_Flying);
 			}
+			OwnerCharacter->SetActorLocationAndRotation(
+				FixedWorldGrabPoint - FVector(0.0f, 0.0f, 70.0f),
+				LockedOwnerRotation,
+				true,
+				nullptr,
+				ETeleportType::TeleportPhysics);
 		}
 		SetGrabPresentation(EPPGrabState::HangingFromLedge, TargetData.TargetActor);
 		break;
@@ -857,7 +1009,7 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 	SetComponentTickEnabled(true);
 }
 
-void UPPGrabberComponent::ReleaseGrabAuthoritative(bool bPlayRecoveryAnimation)
+void UPPGrabberComponent::ReleaseGrabAuthoritative(bool bPlayRecoveryAnimation, bool bPlayLedgeClimbAnimation)
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
@@ -868,10 +1020,24 @@ void UPPGrabberComponent::ReleaseGrabAuthoritative(bool bPlayRecoveryAnimation)
 	const EPPGrabState PreviousGrabState = GrabState;
 	const bool bWasPairedRelease = bReleasingPairedGrab;
 	bReleasingPairedGrab = true;
-	SetGrabPresentation(EPPGrabState::Releasing, PreviousGrabTarget);
+	if (PreviousGrabState != EPPGrabState::HangingFromLedge || bPlayLedgeClimbAnimation)
+	{
+		SetGrabPresentation(EPPGrabState::Releasing, PreviousGrabTarget);
+	}
 	if (PhysicsHandle)
 	{
 		PhysicsHandle->ReleaseComponent();
+	}
+	if (PreviousGrabState == EPPGrabState::HangingFromLedge)
+	{
+		if (ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner()))
+		{
+			if (UCharacterMovementComponent* OwnerMovement = OwnerCharacter->GetCharacterMovement())
+			{
+				OwnerMovement->StopMovementImmediately();
+				OwnerMovement->SetMovementMode(MOVE_Falling);
+			}
+		}
 	}
 	if (UPPGrabbableComponent* GrabbableComponent = FindGrabbableComponent(PreviousGrabTarget))
 	{
@@ -908,6 +1074,14 @@ void UPPGrabberComponent::ReleaseGrabAuthoritative(bool bPlayRecoveryAnimation)
 	SetComponentTickEnabled(false);
 	SetGrabPresentation(EPPGrabState::None, nullptr);
 	bReleasingPairedGrab = false;
+	if (bPlayRecoveryAnimation && PreviousGrabState != EPPGrabState::None
+		&& (PreviousGrabState != EPPGrabState::HangingFromLedge || bPlayLedgeClimbAnimation))
+	{
+		MulticastGrabReleasedPresentation(
+			PreviousGrabState == EPPGrabState::HoldingItem,
+			PreviousGrabState == EPPGrabState::HangingFromLedge && bPlayLedgeClimbAnimation);
+	}
+	ActiveProfile = FPPGrabProfile();
 }
 
 void UPPGrabberComponent::PerformHeldItemThrow(const FVector& ThrowDirection, float ChargeAlpha)
@@ -935,6 +1109,7 @@ void UPPGrabberComponent::PerformHeldItemThrow(const FVector& ThrowDirection, fl
 	const FVector InheritedVelocity = OwnerActor->GetVelocity();
 	const float ThrowSpeed = FMath::Lerp(HeldItemThrowSpeed * 0.55f, HeldItemThrowSpeed * 2.15f, FMath::Clamp(ChargeAlpha, 0.0f, 1.0f));
 	ReleaseGrabAuthoritative(false);
+	MulticastGrabThrowPresentation(ChargeAlpha >= 0.45f);
 	if (ThrownCharacter)
 	{
 		if (UPPPhysicalStateComponent* PhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(ThrownCharacter))
@@ -1002,6 +1177,37 @@ void UPPGrabberComponent::PerformDirectionalEscape(const FVector& EscapeDirectio
 		const FVector EscapeVelocity = ValidatedEscapeDirection * EscapeJumpHorizontalSpeed
 			+ FVector::UpVector * EscapeJumpVerticalSpeed;
 		OwnerCharacter->LaunchCharacter(EscapeVelocity, true, true);
+	}
+}
+
+void UPPGrabberComponent::PerformLedgeClimb()
+{
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	if (!OwnerCharacter || !OwnerCharacter->HasAuthority() || GrabState != EPPGrabState::HangingFromLedge)
+	{
+		return;
+	}
+
+	const FVector TowardLedge = (FixedWorldGrabPoint - OwnerCharacter->GetActorLocation()).GetSafeNormal2D();
+	const UCapsuleComponent* OwnerCapsule = OwnerCharacter->GetCapsuleComponent();
+	const float ForwardClearance = OwnerCapsule ? OwnerCapsule->GetScaledCapsuleRadius() + 22.0f : 56.0f;
+	const float VerticalClearance = OwnerCapsule ? OwnerCapsule->GetScaledCapsuleHalfHeight() + 12.0f : 100.0f;
+	const FVector ClimbDirection = TowardLedge.IsNearlyZero() ? LockedPushAxis : TowardLedge;
+	const FVector ClimbLocation = FixedWorldGrabPoint
+		+ ClimbDirection * ForwardClearance
+		+ FVector::UpVector * VerticalClearance;
+
+	ReleaseGrabAuthoritative(true, true);
+	OwnerCharacter->SetActorLocationAndRotation(
+		ClimbLocation,
+		LockedOwnerRotation,
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics);
+	if (UCharacterMovementComponent* OwnerMovement = OwnerCharacter->GetCharacterMovement())
+	{
+		OwnerMovement->StopMovementImmediately();
+		OwnerMovement->SetMovementMode(MOVE_Walking);
 	}
 }
 
@@ -1111,19 +1317,19 @@ void UPPGrabberComponent::UpdatePlayerGrab(float DeltaTime)
 {
 	ACharacter* TargetCharacter = Cast<ACharacter>(GrabTarget);
 	USkeletalMeshComponent* TargetMesh = TargetCharacter ? TargetCharacter->GetMesh() : nullptr;
-	if (!TargetCharacter || !TargetMesh || !PhysicsHandle || PhysicsHandle->GetGrabbedComponent() != TargetMesh
+	if (!TargetCharacter || !TargetMesh || !PhysicsHandle
+		|| PhysicsHandle->GetGrabbedComponent() != TargetMesh
 		|| !IsStandingPlayerStateValid(GetOwner())
 		|| !IsStandingPlayerStateValid(TargetCharacter))
 	{
 		UE_LOG(LogVNH, Warning, TEXT("PairPressureGrab: player hold released by invalid state. Grabber=%s Target=%s Handle=%s"),
 			*GetNameSafe(GetOwner()),
 			*GetNameSafe(TargetCharacter),
-			*GetNameSafe(PhysicsHandle ? PhysicsHandle->GetGrabbedComponent() : nullptr));
+			TEXT("OverheadCarryAnchor"));
 		ReleaseGrabAuthoritative(false);
 		return;
 	}
 	SustainedGrabSeconds += DeltaTime;
-	const bool bConstraintSettled = SustainedGrabSeconds >= 0.30f;
 
 	const FVector CurrentGrabPoint = ActivePlayerGrabBone.IsNone()
 		? TargetMesh->GetComponentLocation()
@@ -1133,36 +1339,15 @@ void UPPGrabberComponent::UpdatePlayerGrab(float DeltaTime)
 	CurrentTargetData.TargetPrimitive = TargetMesh;
 	CurrentTargetData.GrabPoint = CurrentGrabPoint;
 	const FVector GrabOrigin = GetGrabOrigin();
-	const float CurrentDistance = FVector::Distance(GrabOrigin, CurrentGrabPoint);
-	if (bConstraintSettled && CurrentDistance > ActiveProfile.MaximumRange * 1.65f)
-	{
-		UE_LOG(LogVNH, Warning, TEXT("PairPressureGrab: player hold released by distance %.1f."), CurrentDistance);
-		ReleaseGrabAuthoritative(false);
-		return;
-	}
-	if (bConstraintSettled && !HasClearLineOfSight(GrabOrigin, CurrentTargetData))
-	{
-		UE_LOG(LogVNH, Warning, TEXT("PairPressureGrab: player hold released by line of sight."));
-		ReleaseGrabAuthoritative(false);
-		return;
-	}
-
-	const FVector DesiredTargetLocation = GetHandCarryLocation(PlayerHoldDistance);
+	const FVector DesiredTargetLocation = GetPlayerCarryLocation();
 	const FVector RawError = DesiredTargetLocation - CurrentGrabPoint;
 	PhysicsHandle->SetTargetLocation(DesiredTargetLocation);
+	const FRotator DesiredTargetRotation = (
+		GetOwner()->GetActorRotation() + (LockedGrabbedRotation - LockedOwnerRotation)).GetNormalized();
+	PhysicsHandle->SetTargetRotation(DesiredTargetRotation);
 
 	ConstraintForceEstimate = RawError.Size() * ActiveProfile.LinearStiffness;
-	PresentationGrabPoint = CurrentTargetData.GrabPoint;
-	const float EffectiveBreakForce = FMath::Max(ActiveProfile.BreakForce, 400000.0f)
-		* (IsFriendlyPlayer(TargetCharacter) ? TeammateRescueStrengthMultiplier : 1.0f);
-	if (bConstraintSettled && ConstraintForceEstimate > EffectiveBreakForce)
-	{
-		UE_LOG(LogVNH, Warning, TEXT("PairPressureGrab: player hold released by force %.0f / %.0f."),
-			ConstraintForceEstimate,
-			EffectiveBreakForce);
-		ReleaseGrabAuthoritative(false);
-		return;
-	}
+	PresentationGrabPoint = DesiredTargetLocation;
 
 	if (OpponentEscapeSeconds > 0.0f && GrabState == EPPGrabState::GrabbingPlayer && !IsFriendlyPlayer(TargetCharacter)
 		&& SustainedGrabSeconds >= OpponentEscapeSeconds)
@@ -1202,7 +1387,41 @@ void UPPGrabberComponent::UpdatePushable(float /*DeltaTime*/)
 		return;
 	}
 
-	FVector DesiredLocation = GetGrabOrigin() + GetOwner()->GetActorForwardVector() * ActiveProfile.CarryDistance;
+	GetOwner()->SetActorRotation(LockedOwnerRotation, ETeleportType::None);
+	GrabbedPrimitive->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	GrabbedPrimitive->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+	GrabbedPrimitive->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector, false);
+	GrabbedPrimitive->SetWorldRotation(LockedGrabbedRotation, false, nullptr, ETeleportType::TeleportPhysics);
+	if (ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner()))
+	{
+		if (UCapsuleComponent* OwnerCapsule = OwnerCharacter->GetCapsuleComponent())
+		{
+			OwnerCapsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+			OwnerCapsule->SetCollisionResponseToChannel(ECC_PhysicsBody, ECR_Block);
+			OwnerCapsule->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
+			const FVector BlockCenter = GrabbedPrimitive->Bounds.Origin;
+			const FVector BlockExtent = GrabbedPrimitive->Bounds.BoxExtent;
+			const float ProjectedBlockExtent = FMath::Abs(LockedPushAxis.X) * BlockExtent.X
+				+ FMath::Abs(LockedPushAxis.Y) * BlockExtent.Y;
+			const float MinimumCenterSeparation = ProjectedBlockExtent
+				+ OwnerCapsule->GetScaledCapsuleRadius()
+				+ 4.0f;
+			const float CurrentForwardSeparation = FVector::DotProduct(
+				BlockCenter - OwnerCharacter->GetActorLocation(),
+				LockedPushAxis);
+			if (CurrentForwardSeparation < MinimumCenterSeparation)
+			{
+				const FVector CorrectedOwnerLocation = OwnerCharacter->GetActorLocation()
+					- LockedPushAxis * (MinimumCenterSeparation - CurrentForwardSeparation);
+				OwnerCharacter->SetActorLocation(
+					CorrectedOwnerLocation,
+					true,
+					nullptr,
+					ETeleportType::None);
+			}
+		}
+	}
+	FVector DesiredLocation = GetGrabOrigin() + LockedPushAxis * ActiveProfile.CarryDistance;
 	DesiredLocation.Z = FixedWorldGrabPoint.Z;
 	const FVector ConstraintError = DesiredLocation - GrabbedPrimitive->GetCenterOfMass();
 	ConstraintForceEstimate = ConstraintError.Size() * ActiveProfile.LinearStiffness;
@@ -1219,6 +1438,7 @@ void UPPGrabberComponent::UpdatePushable(float /*DeltaTime*/)
 	}
 
 	PhysicsHandle->SetTargetLocation(DesiredLocation);
+	PhysicsHandle->SetTargetRotation(LockedGrabbedRotation);
 	PresentationGrabPoint = GrabbedPrimitive->GetCenterOfMass();
 	if (bDrawGrabDebug && GetWorld())
 	{
@@ -1255,9 +1475,14 @@ void UPPGrabberComponent::UpdateLedgeGrab(float /*DeltaTime*/)
 		return;
 	}
 
-	const FVector SwingFriendlyError(ConstraintError.X * 0.55f, ConstraintError.Y * 0.55f, ConstraintError.Z);
-	const FVector Acceleration = SwingFriendlyError.GetClampedToMaxSize(180.0f) * LedgeConstraintAcceleration / 180.0f;
-	OwnerMovement->AddForce(Acceleration * OwnerMovement->Mass);
+	OwnerMovement->StopMovementImmediately();
+	OwnerMovement->SetMovementMode(MOVE_Flying);
+	OwnerCharacter->SetActorLocationAndRotation(
+		DesiredActorLocation,
+		LockedOwnerRotation,
+		true,
+		nullptr,
+		ETeleportType::TeleportPhysics);
 	PresentationGrabPoint = FixedWorldGrabPoint;
 	if (bDrawGrabDebug && GetWorld())
 	{
@@ -1274,11 +1499,11 @@ void UPPGrabberComponent::BeginIncomingPlayerGrab(AActor* NewIncomingGrabber)
 
 	if (GrabTarget && GrabTarget != NewIncomingGrabber && GrabState != EPPGrabState::None)
 	{
-		ReleaseGrabAuthoritative(false);
+		ReleaseGrabAuthoritative(true);
 	}
 	else if (GrabState == EPPGrabState::HoldingItem)
 	{
-		ReleaseGrabAuthoritative(false);
+		ReleaseGrabAuthoritative(true);
 	}
 	IncomingGrabber = NewIncomingGrabber;
 	if (ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner()))
@@ -1350,6 +1575,20 @@ void UPPGrabberComponent::ApplyIncomingGrabRagdoll(bool bEnableRagdoll)
 		OwnerMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 		OwnerMesh->SetAllUseCCD(true);
 		OwnerMesh->SetEnableGravity(true);
+		for (FBodyInstance* BodyInstance : OwnerMesh->Bodies)
+		{
+			if (BodyInstance)
+			{
+				BodyInstance->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+				BodyInstance->LinearDamping = 0.35f;
+				BodyInstance->AngularDamping = 1.15f;
+				BodyInstance->UpdateDampingProperties();
+			}
+		}
+		OwnerMesh->SetAllMotorsAngularPositionDrive(false, false, false);
+		OwnerMesh->SetAllMotorsAngularVelocityDrive(false, false, false);
+		OwnerMesh->SetAllMotorsAngularDriveParams(0.0f, 0.0f, 0.0f, false);
+		OwnerMesh->SetEnablePhysicsBlending(true);
 		OwnerMesh->bPauseAnims = true;
 		// Simulate only the authored character body chain. The Penguin has an
 		// inversely-scaled Null/petArmat import chain above hips; including those
@@ -1359,6 +1598,10 @@ void UPPGrabberComponent::ApplyIncomingGrabRagdoll(bool bEnableRagdoll)
 		{
 			OwnerMesh->SetAllBodiesBelowSimulatePhysics(RagdollRootBone, true, true);
 			OwnerMesh->SetAllBodiesBelowPhysicsBlendWeight(RagdollRootBone, 1.0f, false, true);
+			// During an overhead player carry the pelvis is the authoritative kinematic
+			// anchor. Child bodies remain simulated, so limbs and tail still flop without
+			// letting an unstable root constraint launch the entire mascot away.
+			OwnerMesh->SetBodySimulatePhysics(RagdollRootBone, false);
 		}
 		OwnerMesh->SetAllPhysicsLinearVelocity(FVector::ZeroVector, false);
 		OwnerMesh->SetAllPhysicsAngularVelocityInDegrees(FVector::ZeroVector, false);
@@ -1392,6 +1635,7 @@ void UPPGrabberComponent::ApplyIncomingGrabRagdoll(bool bEnableRagdoll)
 	}
 	OwnerMesh->SetAllBodiesSimulatePhysics(false);
 	OwnerMesh->SetAllUseCCD(false);
+	OwnerMesh->SetEnablePhysicsBlending(false);
 	OwnerMesh->bPauseAnims = false;
 	OwnerMesh->SetCollisionProfileName(TEXT("CharacterMesh"));
 	OwnerMesh->SetRelativeTransform(IncomingGrabInitialMeshRelativeTransform);
@@ -1557,11 +1801,12 @@ void UPPGrabberComponent::ApplyMovementPresentation()
 	else if (GrabState == EPPGrabState::HoldingItem || GrabState == EPPGrabState::PushingObject)
 	{
 		MovementMultiplier = ActiveProfile.MovementSpeedMultiplier;
+		TurnMultiplier = GrabState == EPPGrabState::PushingObject ? 0.05f : 1.0f;
 	}
 	else if (GrabState == EPPGrabState::HangingFromLedge)
 	{
-		MovementMultiplier = 0.35f;
-		TurnMultiplier = 0.4f;
+		MovementMultiplier = 0.0f;
+		TurnMultiplier = 0.05f;
 	}
 	else if (GrabState == EPPGrabState::Reaching)
 	{
@@ -1702,6 +1947,20 @@ FVector UPPGrabberComponent::GetHandCarryLocation(float ForwardDistance) const
 		CarryLocation.Z + HandCarryVerticalOffset,
 		GetGrabOrigin().Z + HandCarryVerticalOffset);
 	return CarryLocation + Forward * HandForwardOffset;
+}
+
+FVector UPPGrabberComponent::GetPlayerCarryLocation() const
+{
+	const AActor* OwnerActor = GetOwner();
+	if (!OwnerActor)
+	{
+		return FVector::ZeroVector;
+	}
+
+	const FVector Forward = OwnerActor->GetActorForwardVector().GetSafeNormal2D();
+	return OwnerActor->GetActorLocation()
+		+ Forward * PlayerHoldDistance
+		+ FVector::UpVector * PlayerHoldHeight;
 }
 
 void UPPGrabberComponent::SetGrabPresentation(EPPGrabState NewGrabState, AActor* NewGrabTarget)
