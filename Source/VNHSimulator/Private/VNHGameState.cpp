@@ -22,6 +22,9 @@ void AVNHGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(AVNHGameState, PossessedShopper);
 	DOREPLIFETIME(AVNHGameState, LastQuickChatMessage);
 	DOREPLIFETIME(AVNHGameState, HumanDrillPrompt);
+	DOREPLIFETIME(AVNHGameState, LobbyGameMode);
+	DOREPLIFETIME(AVNHGameState, LobbyCourseType);
+	DOREPLIFETIME(AVNHGameState, LobbyPresetMap);
 }
 
 namespace
@@ -121,6 +124,16 @@ void AVNHGameState::SetPossessedShopper(AActor* NewPossessedShopper)
 	{
 		PossessedShopper = NewPossessedShopper;
 		OnRep_PossessedShopper();
+	}
+}
+
+void AVNHGameState::SetLobbyMatchSetup(EPPGameMode NewGameMode, EPPLobbyCourseType NewCourseType, EPPPresetMap NewPresetMap)
+{
+	if (HasAuthority())
+	{
+		LobbyGameMode = NewGameMode;
+		LobbyCourseType = NewCourseType;
+		LobbyPresetMap = NewPresetMap;
 	}
 }
 

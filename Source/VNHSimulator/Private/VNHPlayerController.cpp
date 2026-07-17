@@ -18,12 +18,15 @@
 #include "Components/VerticalBox.h"
 #include "Components/Widget.h"
 #include "Engine/DataTable.h"
+#include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
 #include "GameFramework/SaveGame.h"
 #include "GameFramework/Character.h"
 #include "Engine/Scene.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "InputCoreTypes.h"
+#include "InputMappingContext.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/ConfigCacheIni.h"
@@ -41,9 +44,24 @@
 #include "VNHPlayerState.h"
 #include "VNHShopperCharacter.h"
 #include "PairPressure/PPPlayerActionRouterComponent.h"
+#include "PairPressure/PPGrabberComponent.h"
+#include "PairPressure/PPPhysicalStateComponent.h"
+#include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/Layout/SSpacer.h"
+#include "Widgets/Notifications/SProgressBar.h"
+#include "Widgets/SBoxPanel.h"
 
 namespace
 {
+struct FVNHPlayerControllerThrowChargeIndicatorState
+{
+	TSharedPtr<SProgressBar> ProgressBar;
+	TSharedPtr<SWidget> Widget;
+};
+
+TMap<TWeakObjectPtr<AVNHPlayerController>, FVNHPlayerControllerThrowChargeIndicatorState> VNHPlayerControllerThrowChargeIndicators;
+
 const TCHAR* ToPhaseText(EVNHRoundPhase Phase)
 {
 	switch (Phase)
@@ -101,6 +119,12 @@ constexpr float ThrowMinSpeed = 850.0f;
 constexpr float ThrowMaxSpeed = 2400.0f;
 constexpr const TCHAR* VNHSettingsSection = TEXT("/Script/VNHSimulator.VNHSettings");
 constexpr const TCHAR* VNHSettingsSaveSlot = TEXT("PlayerSettings");
+
+bool IsPairPressureInputTestWorld(const UWorld* World)
+{
+	const FString WorldName = World ? World->GetMapName() : FString();
+	return WorldName.Contains(TEXT("PP_")) || WorldName.Contains(TEXT("Lobby"));
+}
 
 const TCHAR* const RoleHudActionSuffixes[RoleHudActionSlotCount] =
 {
@@ -438,11 +462,14 @@ AVNHPlayerController::AVNHPlayerController()
 {
 	HumanActionAnimationTable = TSoftObjectPtr<UDataTable>(FSoftObjectPath(TEXT("/Game/Data/DT_HumanActionAnimations.DT_HumanActionAnimations")));
 	AlienActionAnimationTable = TSoftObjectPtr<UDataTable>(FSoftObjectPath(TEXT("/Game/Data/DT_AlienActionAnimations.DT_AlienActionAnimations")));
+	GrabAction = LoadObject<UInputAction>(nullptr, TEXT("/Game/Input/Actions/IA_Grab.IA_Grab"));
 }
 
 void AVNHPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
+	InitializePairPressureGrabInput();
+	BindPairPressureGrabInputAction();
 
 	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
 	const bool bIsMainMenuMap = IsPlayerControllerMainMenuWorld(GetWorld());
@@ -474,11 +501,18 @@ void AVNHPlayerController::BeginPlay()
 	}
 
 	UpdateAlienInputMapping();
+	UpdatePairPressureGrabInputMapping();
 	ApplyDebugHudInputMode(false);
 	if (!bIsMainMenuMap)
 	{
 		ApplySavedCharacterCustomization();
 	}
+}
+
+void AVNHPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	RemoveThrowChargeIndicator();
+	Super::EndPlay(EndPlayReason);
 }
 
 void AVNHPlayerController::EnsureTargetOutlinePostProcess()
@@ -742,6 +776,7 @@ void AVNHPlayerController::AcknowledgePossession(APawn* PossessedPawn)
 {
 	Super::AcknowledgePossession(PossessedPawn);
 	UpdateAlienInputMapping();
+	UpdatePairPressureGrabInputMapping();
 	UpdateRoleCameraMode();
 	RegisterGameplayHardwareCursors();
 	ApplySavedCharacterCustomization();
@@ -763,6 +798,13 @@ void AVNHPlayerController::SetupInputComponent()
 	InputComponent->BindAxis(TEXT("Look Up / Down Gamepad"), this, &AVNHPlayerController::HandleLookUpAxis);
 	InputComponent->BindAxis(TEXT("VNH_CursorX"), this, &AVNHPlayerController::HandleCursorXAxis);
 	InputComponent->BindAxis(TEXT("VNH_CursorY"), this, &AVNHPlayerController::HandleCursorYAxis);
+	InputComponent->BindKey(EKeys::MiddleMouseButton, IE_Pressed, this, &AVNHPlayerController::HandleCameraOrbitStarted);
+	InputComponent->BindKey(EKeys::MiddleMouseButton, IE_Released, this, &AVNHPlayerController::HandleCameraOrbitStopped);
+	InputComponent->BindKey(EKeys::MiddleMouseButton, IE_DoubleClick, this, &AVNHPlayerController::HandleCameraOrbitReset);
+#if !UE_BUILD_SHIPPING
+	InputComponent->BindKey(EKeys::T, IE_Pressed, this, &AVNHPlayerController::HandlePairPressureDebugRagdollPressed);
+	InputComponent->BindKey(EKeys::R, IE_Pressed, this, &AVNHPlayerController::HandlePairPressureDebugRecoveryPressed);
+#endif
 	InputComponent->BindAction(TEXT("VNH_AlienFastWalk"), IE_Pressed, this, &AVNHPlayerController::HandleAlienFastWalkStarted);
 	InputComponent->BindAction(TEXT("VNH_AlienFastWalk"), IE_Released, this, &AVNHPlayerController::HandleAlienFastWalkStopped);
 	InputComponent->BindAction(TEXT("VNH_AlienActNatural"), IE_Pressed, this, &AVNHPlayerController::HandleThrowChargePressed);
@@ -799,8 +841,12 @@ void AVNHPlayerController::SetupInputComponent()
 	InputComponent->BindAction(TEXT("PP_Dive"), IE_Pressed, this, &AVNHPlayerController::HandlePairPressureDivePressed);
 	InputComponent->BindAction(TEXT("PP_Assist"), IE_Pressed, this, &AVNHPlayerController::HandlePairPressureAssistPressed);
 	InputComponent->BindAction(TEXT("PP_Assist"), IE_Released, this, &AVNHPlayerController::HandlePairPressureAssistReleased);
-	InputComponent->BindAction(TEXT("PP_Grab"), IE_Pressed, this, &AVNHPlayerController::HandlePairPressureAssistPressed);
-	InputComponent->BindAction(TEXT("PP_Grab"), IE_Released, this, &AVNHPlayerController::HandlePairPressureAssistReleased);
+	// Keep the configured legacy action as a focused-UI fallback. The Enhanced Input
+	// IA_Grab binding remains authoritative; the shared input-down guard prevents
+	// either route from issuing duplicate grab requests.
+	InputComponent->BindAction(TEXT("PP_Grab"), IE_Pressed, this, &AVNHPlayerController::HandlePairPressureGrabPressed);
+	InputComponent->BindAction(TEXT("PP_Grab"), IE_Released, this, &AVNHPlayerController::HandlePairPressureGrabReleased);
+	BindPairPressureGrabInputAction();
 
 	UE_LOG(LogVNH, Display, TEXT("AlienInput: setup complete. Controller=%s InputComponent=%s EnhancedComponent=%s"),
 		*GetClass()->GetName(),
@@ -810,13 +856,18 @@ void AVNHPlayerController::SetupInputComponent()
 
 void AVNHPlayerController::HandlePairPressureDivePressed()
 {
-	if (!GetWorld() || !GetWorld()->GetMapName().Contains(TEXT("PP_")))
+	if (!IsPairPressureInputTestWorld(GetWorld()))
 	{
 		return;
 	}
 
 	if (APawn* ControlledPawn = GetPawn())
 	{
+		if (const UPPGrabberComponent* GrabberComponent = ControlledPawn->FindComponentByClass<UPPGrabberComponent>();
+			GrabberComponent && !GrabberComponent->CanJumpOrDive())
+		{
+			return;
+		}
 		if (UPPPlayerActionRouterComponent* ActionRouter = ControlledPawn->FindComponentByClass<UPPPlayerActionRouterComponent>())
 		{
 			ActionRouter->RequestDive();
@@ -886,7 +937,10 @@ void AVNHPlayerController::PlayerTick(float DeltaTime)
 
 	if (MapName.Contains(TEXT("Lobby")))
 	{
-		ShowLobbyMenu();
+		if (!LobbyMenuWidget.IsValid() || !LobbyMenuWidget->IsInViewport())
+		{
+			ShowLobbyMenu();
+		}
 	}
 	else
 	{
@@ -913,6 +967,7 @@ void AVNHPlayerController::PlayerTick(float DeltaTime)
 	UpdateCursorReticleAndHeadLook(DeltaTime);
 	UpdateDebugDeckRuntimeLabels(DeltaTime);
 	UpdateMarkedSuspectsWidgetRuntimeLabels(DeltaTime);
+	UpdateThrowChargeIndicator();
 }
 
 void AVNHPlayerController::BindRoleHudActionButtons()
@@ -1562,6 +1617,56 @@ void AVNHPlayerController::RequestStartRoundFromLobby()
 	ServerRequestStartRoundFromLobby();
 }
 
+void AVNHPlayerController::HandlePairPressureGrabPressed()
+{
+	if (!IsPairPressureInputTestWorld(GetWorld()) || bPairPressureGrabInputDown)
+	{
+		return;
+	}
+
+	APawn* ControlledPawn = GetPawn();
+	UPPGrabberComponent* GrabberComponent = ControlledPawn
+		? ControlledPawn->FindComponentByClass<UPPGrabberComponent>()
+		: nullptr;
+	if (!GrabberComponent)
+	{
+		return;
+	}
+	bPairPressureGrabInputDown = true;
+
+	FVector CameraLocation = FVector::ZeroVector;
+	FRotator CameraRotation = FRotator::ZeroRotator;
+	GetPlayerViewPoint(CameraLocation, CameraRotation);
+	IPPGrabber::Execute_BeginGrab(GrabberComponent, CameraRotation.Vector());
+}
+
+void AVNHPlayerController::HandlePairPressureGrabReleased()
+{
+	if (!bPairPressureGrabInputDown)
+	{
+		return;
+	}
+	bPairPressureGrabInputDown = false;
+
+	APawn* ControlledPawn = GetPawn();
+	if (UPPGrabberComponent* GrabberComponent = ControlledPawn
+		? ControlledPawn->FindComponentByClass<UPPGrabberComponent>()
+		: nullptr)
+	{
+		IPPGrabber::Execute_ReleaseGrab(GrabberComponent);
+	}
+}
+
+void AVNHPlayerController::RequestLobbyMatchSetup(EPPGameMode RequestedGameMode, EPPLobbyCourseType RequestedCourseType, EPPPresetMap RequestedPresetMap)
+{
+	ServerSetLobbyMatchSetup(RequestedGameMode, RequestedCourseType, RequestedPresetMap);
+}
+
+void AVNHPlayerController::RequestLobbyTeam(int32 RequestedTeamId)
+{
+	ServerSetLobbyTeam(RequestedTeamId);
+}
+
 void AVNHPlayerController::RequestPreRoundCustomizationReady()
 {
 	ServerSetPreRoundCustomizationReady();
@@ -1697,6 +1802,68 @@ void AVNHPlayerController::ServerRequestStartRoundFromLobby_Implementation()
 			ClientReceiveInteractionText(TEXT("Only the host can start when enough players are connected."));
 		}
 	}
+}
+
+void AVNHPlayerController::ServerSetLobbyMatchSetup_Implementation(EPPGameMode RequestedGameMode, EPPLobbyCourseType RequestedCourseType, EPPPresetMap RequestedPresetMap)
+{
+	if (!IsLocalLobbyHost())
+	{
+		ClientReceiveInteractionText(TEXT("Only the host can change match setup."));
+		return;
+	}
+
+	const UEnum* GameModeEnum = StaticEnum<EPPGameMode>();
+	const UEnum* CourseTypeEnum = StaticEnum<EPPLobbyCourseType>();
+	const UEnum* PresetMapEnum = StaticEnum<EPPPresetMap>();
+	if (!GameModeEnum || !CourseTypeEnum || !PresetMapEnum
+		|| !GameModeEnum->IsValidEnumValue(static_cast<int64>(RequestedGameMode))
+		|| !CourseTypeEnum->IsValidEnumValue(static_cast<int64>(RequestedCourseType))
+		|| !PresetMapEnum->IsValidEnumValue(static_cast<int64>(RequestedPresetMap)))
+	{
+		ClientReceiveInteractionText(TEXT("Invalid lobby setup selection."));
+		return;
+	}
+
+	if (AVNHGameState* LobbyGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr)
+	{
+		LobbyGameState->SetLobbyMatchSetup(RequestedGameMode, RequestedCourseType, RequestedPresetMap);
+		ClientReceiveInteractionText(TEXT("Match setup saved."));
+	}
+}
+
+void AVNHPlayerController::ServerSetLobbyTeam_Implementation(int32 RequestedTeamId)
+{
+	AVNHGameState* LobbyGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr;
+	AVNHPlayerState* LobbyPlayerState = GetPlayerState<AVNHPlayerState>();
+	if (!LobbyGameState || !LobbyPlayerState)
+	{
+		return;
+	}
+
+	const int32 AvailableTeamCount = FMath::Clamp((LobbyGameState->PlayerArray.Num() + 1) / 2, 2, 3);
+	if (RequestedTeamId < 0 || RequestedTeamId >= AvailableTeamCount)
+	{
+		ClientReceiveInteractionText(TEXT("That team is not available yet."));
+		return;
+	}
+
+	int32 OccupiedSlots = 0;
+	for (const APlayerState* CandidateState : LobbyGameState->PlayerArray)
+	{
+		const AVNHPlayerState* CandidateLobbyState = Cast<AVNHPlayerState>(CandidateState);
+		if (CandidateLobbyState && CandidateLobbyState != LobbyPlayerState && CandidateLobbyState->GetLobbyTeamId() == RequestedTeamId)
+		{
+			++OccupiedSlots;
+		}
+	}
+
+	if (OccupiedSlots >= 2)
+	{
+		ClientReceiveInteractionText(TEXT("That team already has two players."));
+		return;
+	}
+
+	LobbyPlayerState->SetLobbyTeamId(RequestedTeamId);
 }
 
 void AVNHPlayerController::ServerDebugPossessShopper_Implementation(int32 ShopperIndex, EVNHPlayerRole ForcedRole)
@@ -1877,6 +2044,17 @@ void AVNHPlayerController::ServerPerformUniversalAction_Implementation(EVNHUnive
 void AVNHPlayerController::ServerThrowHeldProp_Implementation(float ChargeAlpha, FVector_NetQuantizeNormal ThrowDirection)
 {
 	AVNHShopperCharacter* Shopper = GetPawn<AVNHShopperCharacter>();
+	if (IsPairPressureInputTestWorld(GetWorld()) && Shopper)
+	{
+		if (UPPGrabberComponent* GrabberComponent = Shopper->FindComponentByClass<UPPGrabberComponent>();
+			GrabberComponent
+			&& (IPPGrabber::Execute_GetGrabState(GrabberComponent) == EPPGrabState::HoldingItem
+				|| IPPGrabber::Execute_GetGrabState(GrabberComponent) == EPPGrabState::GrabbingPlayer))
+		{
+			GrabberComponent->RequestChargedThrow(FVector(ThrowDirection), ChargeAlpha);
+			return;
+		}
+	}
 	const AVNHPlayerState* VNHPlayerState = GetPlayerState<AVNHPlayerState>();
 	const EVNHPlayerRole AssignedRole = VNHPlayerState ? VNHPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
 	AActor* Prop = Shopper ? Shopper->GetHeldProp() : nullptr;
@@ -2061,6 +2239,13 @@ void AVNHPlayerController::ApplySavedCharacterCustomization()
 		return;
 	}
 
+	const FString CustomizationMapName = GetWorld() ? GetWorld()->GetMapName() : FString();
+	if (CustomizationMapName.Contains(TEXT("Lobby")) || CustomizationMapName.Contains(TEXT("PP_")))
+	{
+		UE_LOG(LogVNH, Verbose, TEXT("CharacterCustomization: skipped saved Creative character in mascot world %s."), *CustomizationMapName);
+		return;
+	}
+
 	UVNHGameInstance* VNHGameInstance = GetGameInstance<UVNHGameInstance>();
 	AVNHShopperCharacter* Shopper = GetPawn<AVNHShopperCharacter>();
 	if (!VNHGameInstance || !Shopper)
@@ -2159,6 +2344,63 @@ void AVNHPlayerController::BindAlienInputActions()
 		EnhancedInputComponent->BindAction(AlienActNaturalAction, ETriggerEvent::Started, this, &AVNHPlayerController::HandleThrowChargePressed);
 		EnhancedInputComponent->BindAction(AlienActNaturalAction, ETriggerEvent::Completed, this, &AVNHPlayerController::HandleThrowChargeReleased);
 	}
+
+}
+
+void AVNHPlayerController::InitializePairPressureGrabInput()
+{
+	if (!GrabAction)
+	{
+		GrabAction = NewObject<UInputAction>(this, TEXT("IA_Grab"));
+		GrabAction->ValueType = EInputActionValueType::Boolean;
+	}
+
+	if (!GrabInputMappingContext)
+	{
+		GrabInputMappingContext = NewObject<UInputMappingContext>(this, TEXT("IMC_PairPressureGrab_Runtime"));
+		GrabInputMappingContext->MapKey(GrabAction, EKeys::LeftMouseButton);
+		GrabInputMappingContext->MapKey(GrabAction, EKeys::Gamepad_RightTrigger);
+	}
+}
+
+void AVNHPlayerController::UpdatePairPressureGrabInputMapping()
+{
+	if (!IsLocalController() || !GrabInputMappingContext)
+	{
+		return;
+	}
+
+	if (ULocalPlayer* LocalPlayer = GetLocalPlayer())
+	{
+		if (UEnhancedInputLocalPlayerSubsystem* InputSubsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer))
+		{
+			const bool bShouldApplyGrabMapping = IsPairPressureInputTestWorld(GetWorld());
+			if (bShouldApplyGrabMapping && !bGrabInputMappingApplied)
+			{
+				InputSubsystem->AddMappingContext(GrabInputMappingContext, 50);
+				bGrabInputMappingApplied = true;
+			}
+			else if (!bShouldApplyGrabMapping && bGrabInputMappingApplied)
+			{
+				InputSubsystem->RemoveMappingContext(GrabInputMappingContext);
+				bGrabInputMappingApplied = false;
+			}
+		}
+	}
+}
+
+void AVNHPlayerController::BindPairPressureGrabInputAction()
+{
+	UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(InputComponent);
+	if (!EnhancedInputComponent || !GrabAction || bGrabInputActionBound)
+	{
+		return;
+	}
+
+	EnhancedInputComponent->BindAction(GrabAction, ETriggerEvent::Started, this, &AVNHPlayerController::HandlePairPressureGrabPressed);
+	EnhancedInputComponent->BindAction(GrabAction, ETriggerEvent::Completed, this, &AVNHPlayerController::HandlePairPressureGrabReleased);
+	EnhancedInputComponent->BindAction(GrabAction, ETriggerEvent::Canceled, this, &AVNHPlayerController::HandlePairPressureGrabReleased);
+	bGrabInputActionBound = true;
 }
 
 void AVNHPlayerController::HandleAlienMoveInput(const FInputActionValue& Value)
@@ -2263,6 +2505,12 @@ void AVNHPlayerController::HandleInspectPressed()
 
 void AVNHPlayerController::HandleCursorXAxis(float Value)
 {
+	if (bCameraOrbitActive)
+	{
+		AddYawInput(Value * GetSavedLookSensitivityMultiplier());
+		return;
+	}
+
 	int32 ViewportX = 0;
 	int32 ViewportY = 0;
 	GetViewportSize(ViewportX, ViewportY);
@@ -2280,6 +2528,13 @@ void AVNHPlayerController::HandleCursorXAxis(float Value)
 
 void AVNHPlayerController::HandleCursorYAxis(float Value)
 {
+	if (bCameraOrbitActive)
+	{
+		const float InvertMultiplier = GetSavedInvertLook() ? 1.0f : -1.0f;
+		AddPitchInput(Value * GetSavedLookSensitivityMultiplier() * InvertMultiplier);
+		return;
+	}
+
 	int32 ViewportX = 0;
 	int32 ViewportY = 0;
 	GetViewportSize(ViewportX, ViewportY);
@@ -2293,6 +2548,67 @@ void AVNHPlayerController::HandleCursorYAxis(float Value)
 		bVirtualCursorInitialized = true;
 	}
 	VirtualCursorPosition.Y = FMath::Clamp(VirtualCursorPosition.Y - Value * 18.0f, 4.0f, ViewportY - 4.0f);
+}
+
+void AVNHPlayerController::HandleCameraOrbitStarted()
+{
+	if (!IsLocalController() || IsCharacterCustomizerScreenOpen(this))
+	{
+		return;
+	}
+
+	bCameraOrbitActive = true;
+	if (UVNHAlienLocomotionComponent* AlienLocomotionComponent = GetAlienLocomotionComponent())
+	{
+		AlienLocomotionComponent->SetCameraOrbitActive(true);
+	}
+}
+
+void AVNHPlayerController::HandleCameraOrbitStopped()
+{
+	bCameraOrbitActive = false;
+}
+
+void AVNHPlayerController::HandleCameraOrbitReset()
+{
+	bCameraOrbitActive = false;
+	if (UVNHAlienLocomotionComponent* AlienLocomotionComponent = GetAlienLocomotionComponent())
+	{
+		AlienLocomotionComponent->SetCameraOrbitActive(false);
+	}
+
+	if (const APawn* ControlledPawn = GetPawn())
+	{
+		SetControlRotation(FRotator(0.0f, ControlledPawn->GetActorRotation().Yaw, 0.0f));
+	}
+}
+
+void AVNHPlayerController::HandlePairPressureDebugRagdollPressed()
+{
+	if (!IsLocalController() || IsCharacterCustomizerScreenOpen(this) || !IsPairPressureInputTestWorld(GetWorld()))
+	{
+		return;
+	}
+
+	if (UPPPhysicalStateComponent* PairPressurePhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(GetPawn()))
+	{
+		UE_LOG(LogVNH, Display, TEXT("PairPressureDebug: T requested persistent ragdoll for %s."), *GetNameSafe(GetPawn()));
+		PairPressurePhysicalState->RequestDebugRagdoll();
+	}
+}
+
+void AVNHPlayerController::HandlePairPressureDebugRecoveryPressed()
+{
+	if (!IsLocalController() || IsCharacterCustomizerScreenOpen(this) || !IsPairPressureInputTestWorld(GetWorld()))
+	{
+		return;
+	}
+
+	if (UPPPhysicalStateComponent* PairPressurePhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(GetPawn()))
+	{
+		UE_LOG(LogVNH, Display, TEXT("PairPressureDebug: R requested ragdoll recovery for %s."), *GetNameSafe(GetPawn()));
+		PairPressurePhysicalState->RequestDebugRecovery();
+	}
 }
 
 void AVNHPlayerController::HandlePointPressed()
@@ -2324,7 +2640,31 @@ void AVNHPlayerController::HandleJumpPressed()
 {
 	if (ACharacter* ControlledCharacter = Cast<ACharacter>(GetPawn()))
 	{
+		if (UPPGrabberComponent* GrabberComponent = ControlledCharacter->FindComponentByClass<UPPGrabberComponent>())
+		{
+			if (GrabberComponent->GetIncomingGrabber())
+			{
+				const UVNHAlienLocomotionComponent* LocomotionComponent = ControlledCharacter->FindComponentByClass<UVNHAlienLocomotionComponent>();
+				const FVector EscapeDirection = LocomotionComponent
+					? LocomotionComponent->GetCameraRelativeMoveDirection()
+					: FVector::ZeroVector;
+				GrabberComponent->RequestDirectionalEscape(EscapeDirection);
+				return;
+			}
+			if (!GrabberComponent->CanJumpOrDive())
+			{
+				return;
+			}
+		}
+		const bool bCanStartJump = ControlledCharacter->CanJump();
 		ControlledCharacter->Jump();
+		if (bCanStartJump)
+		{
+			if (UPPPlayerActionRouterComponent* ActionRouter = ControlledCharacter->FindComponentByClass<UPPPlayerActionRouterComponent>())
+			{
+				ActionRouter->NotifyJumpStarted();
+			}
+		}
 	}
 }
 
@@ -2400,6 +2740,23 @@ void AVNHPlayerController::HandleThrowChargePressed()
 	}
 	bThrowInputDown = true;
 
+	if (IsPairPressureInputTestWorld(GetWorld()))
+	{
+		APawn* ControlledPawn = GetPawn();
+		UPPGrabberComponent* GrabberComponent = ControlledPawn
+			? ControlledPawn->FindComponentByClass<UPPGrabberComponent>()
+			: nullptr;
+		if (GrabberComponent
+			&& (IPPGrabber::Execute_GetGrabState(GrabberComponent) == EPPGrabState::HoldingItem
+				|| IPPGrabber::Execute_GetGrabState(GrabberComponent) == EPPGrabState::GrabbingPlayer))
+		{
+			bThrowChargeActive = true;
+			ThrowChargeStartedAtSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+			UpdateThrowChargeIndicator();
+			return;
+		}
+	}
+
 	const AVNHPlayerState* VNHPlayerState = GetPlayerState<AVNHPlayerState>();
 	const EVNHPlayerRole AssignedRole = VNHPlayerState ? VNHPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
 	AVNHShopperCharacter* Shopper = GetPawn<AVNHShopperCharacter>();
@@ -2429,8 +2786,99 @@ void AVNHPlayerController::HandleThrowChargeReleased()
 	bThrowChargeActive = false;
 	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : ThrowChargeStartedAtSeconds;
 	const float ChargeAlpha = FMath::Clamp((Now - ThrowChargeStartedAtSeconds) / ThrowMaxChargeSeconds, 0.0f, 1.0f);
+	APawn* ControlledPawn = GetPawn();
+	UPPGrabberComponent* GrabberComponent = ControlledPawn
+		? ControlledPawn->FindComponentByClass<UPPGrabberComponent>()
+		: nullptr;
+	if (GrabberComponent
+		&& (IPPGrabber::Execute_GetGrabState(GrabberComponent) == EPPGrabState::HoldingItem
+			|| IPPGrabber::Execute_GetGrabState(GrabberComponent) == EPPGrabState::GrabbingPlayer))
+	{
+		const FVector NativeThrowDirection = (ControlledPawn->GetActorForwardVector() + FVector::UpVector * 0.18f).GetSafeNormal();
+		ServerThrowHeldProp(ChargeAlpha, NativeThrowDirection);
+		UpdateThrowChargeIndicator();
+		return;
+	}
+
 	const FVector ThrowDirection = (GetControlRotation().Vector() + FVector(0.0f, 0.0f, 0.12f)).GetSafeNormal();
 	ServerThrowHeldProp(ChargeAlpha, ThrowDirection);
+	UpdateThrowChargeIndicator();
+}
+
+void AVNHPlayerController::UpdateThrowChargeIndicator()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+	FVNHPlayerControllerThrowChargeIndicatorState* ExistingIndicator = VNHPlayerControllerThrowChargeIndicators.Find(this);
+	if (!bThrowChargeActive && !ExistingIndicator)
+	{
+		return;
+	}
+	FVNHPlayerControllerThrowChargeIndicatorState& Indicator = VNHPlayerControllerThrowChargeIndicators.FindOrAdd(this);
+
+	if (!Indicator.Widget.IsValid() && GEngine && GEngine->GameViewport)
+	{
+		Indicator.ProgressBar = SNew(SProgressBar)
+			.Percent(0.0f)
+			.FillColorAndOpacity(FLinearColor(0.18f, 0.85f, 1.0f, 1.0f));
+
+		Indicator.Widget = SNew(SVerticalBox)
+			+ SVerticalBox::Slot()
+			.FillHeight(0.80f)
+			[
+				SNew(SSpacer)
+			]
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.HAlign(HAlign_Center)
+			[
+				SNew(SBorder)
+				.Padding(FMargin(4.0f))
+				.BorderBackgroundColor(FLinearColor(0.015f, 0.025f, 0.04f, 0.82f))
+				[
+					SNew(SBox)
+					.WidthOverride(230.0f)
+					.HeightOverride(12.0f)
+					[
+						Indicator.ProgressBar.ToSharedRef()
+					]
+				]
+			]
+			+ SVerticalBox::Slot()
+			.FillHeight(0.20f)
+			[
+				SNew(SSpacer)
+			];
+		Indicator.Widget->SetVisibility(EVisibility::Collapsed);
+		GEngine->GameViewport->AddViewportWidgetContent(Indicator.Widget.ToSharedRef(), 80);
+	}
+
+	if (!Indicator.Widget.IsValid() || !Indicator.ProgressBar.IsValid())
+	{
+		return;
+	}
+	if (!bThrowChargeActive)
+	{
+		Indicator.Widget->SetVisibility(EVisibility::Collapsed);
+		return;
+	}
+
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : ThrowChargeStartedAtSeconds;
+	const float ChargeAlpha = FMath::Clamp((Now - ThrowChargeStartedAtSeconds) / ThrowMaxChargeSeconds, 0.0f, 1.0f);
+	Indicator.ProgressBar->SetPercent(ChargeAlpha);
+	Indicator.Widget->SetVisibility(EVisibility::HitTestInvisible);
+}
+
+void AVNHPlayerController::RemoveThrowChargeIndicator()
+{
+	FVNHPlayerControllerThrowChargeIndicatorState* Indicator = VNHPlayerControllerThrowChargeIndicators.Find(this);
+	if (Indicator && Indicator->Widget.IsValid() && GEngine && GEngine->GameViewport)
+	{
+		GEngine->GameViewport->RemoveViewportWidgetContent(Indicator->Widget.ToSharedRef());
+	}
+	VNHPlayerControllerThrowChargeIndicators.Remove(this);
 }
 
 void AVNHPlayerController::HandleInteractPressed()

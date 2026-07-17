@@ -27,10 +27,15 @@
 #include "UObject/UnrealType.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "PairPressure/PPCarryComponent.h"
+#include "PairPressure/PPGrabberComponent.h"
+#include "PairPressure/PPGrabbableComponent.h"
+#include "PairPressure/PPGameplayTypes.h"
 #include "PairPressure/PPImpactSensorComponent.h"
 #include "PairPressure/PPPhysicalStateComponent.h"
 #include "PairPressure/PPPlayerActionRouterComponent.h"
 #include "PairPressure/PPTeamMemberComponent.h"
+#include "PhysicsEngine/PhysicsHandleComponent.h"
+#include "PhysicsEngine/PhysicsAsset.h"
 #include "VNHAlienLocomotionComponent.h"
 #include "VNHGameState.h"
 #include "VNHLog.h"
@@ -41,8 +46,10 @@
 
 namespace
 {
-const TCHAR* DefaultBodyMeshPath = TEXT("/Game/Creative_Characters/Skeleton_Meshes/SK_Body_009.SK_Body_009");
-const TCHAR* CreativeIdleAnimPath = TEXT("/Game/TNG/Characters/Animations/TryingOnClothesAnims/Female/ANIM_TNG_Idle_Breathing.ANIM_TNG_Idle_Breathing");
+const TCHAR* DefaultBodyMeshPath = TEXT("/Game/CuteChubbyPenguin/Penguin/Meshes/SK_Penguin_UE.SK_Penguin_UE");
+const TCHAR* DefaultMascotAnimBlueprintPath = TEXT("/Game/PairPressure/Characters/Penguin/ABP_Penguin.ABP_Penguin_C");
+const TCHAR* DefaultMascotIdleAnimPath = TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_idle1.AS_Penguin_UE_Anim_idle1");
+const TCHAR* PairPressureMascotPhysicsAssetPath = TEXT("/Game/CuteChubbyPenguin/Penguin/Meshes/PHYS_Penguin_UE_PhysicsAsset.PHYS_Penguin_UE_PhysicsAsset");
 constexpr float CalmFartVolume = 1.4f;
 constexpr float PanicFartVolume = 2.6f;
 constexpr float CalmFartInnerRadius = 275.0f;
@@ -144,11 +151,16 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
 	{
 		MovementComponent->bOrientRotationToMovement = false;
-		MovementComponent->RotationRate = FRotator(0.0f, 150.0f, 0.0f);
-		MovementComponent->MaxWalkSpeed = 135.0f;
-		MovementComponent->MaxAcceleration = 420.0f;
-		MovementComponent->BrakingDecelerationWalking = 360.0f;
-		MovementComponent->GroundFriction = 6.0f;
+		MovementComponent->RotationRate = FRotator(0.0f, 360.0f, 0.0f);
+		MovementComponent->MaxWalkSpeed = 500.0f;
+		MovementComponent->MaxAcceleration = 850.0f;
+		MovementComponent->BrakingDecelerationWalking = 520.0f;
+		MovementComponent->GroundFriction = 3.5f;
+		MovementComponent->BrakingFrictionFactor = 1.0f;
+		MovementComponent->JumpZVelocity = 650.0f;
+		MovementComponent->GravityScale = 1.65f;
+		MovementComponent->AirControl = 0.45f;
+		MovementComponent->FallingLateralFriction = 0.15f;
 		MovementComponent->NavAgentProps.bCanCrouch = true;
 	}
 
@@ -157,14 +169,25 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 	PairPressurePhysicalStateComponent = CreateDefaultSubobject<UPPPhysicalStateComponent>(TEXT("PairPressurePhysicalState"));
 	PairPressureTeamMember = CreateDefaultSubobject<UPPTeamMemberComponent>(TEXT("PairPressureTeamMember"));
 	PairPressureCarry = CreateDefaultSubobject<UPPCarryComponent>(TEXT("PairPressureCarry"));
+	PairPressureGrabPhysicsHandle = CreateDefaultSubobject<UPhysicsHandleComponent>(TEXT("PairPressureGrabPhysicsHandle"));
+	PairPressureGrabber = CreateDefaultSubobject<UPPGrabberComponent>(TEXT("PairPressureGrabber"));
+	PairPressureGrabbable = CreateDefaultSubobject<UPPGrabbableComponent>(TEXT("PairPressureGrabbable"));
+	PairPressureGrabbable->GrabProfile.TargetType = EPPGrabTargetType::Player;
+	PairPressureGrabbable->GrabProfile.MaximumRange = 210.0f;
+	PairPressureGrabbable->GrabProfile.MaximumAngleDegrees = 52.0f;
+	PairPressureGrabbable->GrabProfile.LinearStiffness = 1800.0f;
+	PairPressureGrabbable->GrabProfile.LinearDamping = 360.0f;
+	PairPressureGrabbable->GrabProfile.BreakForce = 400000.0f;
+	PairPressureGrabbable->GrabProfile.MovementSpeedMultiplier = 0.72f;
+	PairPressureGrabbable->GripPointComponentName = TEXT("GrabAnchor");
 	PairPressureImpactSensor = CreateDefaultSubobject<UPPImpactSensorComponent>(TEXT("PairPressureImpactSensor"));
 	PairPressureActionRouter = CreateDefaultSubobject<UPPPlayerActionRouterComponent>(TEXT("PairPressureActionRouter"));
 
 	FollowCameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("FollowCameraBoom"));
 	FollowCameraBoom->SetupAttachment(RootComponent);
-	FollowCameraBoom->TargetArmLength = 460.0f;
-	FollowCameraBoom->TargetOffset = FVector(0.0f, 0.0f, 68.0f);
-	FollowCameraBoom->SetRelativeRotation(FRotator(-18.0f, 0.0f, 0.0f));
+	FollowCameraBoom->TargetArmLength = 620.0f;
+	FollowCameraBoom->TargetOffset = FVector(0.0f, 0.0f, 112.0f);
+	FollowCameraBoom->SetRelativeRotation(FRotator(-28.0f, 0.0f, 0.0f));
 	FollowCameraBoom->bUsePawnControlRotation = true;
 	FollowCameraBoom->bDoCollisionTest = true;
 	FollowCameraBoom->ProbeSize = 18.0f;
@@ -175,6 +198,7 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 	FollowCamera->SetupAttachment(FollowCameraBoom, USpringArmComponent::SocketName);
 	FollowCamera->bUsePawnControlRotation = false;
+	FollowCamera->FieldOfView = 85.0f;
 	FollowCamera->PostProcessSettings.bOverride_MotionBlurAmount = true;
 	FollowCamera->PostProcessSettings.MotionBlurAmount = 0.0f;
 	FollowCamera->PostProcessSettings.bOverride_MotionBlurMax = true;
@@ -223,18 +247,14 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 	AccessoryMeshComponent = CreateCosmeticMesh(TEXT("AccessoryMesh"));
 
 	CharacterCustomization.BodyMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(DefaultBodyMeshPath));
-	CharacterCustomization.HairMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(TEXT("/Game/TNG/Characters/Cosmetics/Hair/SK_TNG_Hair_Male_003.SK_TNG_Hair_Male_003")));
-	CharacterCustomization.FaceMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(TEXT("/Game/TNG/Characters/Cosmetics/Faces/SK_TNG_Face_Happy_001.SK_TNG_Face_Happy_001")));
-	CharacterCustomization.HatMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(TEXT("/Game/TNG/Characters/Cosmetics/Hats/SK_TNG_Hat_003.SK_TNG_Hat_003")));
-	CharacterCustomization.MustacheMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(TEXT("/Game/TNG/Characters/Cosmetics/Mustaches/SK_TNG_Mustache_001.SK_TNG_Mustache_001")));
-	CharacterCustomization.OutfitMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(TEXT("/Game/TNG/Characters/Cosmetics/Outfits/SK_TNG_Outfit_001.SK_TNG_Outfit_001")));
 	HumanActionAnimationTable = TSoftObjectPtr<UDataTable>(FSoftObjectPath(TEXT("/Game/Data/DT_HumanActionAnimations.DT_HumanActionAnimations")));
 	AlienActionAnimationTable = TSoftObjectPtr<UDataTable>(FSoftObjectPath(TEXT("/Game/Data/DT_AlienActionAnimations.DT_AlienActionAnimations")));
+	MascotAnimationTable = TSoftObjectPtr<UDataTable>(FSoftObjectPath(TEXT("/Game/PairPressure/Data/DT_MascotAnimations.DT_MascotAnimations")));
 
 	if (USkeletalMesh* DefaultBodyMesh = LoadObject<USkeletalMesh>(nullptr, DefaultBodyMeshPath))
 	{
 		GetMesh()->SetSkeletalMesh(DefaultBodyMesh);
-		ConfigureCreativeCharacterVisuals();
+		ConfigureCharacterVisuals();
 	}
 	else
 	{
@@ -256,8 +276,14 @@ void AVNHShopperCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	ConfigureCreativeCharacterVisuals();
+	ConfigureCharacterVisuals();
 	ApplyCharacterCustomization();
+	if (ShouldUsePairPressureMascotVisuals())
+	{
+		// Camera anchoring must follow physics every frame while the capsule is
+		// disabled and the mascot body is being propelled or carried.
+		PrimaryActorTick.TickInterval = 0.0f;
+	}
 	LastMeaningfulLocation = GetActorLocation();
 	LastMeaningfulControlRotation = GetControlRotation();
 	UpdateComposureState();
@@ -277,6 +303,7 @@ void AVNHShopperCharacter::BeginPlay()
 void AVNHShopperCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	UpdateRagdollCameraAnchor(DeltaSeconds);
 	UpdateAdaptiveFollowCamera(DeltaSeconds);
 
 	const bool bIsPairPressureMap = GetWorld() && GetWorld()->GetMapName().Contains(TEXT("PP_"));
@@ -412,12 +439,14 @@ void AVNHShopperCharacter::UpdateAdaptiveFollowCamera(float DeltaSeconds)
 		7.0f);
 	FollowCameraBoom->SocketOffset.Z = NewSocketHeight;
 
-	if (AController* ShopperController = GetController())
+	if ((!AlienLocomotionComponent || !AlienLocomotionComponent->IsCameraOrbitDetached())
+		&& GetController())
 	{
+		AController* ShopperController = GetController();
 		FRotator AdaptiveControlRotation = ShopperController->GetControlRotation();
 		AdaptiveControlRotation.Pitch = FMath::FInterpTo(
 			AdaptiveControlRotation.Pitch,
-			FMath::Lerp(-18.0f, -55.0f, OverheadAlpha),
+			FMath::Lerp(-28.0f, -58.0f, OverheadAlpha),
 			DeltaSeconds,
 			6.0f);
 		ShopperController->SetControlRotation(AdaptiveControlRotation);
@@ -1056,8 +1085,61 @@ void AVNHShopperCharacter::SetCharacterCustomization(const FVNHCharacterCustomiz
 {
 	if (HasAuthority())
 	{
+		if (ShouldUsePairPressureMascotVisuals())
+		{
+			ApplyCharacterCustomization();
+			return;
+		}
 		CharacterCustomization = NewCustomization;
 		ApplyCharacterCustomization();
+	}
+}
+
+void AVNHShopperCharacter::UpdateRagdollCameraAnchor(float DeltaSeconds)
+{
+	if (!IsLocallyControlled() || !FollowCameraBoom || !RootComponent)
+	{
+		return;
+	}
+
+	const USkeletalMeshComponent* CharacterMesh = GetMesh();
+	const bool bFollowPhysicsBody = CharacterMesh && CharacterMesh->IsAnySimulatingPhysics();
+	FVector DesiredRelativeLocation = FVector::ZeroVector;
+	if (bFollowPhysicsBody)
+	{
+		FVector PhysicsAnchor = CharacterMesh->GetComponentLocation();
+		for (const FName Candidate : {
+			FName(TEXT("chest")), FName(TEXT("hips")), FName(TEXT("pelvis"))})
+		{
+			if (CharacterMesh->GetBoneIndex(Candidate) != INDEX_NONE)
+			{
+				PhysicsAnchor = CharacterMesh->GetBoneLocation(Candidate);
+				break;
+			}
+		}
+		DesiredRelativeLocation = RootComponent->GetComponentTransform().InverseTransformPositionNoScale(PhysicsAnchor);
+	}
+
+	const float FollowSpeed = bFollowPhysicsBody ? 15.0f : 9.0f;
+	FollowCameraBoom->SetRelativeLocation(FMath::VInterpTo(
+		FollowCameraBoom->GetRelativeLocation(),
+		DesiredRelativeLocation,
+		DeltaSeconds,
+		FollowSpeed));
+}
+
+bool AVNHShopperCharacter::CanJumpInternal_Implementation() const
+{
+	return Super::CanJumpInternal_Implementation()
+		&& (!PairPressureGrabber || PairPressureGrabber->CanJumpOrDive());
+}
+
+void AVNHShopperCharacter::Landed(const FHitResult& Hit)
+{
+	Super::Landed(Hit);
+	if (PairPressureActionRouter)
+	{
+		PairPressureActionRouter->NotifyLanded();
 	}
 }
 
@@ -1343,7 +1425,13 @@ void AVNHShopperCharacter::SetInteractionHighlightStencil(int32 StencilValue)
 	}
 }
 
-void AVNHShopperCharacter::ConfigureCreativeCharacterVisuals()
+bool AVNHShopperCharacter::ShouldUsePairPressureMascotVisuals() const
+{
+	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
+	return MapName.Contains(TEXT("Lobby")) || MapName.Contains(TEXT("PP_"));
+}
+
+void AVNHShopperCharacter::ConfigureCharacterVisuals()
 {
 	USkeletalMeshComponent* MeshComponent = GetMesh();
 	if (!MeshComponent)
@@ -1351,9 +1439,20 @@ void AVNHShopperCharacter::ConfigureCreativeCharacterVisuals()
 		return;
 	}
 
-	if (!MeshComponent->GetSkeletalMeshAsset())
+	const UDataTable* LoadedMascotTable = MascotAnimationTable.IsNull() ? nullptr : MascotAnimationTable.LoadSynchronous();
+	const FPPMascotAnimationRow* PenguinMascotRow = LoadedMascotTable
+		? LoadedMascotTable->FindRow<FPPMascotAnimationRow>(FName(TEXT("Penguin")), TEXT("Configure default Penguin mascot"), false)
+		: nullptr;
+	const bool bForcePairPressureMascot = ShouldUsePairPressureMascotVisuals();
+
+	if (bForcePairPressureMascot || !MeshComponent->GetSkeletalMeshAsset())
 	{
-		if (USkeletalMesh* DefaultBodyMesh = LoadObject<USkeletalMesh>(nullptr, DefaultBodyMeshPath))
+		USkeletalMesh* DefaultBodyMesh = PenguinMascotRow ? PenguinMascotRow->Mesh.LoadSynchronous() : nullptr;
+		if (!DefaultBodyMesh)
+		{
+			DefaultBodyMesh = LoadObject<USkeletalMesh>(nullptr, DefaultBodyMeshPath);
+		}
+		if (DefaultBodyMesh)
 		{
 			MeshComponent->SetSkeletalMesh(DefaultBodyMesh);
 		}
@@ -1366,20 +1465,35 @@ void AVNHShopperCharacter::ConfigureCreativeCharacterVisuals()
 	MeshComponent->bPauseAnims = false;
 	MeshComponent->GlobalAnimRateScale = 1.0f;
 
-	if (!MeshComponent->GetAnimClass())
+	if (bForcePairPressureMascot || !MeshComponent->GetAnimClass())
 	{
-		if (UClass* CreativeLocomotionAnimClass = LoadClass<UAnimInstance>(
-			nullptr,
-			TEXT("/Game/Creative_Characters/Animations/ABP_CreativeCharacter.ABP_CreativeCharacter_C")))
+		UClass* MascotLocomotionAnimClass = PenguinMascotRow ? PenguinMascotRow->AnimationBlueprint.LoadSynchronous() : nullptr;
+		if (!MascotLocomotionAnimClass)
+		{
+			MascotLocomotionAnimClass = LoadClass<UAnimInstance>(nullptr, DefaultMascotAnimBlueprintPath);
+		}
+		if (MascotLocomotionAnimClass)
 		{
 			MeshComponent->SetAnimationMode(EAnimationMode::AnimationBlueprint);
-			MeshComponent->SetAnimInstanceClass(CreativeLocomotionAnimClass);
+			MeshComponent->SetAnimInstanceClass(MascotLocomotionAnimClass);
+		}
+	}
+	if (bForcePairPressureMascot)
+	{
+		if (UPhysicsAsset* PairPressurePhysicsAsset = LoadObject<UPhysicsAsset>(nullptr, PairPressureMascotPhysicsAssetPath))
+		{
+			MeshComponent->SetPhysicsAsset(PairPressurePhysicsAsset, true);
 		}
 	}
 
 	if (!MeshComponent->GetAnimClass())
 	{
-		if (UAnimationAsset* IdleAnimation = LoadObject<UAnimationAsset>(nullptr, CreativeIdleAnimPath))
+		UAnimationAsset* IdleAnimation = PenguinMascotRow ? PenguinMascotRow->Idle.LoadSynchronous() : nullptr;
+		if (!IdleAnimation)
+		{
+			IdleAnimation = LoadObject<UAnimationAsset>(nullptr, DefaultMascotIdleAnimPath);
+		}
+		if (IdleAnimation)
 		{
 			MeshComponent->SetAnimationMode(EAnimationMode::AnimationSingleNode);
 			MeshComponent->SetAnimation(IdleAnimation);
@@ -1395,11 +1509,25 @@ void AVNHShopperCharacter::ConfigureCreativeCharacterVisuals()
 
 void AVNHShopperCharacter::ApplyCharacterCustomization()
 {
-	ConfigureCreativeCharacterVisuals();
+	ConfigureCharacterVisuals();
 
 	USkeletalMeshComponent* BodyComponent = GetMesh();
 	if (!BodyComponent)
 	{
+		return;
+	}
+	if (ShouldUsePairPressureMascotVisuals())
+	{
+		const TSoftObjectPtr<USkeletalMesh> EmptyCosmeticMesh;
+		ApplySlotMesh(HairMeshComponent, EmptyCosmeticMesh);
+		ApplySlotMesh(FaceMeshComponent, EmptyCosmeticMesh);
+		ApplySlotMesh(HatMeshComponent, EmptyCosmeticMesh);
+		ApplySlotMesh(MustacheMeshComponent, EmptyCosmeticMesh);
+		ApplySlotMesh(OutfitMeshComponent, EmptyCosmeticMesh);
+		ApplySlotMesh(OutwearMeshComponent, EmptyCosmeticMesh);
+		ApplySlotMesh(PantsMeshComponent, EmptyCosmeticMesh);
+		ApplySlotMesh(ShoesMeshComponent, EmptyCosmeticMesh);
+		ApplySlotMesh(AccessoryMeshComponent, EmptyCosmeticMesh);
 		return;
 	}
 

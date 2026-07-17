@@ -118,3 +118,54 @@ public:
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Pair Pressure|Interaction")
 	bool IsPromptAvailable(AActor* RequestingActor) const;
 };
+
+UINTERFACE(BlueprintType)
+class VNHSIMULATOR_API UPPGrabbable : public UInterface
+{
+	GENERATED_BODY()
+};
+
+class VNHSIMULATOR_API IPPGrabbable
+{
+	GENERATED_BODY()
+
+public:
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Pair Pressure|Grab")
+	bool CanBeGrabbed(AActor* RequestingGrabber) const;
+
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Pair Pressure|Grab")
+	FPPGrabProfile GetGrabProfile() const;
+
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Pair Pressure|Grab")
+	UPrimitiveComponent* GetGrabPrimitive() const;
+
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Pair Pressure|Grab")
+	FVector GetGrabPoint(AActor* RequestingGrabber) const;
+
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Pair Pressure|Grab")
+	void OnGrabStarted(AActor* NewGrabber);
+
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Pair Pressure|Grab")
+	void OnGrabEnded(AActor* PreviousGrabber);
+};
+
+UINTERFACE(BlueprintType)
+class VNHSIMULATOR_API UPPGrabber : public UInterface
+{
+	GENERATED_BODY()
+};
+
+class VNHSIMULATOR_API IPPGrabber
+{
+	GENERATED_BODY()
+
+public:
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Pair Pressure|Grab")
+	void BeginGrab(const FVector& CameraForward);
+
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Pair Pressure|Grab")
+	void ReleaseGrab();
+
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Pair Pressure|Grab")
+	EPPGrabState GetGrabState() const;
+};

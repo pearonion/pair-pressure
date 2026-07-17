@@ -14,6 +14,7 @@ void AVNHPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	DOREPLIFETIME(AVNHPlayerState, AssignedRole);
 	DOREPLIFETIME(AVNHPlayerState, LightErrandText);
 	DOREPLIFETIME(AVNHPlayerState, bPreRoundReady);
+	DOREPLIFETIME(AVNHPlayerState, LobbyTeamId);
 }
 
 void AVNHPlayerState::SetRole(EVNHPlayerRole NewRole)
@@ -38,6 +39,14 @@ void AVNHPlayerState::SetPreRoundReady(bool bNewPreRoundReady)
 	if (HasAuthority())
 	{
 		bPreRoundReady = bNewPreRoundReady;
+	}
+}
+
+void AVNHPlayerState::SetLobbyTeamId(int32 NewLobbyTeamId)
+{
+	if (HasAuthority())
+	{
+		LobbyTeamId = NewLobbyTeamId;
 	}
 }
 

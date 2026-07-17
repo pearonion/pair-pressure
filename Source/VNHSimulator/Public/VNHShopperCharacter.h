@@ -8,6 +8,8 @@
 
 class UVNHAlienLocomotionComponent;
 class UPPCarryComponent;
+class UPPGrabbableComponent;
+class UPPGrabberComponent;
 class UPPImpactSensorComponent;
 class UPPPhysicalStateComponent;
 class UPPPlayerActionRouterComponent;
@@ -19,6 +21,7 @@ class USoundBase;
 class USpringArmComponent;
 class UStaticMeshComponent;
 class USkeletalMeshComponent;
+class UPhysicsHandleComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FVNHActNaturalUsed, EVNHActNaturalRecovery, Recovery);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FVNHPublicTestReceived, EVNHPublicTestType, TestType);
@@ -30,6 +33,8 @@ class VNHSIMULATOR_API AVNHShopperCharacter : public ACharacter
 
 public:
 	AVNHShopperCharacter();
+	virtual bool CanJumpInternal_Implementation() const override;
+	virtual void Landed(const FHitResult& Hit) override;
 
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
@@ -51,6 +56,12 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Features")
 	UPPCarryComponent* GetPairPressureCarry() const { return PairPressureCarry; }
+
+	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Features")
+	UPPGrabberComponent* GetPairPressureGrabber() const { return PairPressureGrabber; }
+
+	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Features")
+	UPPGrabbableComponent* GetPairPressureGrabbable() const { return PairPressureGrabbable; }
 
 	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Features")
 	UPPImpactSensorComponent* GetPairPressureImpactSensor() const { return PairPressureImpactSensor; }
@@ -176,6 +187,8 @@ public:
 
 private:
 	void UpdateAdaptiveFollowCamera(float DeltaSeconds);
+	void UpdateRagdollCameraAnchor(float DeltaSeconds);
+	bool ShouldUsePairPressureMascotVisuals() const;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Shopper", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UVNHRoutineComponent> RoutineComponent;
@@ -191,6 +204,15 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pair Pressure|Features", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UPPCarryComponent> PairPressureCarry;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pair Pressure|Features", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPPGrabberComponent> PairPressureGrabber;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pair Pressure|Features", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPPGrabbableComponent> PairPressureGrabbable;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pair Pressure|Features", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPhysicsHandleComponent> PairPressureGrabPhysicsHandle;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pair Pressure|Features", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UPPImpactSensorComponent> PairPressureImpactSensor;
@@ -254,6 +276,9 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Actions|Animations", meta = (AllowPrivateAccess = "true"))
 	TSoftObjectPtr<UDataTable> AlienActionAnimationTable;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Pair Pressure|Mascot", meta = (AllowPrivateAccess = "true"))
+	TSoftObjectPtr<UDataTable> MascotAnimationTable;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Shopper|AI", meta = (AllowPrivateAccess = "true", AllowedClasses = "/Script/StateTreeModule.StateTree"))
 	TSoftObjectPtr<UObject> ShopperStateTree = TSoftObjectPtr<UObject>(FSoftObjectPath(TEXT("/Game/AI/ST_Shoppers.ST_Shoppers")));
@@ -335,7 +360,7 @@ private:
 	void ApplyLookToEntranceReaction();
 	void ApplyClearAisleReaction();
 	void ResumeRoutineMovement();
-	void ConfigureCreativeCharacterVisuals();
+	void ConfigureCharacterVisuals();
 	void ApplyCharacterCustomization();
 	void ApplySlotMesh(USkeletalMeshComponent* SlotComponent, const TSoftObjectPtr<USkeletalMesh>& MeshAsset, bool bHideSlot = false);
 	void ApplyColorToMesh(USkeletalMeshComponent* MeshComponent, const FLinearColor& Color);

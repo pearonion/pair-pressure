@@ -1,12 +1,42 @@
 #include "PairPressure/PPPhysicalStateComponent.h"
 
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimSequence.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/DataTable.h"
+#include "Engine/EngineTypes.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Net/UnrealNetwork.h"
+#include "PairPressure/PPGameplayTypes.h"
+#include "PhysicsEngine/PhysicsAsset.h"
 #include "TimerManager.h"
+
+namespace
+{
+FName ResolvePPPhysicalRagdollRootBone(const USkeletalMeshComponent* CharacterMesh)
+{
+	if (!CharacterMesh)
+	{
+		return NAME_None;
+	}
+
+	const UPhysicsAsset* PhysicsAsset = CharacterMesh->GetPhysicsAsset();
+	for (const FName Candidate : {
+		FName(TEXT("hips")), FName(TEXT("pelvis")), FName(TEXT("chest")),
+		FName(TEXT("spine_03")), FName(TEXT("root"))})
+	{
+		if (CharacterMesh->GetBoneIndex(Candidate) != INDEX_NONE
+			&& (!PhysicsAsset || PhysicsAsset->FindBodyIndex(Candidate) != INDEX_NONE))
+		{
+			return Candidate;
+		}
+	}
+	return NAME_None;
+}
+}
 
 UPPPhysicalStateComponent::UPPPhysicalStateComponent()
 {
@@ -20,7 +50,8 @@ void UPPPhysicalStateComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (!GetWorld() || !GetWorld()->GetMapName().Contains(TEXT("PP_")))
+	if (!GetWorld() || (!GetWorld()->GetMapName().Contains(TEXT("PP_"))
+		&& !GetWorld()->GetMapName().Contains(TEXT("Lobby"))))
 	{
 		return;
 	}
@@ -162,6 +193,38 @@ void UPPPhysicalStateComponent::AddReviveProgress(float DeltaSeconds, AActor* Re
 	}
 }
 
+void UPPPhysicalStateComponent::RequestDebugRagdoll()
+{
+	if (!GetOwner())
+	{
+		return;
+	}
+
+	if (!GetOwner()->HasAuthority())
+	{
+		ServerRequestDebugRagdoll();
+		return;
+	}
+
+	SetPhysicalStateAuthoritative(EPPPhysicalState::Ragdolled);
+}
+
+void UPPPhysicalStateComponent::RequestDebugRecovery()
+{
+	if (!GetOwner())
+	{
+		return;
+	}
+
+	if (!GetOwner()->HasAuthority())
+	{
+		ServerRequestDebugRecovery();
+		return;
+	}
+
+	RecoverFromCurrentState();
+}
+
 UPPPhysicalStateComponent* UPPPhysicalStateComponent::FindPhysicalStateComponent(const AActor* Actor)
 {
 	return Actor ? Actor->FindComponentByClass<UPPPhysicalStateComponent>() : nullptr;
@@ -177,6 +240,16 @@ void UPPPhysicalStateComponent::ServerRequestRecovery_Implementation()
 	RequestRecovery_Implementation();
 }
 
+void UPPPhysicalStateComponent::ServerRequestDebugRagdoll_Implementation()
+{
+	RequestDebugRagdoll();
+}
+
+void UPPPhysicalStateComponent::ServerRequestDebugRecovery_Implementation()
+{
+	RequestDebugRecovery();
+}
+
 void UPPPhysicalStateComponent::OnRep_PhysicalState()
 {
 	if (IsRagdolled())
@@ -185,7 +258,14 @@ void UPPPhysicalStateComponent::OnRep_PhysicalState()
 	}
 	else
 	{
+		const ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+		const USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
+		const bool bWasRagdollVisual = CharacterMesh && CharacterMesh->IsAnySimulatingPhysics();
 		ExitRagdollVisualState();
+		if (bWasRagdollVisual && PhysicalState == EPPPhysicalState::Grounded)
+		{
+			PlayGetUpFrontAnimation();
+		}
 	}
 	OnPhysicalStateChanged.Broadcast(PhysicalState, GetDazeNormalized_Implementation());
 }
@@ -198,10 +278,29 @@ void UPPPhysicalStateComponent::OnRep_Daze()
 void UPPPhysicalStateComponent::ApplyImpactAuthoritative(const FPPImpactData& ImpactData)
 {
 	float EffectiveSeverity = FMath::Clamp(ImpactData.Severity, 0.0f, 150.0f);
+	const bool bSpinnerImpact = ImpactData.InstigatorActor
+		&& (ImpactData.InstigatorActor->ActorHasTag(TEXT("PP_SpinnerObstacle"))
+			|| ImpactData.InstigatorActor->GetName().Contains(TEXT("Spinner_V2"), ESearchCase::IgnoreCase));
 	const double CurrentTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 	if (CurrentTime - LastKnockdownTimeSeconds < 1.5)
 	{
 		EffectiveSeverity *= 0.55f;
+	}
+	if (bSpinnerImpact)
+	{
+		// Timeline-driven rotating meshes can report a small/zero normal impulse even
+		// at high tangential speed, so preserve measured severity but guarantee that
+		// a confirmed spinner contact crosses the ragdoll threshold.
+		EffectiveSeverity = FMath::Max(EffectiveSeverity, 60.0f);
+		AddDazeAuthoritative(FMath::GetMappedRangeValueClamped(
+			FVector2D(60.0f, 150.0f),
+			FVector2D(12.0f, 35.0f),
+			EffectiveSeverity));
+		LastKnockdownTimeSeconds = CurrentTime;
+		SetPhysicalStateAuthoritative(EPPPhysicalState::Ragdolled);
+		ApplyRagdollPropulsion(ImpactData, EffectiveSeverity);
+		BeginGroundedRecovery(1.5f);
+		return;
 	}
 
 	if (EffectiveSeverity <= 25.0f)
@@ -271,7 +370,20 @@ void UPPPhysicalStateComponent::EnterRagdollVisualState()
 	if (USkeletalMeshComponent* CharacterMesh = OwnerCharacter->GetMesh())
 	{
 		CharacterMesh->SetCollisionProfileName(TEXT("Ragdoll"));
-		CharacterMesh->SetAllBodiesSimulatePhysics(true);
+		CharacterMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		CharacterMesh->SetCollisionObjectType(ECC_PhysicsBody);
+		CharacterMesh->SetCollisionResponseToAllChannels(ECR_Block);
+		CharacterMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+		CharacterMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+		CharacterMesh->SetAllUseCCD(true);
+		CharacterMesh->SetEnableGravity(true);
+		CharacterMesh->bPauseAnims = true;
+		const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
+		if (!RagdollRootBone.IsNone())
+		{
+			CharacterMesh->SetAllBodiesBelowSimulatePhysics(RagdollRootBone, true, true);
+			CharacterMesh->SetAllBodiesBelowPhysicsBlendWeight(RagdollRootBone, 1.0f, false, true);
+		}
 		CharacterMesh->WakeAllRigidBodies();
 	}
 }
@@ -286,21 +398,29 @@ void UPPPhysicalStateComponent::ExitRagdollVisualState()
 
 	USkeletalMeshComponent* CharacterMesh = OwnerCharacter->GetMesh();
 	UCapsuleComponent* Capsule = OwnerCharacter->GetCapsuleComponent();
-	if (CharacterMesh && CharacterMesh->IsSimulatingPhysics())
+	if (CharacterMesh && CharacterMesh->IsAnySimulatingPhysics())
 	{
 		FVector RecoveryLocation = CharacterMesh->GetComponentLocation();
-		if (CharacterMesh->DoesSocketExist(TEXT("pelvis")))
+		const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
+		if (!RagdollRootBone.IsNone())
 		{
-			RecoveryLocation = CharacterMesh->GetSocketLocation(TEXT("pelvis"));
+			RecoveryLocation = CharacterMesh->GetBoneLocation(RagdollRootBone);
 		}
 		if (Capsule)
 		{
 			RecoveryLocation.Z += Capsule->GetScaledCapsuleHalfHeight();
 		}
-		OwnerCharacter->SetActorLocation(RecoveryLocation, false, nullptr, ETeleportType::TeleportPhysics);
+		if (!RagdollRootBone.IsNone())
+		{
+			CharacterMesh->SetAllBodiesBelowPhysicsBlendWeight(RagdollRootBone, 0.0f, false, true);
+			CharacterMesh->SetAllBodiesBelowSimulatePhysics(RagdollRootBone, false, true);
+		}
 		CharacterMesh->SetAllBodiesSimulatePhysics(false);
+		CharacterMesh->SetAllUseCCD(false);
+		CharacterMesh->bPauseAnims = false;
 		CharacterMesh->SetCollisionProfileName(TEXT("CharacterMesh"));
 		CharacterMesh->SetRelativeTransform(InitialMeshRelativeTransform);
+		OwnerCharacter->SetActorLocation(RecoveryLocation, false, nullptr, ETeleportType::TeleportPhysics);
 	}
 	if (Capsule)
 	{
@@ -310,6 +430,177 @@ void UPPPhysicalStateComponent::ExitRagdollVisualState()
 	{
 		MovementComponent->SetMovementMode(MOVE_Walking);
 	}
+}
+
+void UPPPhysicalStateComponent::BeginGroundedRecovery(float RequiredGroundedSeconds)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority() || !GetWorld())
+	{
+		return;
+	}
+
+	TWeakObjectPtr<UPPPhysicalStateComponent> WeakPhysicalState(this);
+	const TSharedRef<float> GroundedSeconds = MakeShared<float>(0.0f);
+	FTimerDelegate GroundedRecoveryDelegate;
+	GroundedRecoveryDelegate.BindLambda([WeakPhysicalState, GroundedSeconds, RequiredGroundedSeconds]()
+	{
+		UPPPhysicalStateComponent* PhysicalStateComponent = WeakPhysicalState.Get();
+		if (!PhysicalStateComponent || !PhysicalStateComponent->GetWorld() || !PhysicalStateComponent->IsRagdolled())
+		{
+			return;
+		}
+
+		if (PhysicalStateComponent->IsRagdollRestingOnGround())
+		{
+			*GroundedSeconds += 0.1f;
+			if (*GroundedSeconds >= RequiredGroundedSeconds)
+			{
+				PhysicalStateComponent->RecoverFromCurrentState();
+			}
+		}
+		else
+		{
+			*GroundedSeconds = 0.0f;
+		}
+	});
+	GetWorld()->GetTimerManager().SetTimer(
+		RecoveryTimerHandle,
+		GroundedRecoveryDelegate,
+		0.1f,
+		true);
+}
+
+bool UPPPhysicalStateComponent::IsRagdollRestingOnGround() const
+{
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
+	UWorld* World = GetWorld();
+	if (!CharacterMesh || !World)
+	{
+		return false;
+	}
+
+	const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
+	const FVector RootLocation = RagdollRootBone.IsNone()
+		? CharacterMesh->GetComponentLocation()
+		: CharacterMesh->GetBoneLocation(RagdollRootBone);
+	const FVector RootVelocity = RagdollRootBone.IsNone()
+		? CharacterMesh->GetComponentVelocity()
+		: CharacterMesh->GetBoneLinearVelocity(RagdollRootBone);
+	if (RootVelocity.Size() > 180.0f)
+	{
+		return false;
+	}
+
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PPSpinnerGroundedRecovery), false, GetOwner());
+	FHitResult GroundHit;
+	return World->LineTraceSingleByChannel(
+		GroundHit,
+		RootLocation + FVector(0.0f, 0.0f, 15.0f),
+		RootLocation - FVector(0.0f, 0.0f, 55.0f),
+		ECC_Visibility,
+		QueryParams);
+}
+
+void UPPPhysicalStateComponent::ApplyRagdollPropulsion(const FPPImpactData& ImpactData, float EffectiveSeverity)
+{
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
+	if (!CharacterMesh || !CharacterMesh->IsAnySimulatingPhysics())
+	{
+		return;
+	}
+
+	FVector PropelDirection = ImpactData.ImpactDirection.GetSafeNormal();
+	if (PropelDirection.IsNearlyZero())
+	{
+		PropelDirection = ImpactData.InstigatorActor
+			? (OwnerCharacter->GetActorLocation() - ImpactData.InstigatorActor->GetActorLocation()).GetSafeNormal()
+			: OwnerCharacter->GetActorForwardVector();
+	}
+	PropelDirection.Z = FMath::Max(PropelDirection.Z, 0.22f);
+	PropelDirection.Normalize();
+	const float PropelSpeed = FMath::GetMappedRangeValueClamped(
+		FVector2D(60.0f, 150.0f),
+		FVector2D(500.0f, 1450.0f),
+		EffectiveSeverity);
+	CharacterMesh->SetAllPhysicsLinearVelocity(PropelDirection * PropelSpeed, false);
+	CharacterMesh->WakeAllRigidBodies();
+}
+
+void UPPPhysicalStateComponent::PlayGetUpFrontAnimation()
+{
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
+	if (!OwnerCharacter || !CharacterMesh || CharacterMesh->IsAnySimulatingPhysics() || !GetWorld())
+	{
+		return;
+	}
+
+	UAnimSequence* GetUpFrontAnimation = nullptr;
+	if (UDataTable* MascotAnimationTable = LoadObject<UDataTable>(
+		nullptr,
+		TEXT("/Game/PairPressure/Data/DT_MascotAnimations.DT_MascotAnimations")))
+	{
+		if (const FPPMascotAnimationRow* PenguinRow = MascotAnimationTable->FindRow<FPPMascotAnimationRow>(
+			FName(TEXT("Penguin")),
+			TEXT("Physical-state get-up"),
+			false))
+		{
+			GetUpFrontAnimation = PenguinRow->GetUpFront.LoadSynchronous();
+		}
+	}
+	if (!GetUpFrontAnimation)
+	{
+		GetUpFrontAnimation = LoadObject<UAnimSequence>(
+			nullptr,
+			TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_wakesup1.AS_Penguin_UE_Anim_wakesup1"));
+	}
+	if (!GetUpFrontAnimation)
+	{
+		return;
+	}
+
+	UClass* LocomotionAnimClass = CharacterMesh->GetAnimClass();
+	CharacterMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+	CharacterMesh->SetAnimation(GetUpFrontAnimation);
+	CharacterMesh->Play(false);
+	if (UCharacterMovementComponent* MovementComponent = OwnerCharacter->GetCharacterMovement())
+	{
+		MovementComponent->DisableMovement();
+	}
+
+	const float AnimationDuration = FMath::Max(0.1f, GetUpFrontAnimation->GetPlayLength());
+	TWeakObjectPtr<ACharacter> WeakOwnerCharacter(OwnerCharacter);
+	TWeakObjectPtr<USkeletalMeshComponent> WeakCharacterMesh(CharacterMesh);
+	FTimerHandle GetUpTimerHandle;
+	GetWorld()->GetTimerManager().SetTimer(
+		GetUpTimerHandle,
+		[WeakOwnerCharacter, WeakCharacterMesh, LocomotionAnimClass]()
+		{
+			ACharacter* RecoveringCharacter = WeakOwnerCharacter.Get();
+			USkeletalMeshComponent* RecoveringMesh = WeakCharacterMesh.Get();
+			if (!RecoveringCharacter || !RecoveringMesh || RecoveringMesh->IsAnySimulatingPhysics())
+			{
+				return;
+			}
+			if (const UPPPhysicalStateComponent* PhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(RecoveringCharacter);
+				PhysicalState && PhysicalState->IsRagdolled())
+			{
+				return;
+			}
+			RecoveringMesh->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+			if (LocomotionAnimClass)
+			{
+				RecoveringMesh->SetAnimInstanceClass(LocomotionAnimClass);
+			}
+			if (UCharacterMovementComponent* MovementComponent = RecoveringCharacter->GetCharacterMovement())
+			{
+				MovementComponent->SetMovementMode(MOVE_Walking);
+			}
+		},
+		AnimationDuration,
+		false);
 }
 
 void UPPPhysicalStateComponent::RecoverFromCurrentState()

@@ -42,9 +42,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "VNH|Player")
 	bool IsPreRoundReady() const { return bPreRoundReady; }
 
+	UFUNCTION(BlueprintPure, Category = "VNH|Lobby")
+	int32 GetLobbyTeamId() const { return LobbyTeamId; }
+
 	void SetRole(EVNHPlayerRole NewRole);
 	void SetLightErrandText(const FText& NewLightErrandText);
 	void SetPreRoundReady(bool bNewPreRoundReady);
+	void SetLobbyTeamId(int32 NewLobbyTeamId);
 
 private:
 	UPROPERTY(ReplicatedUsing = OnRep_AssignedRole, BlueprintReadOnly, Category = "VNH|Player", meta = (AllowPrivateAccess = "true"))
@@ -55,6 +59,9 @@ private:
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Player", meta = (AllowPrivateAccess = "true"))
 	bool bPreRoundReady = false;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Lobby", meta = (AllowPrivateAccess = "true"))
+	int32 LobbyTeamId = INDEX_NONE;
 
 	UFUNCTION()
 	void OnRep_AssignedRole();

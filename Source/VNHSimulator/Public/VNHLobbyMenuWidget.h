@@ -5,6 +5,7 @@
 #include "Components/Button.h"
 #include "Interfaces/OnlineFriendsInterface.h"
 #include "Interfaces/OnlineSessionInterface.h"
+#include "PairPressure/PPGameplayTypes.h"
 #include "VNHLobbyMenuWidget.generated.h"
 
 class UBorder;
@@ -76,6 +77,12 @@ private:
 	void UpdateLobbyStartPrompt();
 	void RefreshLobbyLabels();
 	void RefreshPlayers();
+	void RefreshMatchSetupPresentation();
+	void RefreshTeamPresentation();
+	void RefreshHostJoinedPresentation();
+	void RefreshMatchSetupDialogSelection();
+	void SetMatchSetupDialogVisible(bool bVisible);
+	void ApplyLobbyHudVisibility();
 	void RequestFriendsList();
 	void HandleReadFriendsListComplete(int32 LocalUserNum, bool bWasSuccessful, const FString& ListName, const FString& ErrorString);
 	void RebuildFriendsList();
@@ -89,6 +96,60 @@ private:
 	void HandleCustomizeClicked();
 
 	UFUNCTION()
+	void HandleMatchSetupClicked();
+
+	UFUNCTION()
+	void HandleCloseMatchSetupClicked();
+
+	UFUNCTION()
+	void HandleSaveMatchSetupClicked();
+
+	UFUNCTION()
+	void HandleModeTogetherClicked();
+
+	UFUNCTION()
+	void HandleModeAttachedClicked();
+
+	UFUNCTION()
+	void HandleCoursePresetClicked();
+
+	UFUNCTION()
+	void HandleCourseBuildClicked();
+
+	UFUNCTION()
+	void HandleCourseObstacleClicked();
+
+	UFUNCTION()
+	void HandleMapFactoryClicked();
+
+	UFUNCTION()
+	void HandleMapSkyClicked();
+
+	UFUNCTION()
+	void HandleMapJungleClicked();
+
+	UFUNCTION()
+	void HandleMapPipeClicked();
+
+	UFUNCTION()
+	void HandleOrangeTeamClicked();
+
+	UFUNCTION()
+	void HandleBlueTeamClicked();
+
+	UFUNCTION()
+	void HandleGreenTeamClicked();
+
+	UFUNCTION()
+	void HandleMascotClicked();
+
+	UFUNCTION()
+	void HandleHideHudClicked();
+
+	UFUNCTION()
+	void HandlePrimaryActionClicked();
+
+	UFUNCTION()
 	void HandleCloseInviteClicked();
 
 	UFUNCTION()
@@ -100,6 +161,33 @@ private:
 	TWeakObjectPtr<UTextBlock> LobbyCodeText;
 	TWeakObjectPtr<UTextBlock> PlayerCountText;
 	TWeakObjectPtr<UTextBlock> PingText;
+	TWeakObjectPtr<UCanvasPanel> LobbyHudLayer;
+	TWeakObjectPtr<UTextBlock> HudHiddenHint;
+	TWeakObjectPtr<UTextBlock> ModeValueText;
+	TWeakObjectPtr<UTextBlock> SetupValueText;
+	TWeakObjectPtr<UButton> MatchSetupButton;
+	TWeakObjectPtr<UTextBlock> MatchSetupButtonLabel;
+	TWeakObjectPtr<UButton> PrimaryActionButton;
+	TWeakObjectPtr<UTextBlock> PrimaryActionTitleText;
+	TWeakObjectPtr<UTextBlock> PrimaryActionSubtitleText;
+	TWeakObjectPtr<UButton> OrangeTeamButton;
+	TWeakObjectPtr<UButton> BlueTeamButton;
+	TWeakObjectPtr<UButton> GreenTeamButton;
+	TWeakObjectPtr<UTextBlock> OrangeTeamCountText;
+	TWeakObjectPtr<UTextBlock> BlueTeamCountText;
+	TWeakObjectPtr<UTextBlock> GreenTeamCountText;
+	TWeakObjectPtr<UButton> MascotButton;
+	TWeakObjectPtr<UBorder> MatchSetupDialog;
+	TWeakObjectPtr<UButton> ModeTogetherButton;
+	TWeakObjectPtr<UButton> ModeAttachedButton;
+	TWeakObjectPtr<UButton> CoursePresetButton;
+	TWeakObjectPtr<UButton> CourseBuildButton;
+	TWeakObjectPtr<UButton> CourseObstacleButton;
+	TWeakObjectPtr<UButton> MapFactoryButton;
+	TWeakObjectPtr<UButton> MapSkyButton;
+	TWeakObjectPtr<UButton> MapJungleButton;
+	TWeakObjectPtr<UButton> MapPipeButton;
+	TWeakObjectPtr<UWidget> PresetMapsSection;
 	TWeakObjectPtr<UBorder> LobbyStartPromptPanel;
 	TWeakObjectPtr<UTextBlock> LobbyStartPromptText;
 	TWeakObjectPtr<UCircularThrobber> LobbyStartProgressCircle;
@@ -126,4 +214,8 @@ private:
 	FVector2D CachedActionPosition = FVector2D::ZeroVector;
 	FVector2D CachedActionSize = FVector2D::ZeroVector;
 	bool bUsingDesignerLobbyHud = false;
+	bool bLobbyHudHidden = false;
+	EPPGameMode PendingGameMode = EPPGameMode::BringYourIdiotHome;
+	EPPLobbyCourseType PendingCourseType = EPPLobbyCourseType::PresetMaps;
+	EPPPresetMap PendingPresetMap = EPPPresetMap::FactoryFiasco;
 };

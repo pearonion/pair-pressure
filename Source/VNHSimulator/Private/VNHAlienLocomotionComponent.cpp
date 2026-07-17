@@ -23,9 +23,9 @@ void UVNHAlienLocomotionComponent::BeginPlay()
 		OwnerCharacter->bUseControllerRotationYaw = false;
 		if (MovementComponent.IsValid())
 		{
-			MovementComponent->bOrientRotationToMovement = false;
-			MovementComponent->bUseControllerDesiredRotation = true;
-			MovementComponent->RotationRate = FRotator(0.0f, GetBodyTurnRateDegrees(), 0.0f);
+			MovementComponent->bOrientRotationToMovement = true;
+			MovementComponent->bUseControllerDesiredRotation = false;
+			MovementComponent->RotationRate = FRotator(0.0f, GetBodyTurnRateDegrees() * GrabTurnMultiplier, 0.0f);
 		}
 	}
 }
@@ -74,6 +74,35 @@ void UVNHAlienLocomotionComponent::ClearInput()
 	LocomotionState.bFastWalkRequested = false;
 }
 
+void UVNHAlienLocomotionComponent::SetCameraOrbitActive(bool bNewCameraOrbitActive)
+{
+	bCameraOrbitActive = bNewCameraOrbitActive;
+	if (MovementComponent.IsValid())
+	{
+		MovementComponent->bOrientRotationToMovement = true;
+		MovementComponent->bUseControllerDesiredRotation = false;
+		MovementComponent->RotationRate = FRotator(0.0f, GetBodyTurnRateDegrees() * GrabTurnMultiplier, 0.0f);
+	}
+}
+
+void UVNHAlienLocomotionComponent::SetGrabMovementMultiplier(float NewGrabMovementMultiplier)
+{
+	GrabMovementMultiplier = FMath::Clamp(NewGrabMovementMultiplier, 0.0f, 1.0f);
+	if (MovementComponent.IsValid())
+	{
+		MovementComponent->MaxWalkSpeed = GetWalkSpeed() * GrabMovementMultiplier;
+	}
+}
+
+void UVNHAlienLocomotionComponent::SetGrabTurnMultiplier(float NewGrabTurnMultiplier)
+{
+	GrabTurnMultiplier = FMath::Clamp(NewGrabTurnMultiplier, 0.05f, 1.0f);
+	if (MovementComponent.IsValid())
+	{
+		MovementComponent->RotationRate = FRotator(0.0f, GetBodyTurnRateDegrees() * GrabTurnMultiplier, 0.0f);
+	}
+}
+
 FString UVNHAlienLocomotionComponent::DescribeLocomotionState() const
 {
 	return FString::Printf(
@@ -91,6 +120,11 @@ FString UVNHAlienLocomotionComponent::DescribeLocomotionState() const
 		LocomotionState.DesiredWorldDirection.X,
 		LocomotionState.DesiredWorldDirection.Y,
 		LocomotionState.DesiredWorldDirection.Z);
+}
+
+FVector UVNHAlienLocomotionComponent::GetCameraRelativeMoveDirection() const
+{
+	return BuildCameraRelativeMoveDirection();
 }
 
 bool UVNHAlienLocomotionComponent::ShouldDriveLocomotion() const
@@ -112,8 +146,10 @@ FVector UVNHAlienLocomotionComponent::BuildCameraRelativeMoveDirection() const
 	}
 
 	const AController* Controller = OwnerCharacter->GetController();
-	const FRotator ControlRotation = Controller ? Controller->GetControlRotation() : OwnerCharacter->GetActorRotation();
-	const FRotator YawRotation(0.0f, ControlRotation.Yaw, 0.0f);
+	const FRotator ReferenceRotation = Controller
+		? Controller->GetControlRotation()
+		: OwnerCharacter->GetActorRotation();
+	const FRotator YawRotation(0.0f, ReferenceRotation.Yaw, 0.0f);
 
 	const FVector Forward = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
 	const FVector Right = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
@@ -186,7 +222,8 @@ void UVNHAlienLocomotionComponent::UpdateSpeed(float DeltaTime, const FVector& D
 
 void UVNHAlienLocomotionComponent::ApplyMovement(const FVector& DesiredDirection)
 {
-	if (!OwnerCharacter.IsValid() || !MovementComponent.IsValid() || DesiredDirection.IsNearlyZero())
+	if (!OwnerCharacter.IsValid() || !MovementComponent.IsValid() || DesiredDirection.IsNearlyZero()
+		|| GrabMovementMultiplier <= KINDA_SMALL_NUMBER)
 	{
 		return;
 	}
@@ -196,14 +233,22 @@ void UVNHAlienLocomotionComponent::ApplyMovement(const FVector& DesiredDirection
 	const FVector UnstableDirection = (DesiredDirection + DriftRight * DriftAmount).GetSafeNormal();
 	const float UnevenStride = 1.0f + FMath::Sin(WobblePhaseRadians * 1.7f) * UnevenStrideStrength * LocomotionState.Instability;
 
-	MovementComponent->MaxWalkSpeed = FMath::Max(LocomotionState.CurrentSpeed * UnevenStride, 1.0f);
+	MovementComponent->MaxWalkSpeed = FMath::Max(LocomotionState.CurrentSpeed * UnevenStride * GrabMovementMultiplier, 1.0f);
 	OwnerCharacter->AddMovementInput(UnstableDirection, 1.0f);
 }
 
-void UVNHAlienLocomotionComponent::UpdateBodyFacing(float DeltaTime, const FVector& DesiredDirection)
+void UVNHAlienLocomotionComponent::UpdateBodyFacing(float /*DeltaTime*/, const FVector& DesiredDirection)
 {
 	if (!OwnerCharacter.IsValid() || !MovementComponent.IsValid())
 	{
+		return;
+	}
+
+	if (GrabMovementMultiplier <= KINDA_SMALL_NUMBER)
+	{
+		LocomotionState.BodyYawDeltaDegrees = FMath::FindDeltaAngleDegrees(
+			OwnerCharacter->GetActorRotation().Yaw,
+			OwnerCharacter->GetControlRotation().Yaw);
 		return;
 	}
 
@@ -215,25 +260,12 @@ void UVNHAlienLocomotionComponent::UpdateBodyFacing(float DeltaTime, const FVect
 		return;
 	}
 
-	AController* Controller = OwnerCharacter->GetController();
-	if (!Controller)
-	{
-		return;
-	}
-
-	const FRotator CurrentControlRotation = Controller->GetControlRotation();
 	const float WobbleYaw = !DesiredDirection.IsNearlyZero() ? LocomotionState.WobbleDegrees : 0.0f;
-	const FRotator TargetControlRotation(CurrentControlRotation.Pitch, DesiredDirection.Rotation().Yaw + WobbleYaw, 0.0f);
-	const FRotator NewControlRotation = FMath::RInterpConstantTo(
-		CurrentControlRotation,
-		TargetControlRotation,
-		DeltaTime,
-		GetBodyTurnRateDegrees());
-	Controller->SetControlRotation(NewControlRotation);
-	MovementComponent->RotationRate = FRotator(0.0f, GetBodyTurnRateDegrees(), 0.0f);
+	const float TargetBodyYaw = DesiredDirection.Rotation().Yaw + WobbleYaw;
+	MovementComponent->RotationRate = FRotator(0.0f, GetBodyTurnRateDegrees() * GrabTurnMultiplier, 0.0f);
 	LocomotionState.BodyYawDeltaDegrees = FMath::FindDeltaAngleDegrees(
 		OwnerCharacter->GetActorRotation().Yaw,
-		TargetControlRotation.Yaw);
+		TargetBodyYaw);
 }
 
 void UVNHAlienLocomotionComponent::UpdateAnimationRate()

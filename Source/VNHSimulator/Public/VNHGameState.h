@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameStateBase.h"
+#include "PairPressure/PPGameplayTypes.h"
 #include "VNHGameplayTypes.h"
 #include "VNHGameState.generated.h"
 
@@ -57,6 +58,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "VNH|Round")
 	AActor* GetPossessedShopper() const { return PossessedShopper; }
 
+	UFUNCTION(BlueprintPure, Category = "VNH|Lobby")
+	EPPGameMode GetLobbyGameMode() const { return LobbyGameMode; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Lobby")
+	EPPLobbyCourseType GetLobbyCourseType() const { return LobbyCourseType; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Lobby")
+	EPPPresetMap GetLobbyPresetMap() const { return LobbyPresetMap; }
+
 	void SetRoundPhase(EVNHRoundPhase NewPhase, float NewPhaseEndsAtServerTime);
 	void SetRoundNumber(int32 NewRoundNumber);
 	void SetTestsRemaining(int32 NewTestsRemaining);
@@ -66,6 +76,7 @@ public:
 	void SetActivePublicTest(EVNHPublicTestType NewActivePublicTest);
 	void SetAccusationResult(const FVNHAccusationResult& NewAccusationResult);
 	void SetPossessedShopper(AActor* NewPossessedShopper);
+	void SetLobbyMatchSetup(EPPGameMode NewGameMode, EPPLobbyCourseType NewCourseType, EPPPresetMap NewPresetMap);
 	void SetHumanDrillPrompt(EVNHHumanDrillAction Action, float PromptEndsAtServerTime, float CooldownEndsAtServerTime);
 	void SetFakeDrillPrompt(float PromptEndsAtServerTime);
 	void SetEveryonePointPrompt(float PromptEndsAtServerTime, float CooldownEndsAtServerTime, int32 UsesThisRound);
@@ -105,6 +116,15 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_HumanDrillPrompt, BlueprintReadOnly, Category = "VNH|Human Drill", meta = (AllowPrivateAccess = "true"))
 	FVNHHumanDrillPrompt HumanDrillPrompt;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Lobby", meta = (AllowPrivateAccess = "true"))
+	EPPGameMode LobbyGameMode = EPPGameMode::BringYourIdiotHome;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Lobby", meta = (AllowPrivateAccess = "true"))
+	EPPLobbyCourseType LobbyCourseType = EPPLobbyCourseType::PresetMaps;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Lobby", meta = (AllowPrivateAccess = "true"))
+	EPPPresetMap LobbyPresetMap = EPPPresetMap::FactoryFiasco;
 
 	UFUNCTION()
 	void OnRep_RoundPhase();

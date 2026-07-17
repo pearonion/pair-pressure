@@ -17,7 +17,8 @@ void UPPImpactSensorComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (!GetWorld() || !GetWorld()->GetMapName().Contains(TEXT("PP_")))
+	if (!GetWorld() || (!GetWorld()->GetMapName().Contains(TEXT("PP_"))
+		&& !GetWorld()->GetMapName().Contains(TEXT("Lobby"))))
 	{
 		return;
 	}
@@ -75,7 +76,14 @@ void UPPImpactSensorComponent::HandleComponentHit(
 		return;
 	}
 
-	const float Severity = CalculateImpactSeverity(HitComponent, OtherComponent, NormalImpulse, Hit);
+	float Severity = CalculateImpactSeverity(HitComponent, OtherComponent, NormalImpulse, Hit);
+	const bool bSpinnerImpact = OtherActor
+		&& (OtherActor->ActorHasTag(TEXT("PP_SpinnerObstacle"))
+			|| OtherActor->GetName().Contains(TEXT("Spinner_V2"), ESearchCase::IgnoreCase));
+	if (bSpinnerImpact)
+	{
+		Severity = FMath::Max(Severity, 60.0f);
+	}
 	if (Severity < MinimumReportedSeverity)
 	{
 		return;
@@ -87,7 +95,7 @@ void UPPImpactSensorComponent::HandleComponentHit(
 	ImpactData.ImpactDirection = NormalImpulse.IsNearlyZero() ? -Hit.ImpactNormal : NormalImpulse.GetSafeNormal();
 	ImpactData.BodyRegion = Hit.BoneName;
 	ImpactData.InstigatorActor = OtherActor;
-	ImpactData.bHeavyObstacle = OtherActor && OtherActor->ActorHasTag(HeavyObstacleTag);
+	ImpactData.bHeavyObstacle = bSpinnerImpact || (OtherActor && OtherActor->ActorHasTag(HeavyObstacleTag));
 	PhysicalState->ReceiveImpactData_Implementation(ImpactData);
 	RememberImpact(OtherActor);
 }

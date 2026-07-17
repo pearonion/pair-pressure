@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
+#include "PairPressure/PPGameplayTypes.h"
 #include "VNHGameplayTypes.h"
 #include "VNHPlayerController.generated.h"
 
@@ -29,6 +30,7 @@ public:
 	AVNHPlayerController();
 
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void AcknowledgePossession(APawn* PossessedPawn) override;
 	virtual void SetupInputComponent() override;
 	virtual void PlayerTick(float DeltaTime) override;
@@ -123,6 +125,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Lobby")
 	void RequestStartRoundFromLobby();
 
+	UFUNCTION(BlueprintCallable, Category = "VNH|Lobby")
+	void RequestLobbyMatchSetup(EPPGameMode RequestedGameMode, EPPLobbyCourseType RequestedCourseType, EPPPresetMap RequestedPresetMap);
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Lobby")
+	void RequestLobbyTeam(int32 RequestedTeamId);
+
 	UFUNCTION(BlueprintCallable, Category = "VNH|Customization")
 	void ApplySavedCharacterCustomization();
 
@@ -164,6 +172,12 @@ public:
 
 	UFUNCTION(Server, Reliable)
 	void ServerRequestStartRoundFromLobby();
+
+	UFUNCTION(Server, Reliable)
+	void ServerSetLobbyMatchSetup(EPPGameMode RequestedGameMode, EPPLobbyCourseType RequestedCourseType, EPPPresetMap RequestedPresetMap);
+
+	UFUNCTION(Server, Reliable)
+	void ServerSetLobbyTeam(int32 RequestedTeamId);
 
 	UFUNCTION(Server, Reliable)
 	void ServerSetCharacterCustomization(const FVNHCharacterCustomization& Customization);
@@ -208,6 +222,12 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Input|Alien")
 	TObjectPtr<UInputAction> AlienActNaturalAction;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Pair Pressure|Input")
+	TObjectPtr<UInputAction> GrabAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputMappingContext> GrabInputMappingContext;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VNH|Input|Alien")
 	bool bEnablePolledAlienKeyboardInput = true;
 
@@ -222,6 +242,9 @@ private:
 
 	void UpdateAlienInputMapping();
 	void BindAlienInputActions();
+	void InitializePairPressureGrabInput();
+	void UpdatePairPressureGrabInputMapping();
+	void BindPairPressureGrabInputAction();
 	void HandleAlienMoveInput(const struct FInputActionValue& Value);
 	void HandleAlienMoveStopped();
 	void HandleAlienFastWalkStarted();
@@ -232,6 +255,11 @@ private:
 	void HandleLookUpAxis(float Value);
 	void HandleCursorXAxis(float Value);
 	void HandleCursorYAxis(float Value);
+	void HandleCameraOrbitStarted();
+	void HandleCameraOrbitStopped();
+	void HandleCameraOrbitReset();
+	void HandlePairPressureDebugRagdollPressed();
+	void HandlePairPressureDebugRecoveryPressed();
 	void HandleTargetFocusPressed();
 	void HandleInspectPressed();
 	void HandlePointPressed();
@@ -254,8 +282,12 @@ private:
 	void HandlePairPressureDivePressed();
 	void HandlePairPressureAssistPressed();
 	void HandlePairPressureAssistReleased();
+	void HandlePairPressureGrabPressed();
+	void HandlePairPressureGrabReleased();
 	void HandleThrowChargePressed();
 	void HandleThrowChargeReleased();
+	void UpdateThrowChargeIndicator();
+	void RemoveThrowChargeIndicator();
 	void HandleInteractPressed();
 	void UpdateLobbyStartHold(float DeltaTime);
 	void ResetLobbyStartHold();
@@ -341,6 +373,9 @@ private:
 	void PerformDrop(AVNHShopperCharacter* Shopper);
 
 	bool bAlienInputMappingApplied = false;
+	bool bGrabInputMappingApplied = false;
+	bool bGrabInputActionBound = false;
+	bool bPairPressureGrabInputDown = false;
 	FVector2D LegacyAlienMoveInput = FVector2D::ZeroVector;
 	FVector2D LastPushedLegacyAlienMoveInput = FVector2D::ZeroVector;
 	FVector2D LastEnhancedAlienMoveInput = FVector2D::ZeroVector;
@@ -363,6 +398,7 @@ private:
 	bool bWasPolledMarkDown = false;
 	bool bWasPolledFakeAccuseDown = false;
 	bool bThrowInputDown = false;
+	bool bCameraOrbitActive = false;
 	bool bThrowChargeActive = false;
 	float ThrowChargeStartedAtSeconds = 0.0f;
 	bool bLobbyStartHoldActive = false;

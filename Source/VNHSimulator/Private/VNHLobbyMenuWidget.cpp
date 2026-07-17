@@ -38,8 +38,10 @@
 #include "OnlineSubsystemUtils.h"
 #include "Styling/SlateBrush.h"
 #include "VNHGameInstance.h"
+#include "VNHGameState.h"
 #include "VNHLog.h"
 #include "VNHPlayerController.h"
+#include "VNHPlayerState.h"
 
 namespace
 {
@@ -48,6 +50,9 @@ const FLinearColor Panel(0.005f, 0.035f, 0.04f, 0.82f);
 const FLinearColor PanelStrong(0.005f, 0.025f, 0.03f, 0.94f);
 const FLinearColor Muted(0.62f, 0.70f, 0.70f, 0.95f);
 const FLinearColor White(0.94f, 0.96f, 0.95f, 1.0f);
+const FLinearColor LobbyOrange(1.0f, 0.42f, 0.02f, 1.0f);
+const FLinearColor LobbyBlue(0.02f, 0.38f, 0.88f, 1.0f);
+const FLinearColor LobbyGreen(0.12f, 0.62f, 0.20f, 1.0f);
 constexpr int32 DefaultLobbyMaxPlayers = 8;
 
 UFont* GetLobbyFont()
@@ -88,6 +93,59 @@ FButtonStyle ButtonStyle(const bool bDisabled = false)
 	Style.NormalPadding = FMargin(14.0f, 8.0f);
 	Style.PressedPadding = FMargin(14.0f, 9.0f, 14.0f, 7.0f);
 	return Style;
+}
+
+FButtonStyle TeamButtonStyle(const FLinearColor& TeamColor, const bool bSelected)
+{
+	const FLinearColor NormalColor = bSelected ? TeamColor : FLinearColor(TeamColor.R * 0.28f, TeamColor.G * 0.28f, TeamColor.B * 0.28f, 0.94f);
+	const FLinearColor HoverColor = FLinearColor(
+		FMath::Min(TeamColor.R * 0.72f + 0.08f, 1.0f),
+		FMath::Min(TeamColor.G * 0.72f + 0.08f, 1.0f),
+		FMath::Min(TeamColor.B * 0.72f + 0.08f, 1.0f),
+		1.0f);
+	FButtonStyle Style;
+	Style.SetNormal(BoxBrush(NormalColor));
+	Style.SetHovered(BoxBrush(HoverColor));
+	Style.SetPressed(BoxBrush(TeamColor));
+	Style.SetDisabled(BoxBrush(FLinearColor(NormalColor.R, NormalColor.G, NormalColor.B, 0.46f)));
+	Style.NormalPadding = FMargin(16.0f, 11.0f);
+	Style.PressedPadding = FMargin(16.0f, 12.0f, 16.0f, 10.0f);
+	return Style;
+}
+
+FString LobbyModeText(EPPGameMode LobbyMode)
+{
+	return LobbyMode == EPPGameMode::AttachedAtTheHip ? TEXT("Attached at the Hip") : TEXT("Together, United");
+}
+
+FString LobbyCourseText(EPPLobbyCourseType LobbyCourse)
+{
+	switch (LobbyCourse)
+	{
+	case EPPLobbyCourseType::BuildForOtherTeam:
+		return TEXT("Build for Other Team");
+	case EPPLobbyCourseType::OneCustomObstacle:
+		return TEXT("One Custom Obstacle");
+	case EPPLobbyCourseType::PresetMaps:
+	default:
+		return TEXT("Preset Maps");
+	}
+}
+
+FString LobbyPresetMapText(EPPPresetMap LobbyMap)
+{
+	switch (LobbyMap)
+	{
+	case EPPPresetMap::SkyScramble:
+		return TEXT("Sky Scramble");
+	case EPPPresetMap::JungleJam:
+		return TEXT("Jungle Jam");
+	case EPPPresetMap::PipePanic:
+		return TEXT("Pipe Panic");
+	case EPPPresetMap::FactoryFiasco:
+	default:
+		return TEXT("Factory Fiasco");
+	}
 }
 
 FSlateChildSize FillSize(const float Value = 1.0f)
@@ -318,6 +376,22 @@ void UVNHLobbyMenuWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 
 FReply UVNHLobbyMenuWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
 {
+	if (InKeyEvent.GetKey() == EKeys::H)
+	{
+		bLobbyHudHidden = !bLobbyHudHidden;
+		ApplyLobbyHudVisibility();
+		return FReply::Handled();
+	}
+	if (InKeyEvent.GetKey() == EKeys::C)
+	{
+		HandleMascotClicked();
+		return FReply::Handled();
+	}
+	if (InKeyEvent.GetKey() == EKeys::Escape && MatchSetupDialog.IsValid() && MatchSetupDialog->GetVisibility() == ESlateVisibility::Visible)
+	{
+		SetMatchSetupDialogVisible(false);
+		return FReply::Handled();
+	}
 	if (InKeyEvent.GetKey() == EKeys::Escape && InviteDialog.IsValid() && InviteDialog->GetVisibility() == ESlateVisibility::Visible)
 	{
 		SetInviteDialogVisible(false);
@@ -359,9 +433,12 @@ bool UVNHLobbyMenuWidget::HasDesignerLobbyHud() const
 {
 	return WidgetTree
 		&& WidgetTree->RootWidget
+		&& WidgetTree->FindWidget(TEXT("LobbyHudLayer"))
 		&& WidgetTree->FindWidget(TEXT("LobbyNameText"))
 		&& WidgetTree->FindWidget(TEXT("PlayerRowsBox"))
-		&& WidgetTree->FindWidget(TEXT("CustomizeButton"));
+		&& WidgetTree->FindWidget(TEXT("InviteButton"))
+		&& WidgetTree->FindWidget(TEXT("MatchSetupButton"))
+		&& WidgetTree->FindWidget(TEXT("OrangeTeamButton"));
 }
 
 bool UVNHLobbyMenuWidget::BindDesignerLobbyHud()
@@ -372,6 +449,8 @@ bool UVNHLobbyMenuWidget::BindDesignerLobbyHud()
 	}
 
 	LobbyNameText = Cast<UTextBlock>(GetWidgetFromName(TEXT("LobbyNameText")));
+	LobbyHudLayer = Cast<UCanvasPanel>(GetWidgetFromName(TEXT("LobbyHudLayer")));
+	HudHiddenHint = Cast<UTextBlock>(GetWidgetFromName(TEXT("HudHiddenHint")));
 	LobbySubtitleText = Cast<UTextBlock>(GetWidgetFromName(TEXT("LobbySubtitleText")));
 	LobbyStatusText = Cast<UTextBlock>(GetWidgetFromName(TEXT("LobbyStatusText")));
 	LobbyCodeText = Cast<UTextBlock>(GetWidgetFromName(TEXT("LobbyCodeText")));
@@ -386,6 +465,31 @@ bool UVNHLobbyMenuWidget::BindDesignerLobbyHud()
 	SearchTextBox = Cast<UEditableTextBox>(GetWidgetFromName(TEXT("InviteSearchTextBox")));
 	FriendsScrollBox = Cast<UScrollBox>(GetWidgetFromName(TEXT("FriendsScrollBox")));
 	InviteStatusText = Cast<UTextBlock>(GetWidgetFromName(TEXT("InviteStatusText")));
+	ModeValueText = Cast<UTextBlock>(GetWidgetFromName(TEXT("ModeValueText")));
+	SetupValueText = Cast<UTextBlock>(GetWidgetFromName(TEXT("SetupValueText")));
+	MatchSetupButton = Cast<UButton>(GetWidgetFromName(TEXT("MatchSetupButton")));
+	MatchSetupButtonLabel = Cast<UTextBlock>(GetWidgetFromName(TEXT("MatchSetupButton_Label")));
+	PrimaryActionButton = Cast<UButton>(GetWidgetFromName(TEXT("PrimaryActionButton")));
+	PrimaryActionTitleText = Cast<UTextBlock>(GetWidgetFromName(TEXT("PrimaryActionTitleText")));
+	PrimaryActionSubtitleText = Cast<UTextBlock>(GetWidgetFromName(TEXT("PrimaryActionSubtitleText")));
+	OrangeTeamButton = Cast<UButton>(GetWidgetFromName(TEXT("OrangeTeamButton")));
+	BlueTeamButton = Cast<UButton>(GetWidgetFromName(TEXT("BlueTeamButton")));
+	GreenTeamButton = Cast<UButton>(GetWidgetFromName(TEXT("GreenTeamButton")));
+	OrangeTeamCountText = Cast<UTextBlock>(GetWidgetFromName(TEXT("OrangeTeamCountText")));
+	BlueTeamCountText = Cast<UTextBlock>(GetWidgetFromName(TEXT("BlueTeamCountText")));
+	GreenTeamCountText = Cast<UTextBlock>(GetWidgetFromName(TEXT("GreenTeamCountText")));
+	MascotButton = Cast<UButton>(GetWidgetFromName(TEXT("MascotButton")));
+	MatchSetupDialog = Cast<UBorder>(GetWidgetFromName(TEXT("MatchSetupDialog")));
+	ModeTogetherButton = Cast<UButton>(GetWidgetFromName(TEXT("ModeTogetherButton")));
+	ModeAttachedButton = Cast<UButton>(GetWidgetFromName(TEXT("ModeAttachedButton")));
+	CoursePresetButton = Cast<UButton>(GetWidgetFromName(TEXT("CoursePresetButton")));
+	CourseBuildButton = Cast<UButton>(GetWidgetFromName(TEXT("CourseBuildButton")));
+	CourseObstacleButton = Cast<UButton>(GetWidgetFromName(TEXT("CourseObstacleButton")));
+	MapFactoryButton = Cast<UButton>(GetWidgetFromName(TEXT("MapFactoryButton")));
+	MapSkyButton = Cast<UButton>(GetWidgetFromName(TEXT("MapSkyButton")));
+	MapJungleButton = Cast<UButton>(GetWidgetFromName(TEXT("MapJungleButton")));
+	MapPipeButton = Cast<UButton>(GetWidgetFromName(TEXT("MapPipeButton")));
+	PresetMapsSection = GetWidgetFromName(TEXT("PresetMapsSection"));
 
 	LobbyNameSlot = LobbyNameText.IsValid() ? Cast<UCanvasPanelSlot>(LobbyNameText->Slot) : nullptr;
 	LobbyStatusSlot = LobbyStatusText.IsValid() ? Cast<UCanvasPanelSlot>(LobbyStatusText->Slot) : nullptr;
@@ -399,10 +503,29 @@ bool UVNHLobbyMenuWidget::BindDesignerLobbyHud()
 	{
 		InviteButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleInviteClicked);
 	}
-	if (UButton* CustomizeButton = Cast<UButton>(GetWidgetFromName(TEXT("CustomizeButton"))))
+	if (UButton* PlayerInviteButton = Cast<UButton>(GetWidgetFromName(TEXT("PlayerInviteButton"))))
 	{
-		CustomizeButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleCustomizeClicked);
+		PlayerInviteButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleInviteClicked);
 	}
+	if (MatchSetupButton.IsValid()) MatchSetupButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleMatchSetupClicked);
+	if (PrimaryActionButton.IsValid()) PrimaryActionButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandlePrimaryActionClicked);
+	if (OrangeTeamButton.IsValid()) OrangeTeamButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleOrangeTeamClicked);
+	if (BlueTeamButton.IsValid()) BlueTeamButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleBlueTeamClicked);
+	if (GreenTeamButton.IsValid()) GreenTeamButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleGreenTeamClicked);
+	if (MascotButton.IsValid()) MascotButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleMascotClicked);
+	if (UButton* HideHudButton = Cast<UButton>(GetWidgetFromName(TEXT("HideHudButton")))) HideHudButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleHideHudClicked);
+	if (UButton* CloseSetupButton = Cast<UButton>(GetWidgetFromName(TEXT("CloseMatchSetupButton")))) CloseSetupButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleCloseMatchSetupClicked);
+	if (UButton* CancelSetupButton = Cast<UButton>(GetWidgetFromName(TEXT("CancelMatchSetupButton")))) CancelSetupButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleCloseMatchSetupClicked);
+	if (UButton* SaveSetupButton = Cast<UButton>(GetWidgetFromName(TEXT("SaveMatchSetupButton")))) SaveSetupButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleSaveMatchSetupClicked);
+	if (ModeTogetherButton.IsValid()) ModeTogetherButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleModeTogetherClicked);
+	if (ModeAttachedButton.IsValid()) ModeAttachedButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleModeAttachedClicked);
+	if (CoursePresetButton.IsValid()) CoursePresetButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleCoursePresetClicked);
+	if (CourseBuildButton.IsValid()) CourseBuildButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleCourseBuildClicked);
+	if (CourseObstacleButton.IsValid()) CourseObstacleButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleCourseObstacleClicked);
+	if (MapFactoryButton.IsValid()) MapFactoryButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleMapFactoryClicked);
+	if (MapSkyButton.IsValid()) MapSkyButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleMapSkyClicked);
+	if (MapJungleButton.IsValid()) MapJungleButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleMapJungleClicked);
+	if (MapPipeButton.IsValid()) MapPipeButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleMapPipeClicked);
 	if (UButton* CloseInviteButton = Cast<UButton>(GetWidgetFromName(TEXT("CloseInviteButton"))))
 	{
 		CloseInviteButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleCloseInviteClicked);
@@ -415,6 +538,11 @@ bool UVNHLobbyMenuWidget::BindDesignerLobbyHud()
 	{
 		Dialog->SetVisibility(ESlateVisibility::Collapsed);
 	}
+	if (UBorder* SetupDialog = MatchSetupDialog.Get())
+	{
+		SetupDialog->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	ApplyLobbyHudVisibility();
 
 	UE_LOG(LogVNH, Display, TEXT("LobbyMenuWidget: bound designer WBP_LobbyMenu widgets."));
 	return true;
@@ -733,24 +861,17 @@ void UVNHLobbyMenuWidget::RefreshLobbyLabels()
 	const UWorld* World = GetWorld();
 	const FString UrlOptions = World ? World->URL.ToString() : FString();
 	const FString ServerName = UGameplayStatics::ParseOption(UrlOptions, TEXT("ServerName"));
-	const AVNHPlayerController* VNHPlayerController = Cast<AVNHPlayerController>(GetOwningPlayer());
-	const bool bIsHost = VNHPlayerController && VNHPlayerController->IsLocalLobbyHost();
-	const FString LobbyName = ServerName.IsEmpty() ? (bIsHost ? TEXT("HOST LOBBY") : TEXT("JOINED LOBBY")) : ServerName.ToUpper();
 	if (UTextBlock* TextBlock = LobbyNameText.Get())
 	{
-		TextBlock->SetText(FText::FromString(LobbyName));
+		TextBlock->SetText(NSLOCTEXT("VNH", "TwoToTangleLobbyTitle", "LOBBY"));
 	}
 	if (UTextBlock* TextBlock = LobbySubtitleText.Get())
 	{
-		TextBlock->SetText(bIsHost
-			? NSLOCTEXT("VNH", "LobbyHostStartSubtitle", "Start from the console when ready.")
-			: NSLOCTEXT("VNH", "LobbyClientStartSubtitle", "Waiting for the host to start from the console."));
+		TextBlock->SetText(FText::FromString(ServerName.IsEmpty() ? TEXT("TWO TO TANGLE") : ServerName.ToUpper()));
 	}
 	if (UTextBlock* TextBlock = LobbyStatusText.Get())
 	{
-		TextBlock->SetText(bIsHost
-			? NSLOCTEXT("VNH", "LobbyOpenStatus", "LOBBY OPEN")
-			: NSLOCTEXT("VNH", "LobbyJoinedStatus", "JOINED LOBBY"));
+		TextBlock->SetText(NSLOCTEXT("VNH", "LobbyWaitingForHost", "Waiting for host to start"));
 	}
 	if (UTextBlock* TextBlock = LobbyCodeText.Get())
 	{
@@ -771,7 +892,7 @@ void UVNHLobbyMenuWidget::RefreshLobbyLabels()
 	const int32 PlayerCount = GameState ? GameState->PlayerArray.Num() : 1;
 	if (UTextBlock* TextBlock = PlayerCountText.Get())
 	{
-		TextBlock->SetText(FText::FromString(FString::Printf(TEXT("%d / %d"), PlayerCount, CachedMaxPlayers)));
+		TextBlock->SetText(FText::FromString(FString::Printf(TEXT("%d / %d PLAYERS"), PlayerCount, CachedMaxPlayers)));
 	}
 
 	const APlayerController* OwningPlayerController = GetOwningPlayer();
@@ -800,6 +921,10 @@ void UVNHLobbyMenuWidget::RefreshLobbyLabels()
 			PingBarSlot->SetVerticalAlignment(VAlign_Bottom);
 		}
 	}
+
+	RefreshMatchSetupPresentation();
+	RefreshTeamPresentation();
+	RefreshHostJoinedPresentation();
 }
 
 void UVNHLobbyMenuWidget::RefreshPlayers()
@@ -811,24 +936,233 @@ void UVNHLobbyMenuWidget::RefreshPlayers()
 	}
 	Rows->ClearChildren();
 
-	const AGameStateBase* GameState = GetWorld() ? GetWorld()->GetGameState() : nullptr;
-	const int32 PlayerArrayCount = GameState ? GameState->PlayerArray.Num() : 0;
-	for (int32 Index = 0; Index < PlayerArrayCount; ++Index)
+	const AGameStateBase* LobbyState = GetWorld() ? GetWorld()->GetGameState() : nullptr;
+	const APlayerState* LocalPlayerState = GetOwningPlayer() ? GetOwningPlayer()->PlayerState : nullptr;
+	const int32 PlayerArrayCount = LobbyState ? LobbyState->PlayerArray.Num() : 0;
+	for (int32 PlayerIndex = 0; PlayerIndex < PlayerArrayCount; ++PlayerIndex)
 	{
-		const APlayerState* PlayerState = GameState->PlayerArray[Index];
-		if (!PlayerState)
+		const APlayerState* CandidatePlayerState = LobbyState->PlayerArray[PlayerIndex];
+		if (!CandidatePlayerState)
 		{
 			continue;
 		}
 
-		UHorizontalBox* Row = NewObject<UHorizontalBox>(Rows);
-		Row->AddChildToHorizontalBox(Text(Row, Index == 0 ? TEXT("^") : TEXT(" "), 18, Index == 0 ? FLinearColor(1.0f, 0.82f, 0.0f, 1.0f) : Muted));
-		Row->AddChildToHorizontalBox(Text(Row, PlayerState->GetPlayerName(), 19, White))->SetSize(FillSize());
-		if (Index == 0)
+		const AVNHPlayerState* CandidateLobbyState = Cast<AVNHPlayerState>(CandidatePlayerState);
+		const int32 TeamId = CandidateLobbyState ? CandidateLobbyState->GetLobbyTeamId() : INDEX_NONE;
+		const FLinearColor TeamColor = TeamId == 1 ? LobbyBlue : (TeamId == 2 ? LobbyGreen : LobbyOrange);
+		const bool bIsHostPlayer = PlayerIndex == 0;
+
+		FString DisplayName = CandidatePlayerState->GetPlayerName().TrimStartAndEnd();
+		if (DisplayName.IsEmpty() || (CandidatePlayerState == LocalPlayerState && DisplayName.StartsWith(TEXT("Player"))))
 		{
-			Row->AddChildToHorizontalBox(Text(Row, TEXT("HOST"), 16, Accent));
+			DisplayName = TEXT("Desch");
 		}
-		Rows->AddChildToVerticalBox(Row)->SetPadding(FMargin(14.0f, 8.0f, 14.0f, 8.0f));
+
+		UBorder* RowPanel = NewObject<UBorder>(Rows);
+		RowPanel->SetBrushColor(FLinearColor(0.015f, 0.055f, 0.065f, 0.96f));
+		RowPanel->SetPadding(FMargin(10.0f, 8.0f));
+		UHorizontalBox* Row = NewObject<UHorizontalBox>(RowPanel);
+		RowPanel->AddChild(Row);
+
+		USizeBox* PortraitSize = NewObject<USizeBox>(Row);
+		PortraitSize->SetWidthOverride(52.0f);
+		PortraitSize->SetHeightOverride(52.0f);
+		UImage* PortraitImage = NewObject<UImage>(PortraitSize);
+		PortraitImage->SetColorAndOpacity(FLinearColor(0.92f, 0.94f, 0.90f, 1.0f));
+		const FUniqueNetIdRepl CandidateUniqueId = CandidatePlayerState->GetUniqueId();
+		if (CandidateUniqueId.IsValid())
+		{
+			FBPUniqueNetId BlueprintUniqueId;
+			BlueprintUniqueId.SetUniqueNetId(CandidateUniqueId.GetUniqueNetId());
+			RequestSteamFriendInfoReflective(BlueprintUniqueId);
+			if (UTexture2D* SteamAvatar = GetSteamFriendAvatarReflective(BlueprintUniqueId))
+			{
+				PortraitImage->SetBrushFromTexture(SteamAvatar, true);
+			}
+		}
+		PortraitSize->AddChild(PortraitImage);
+		UHorizontalBoxSlot* PortraitSlot = Row->AddChildToHorizontalBox(PortraitSize);
+		PortraitSlot->SetPadding(FMargin(0.0f, 0.0f, 10.0f, 0.0f));
+		PortraitSlot->SetVerticalAlignment(VAlign_Center);
+
+		UTextBlock* TeamCircle = Text(Row, TEXT("●"), 25, TeamColor, ETextJustify::Center);
+		UHorizontalBoxSlot* TeamCircleSlot = Row->AddChildToHorizontalBox(TeamCircle);
+		TeamCircleSlot->SetPadding(FMargin(0.0f, 0.0f, 9.0f, 0.0f));
+		TeamCircleSlot->SetVerticalAlignment(VAlign_Center);
+
+		UTextBlock* PlayerNameText = Text(Row, DisplayName, 21, White);
+		UHorizontalBoxSlot* PlayerNameSlot = Row->AddChildToHorizontalBox(PlayerNameText);
+		PlayerNameSlot->SetSize(FillSize());
+		PlayerNameSlot->SetVerticalAlignment(VAlign_Center);
+
+		if (bIsHostPlayer)
+		{
+			UTextBlock* HostIcon = Text(Row, TEXT("HOST"), 16, FLinearColor(1.0f, 0.78f, 0.08f, 1.0f), ETextJustify::Center);
+			UHorizontalBoxSlot* HostSlot = Row->AddChildToHorizontalBox(HostIcon);
+			HostSlot->SetPadding(FMargin(10.0f, 0.0f, 0.0f, 0.0f));
+			HostSlot->SetVerticalAlignment(VAlign_Center);
+		}
+
+		UVerticalBoxSlot* RowSlot = Rows->AddChildToVerticalBox(RowPanel);
+		RowSlot->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 7.0f));
+	}
+
+	UButton* InvitePlayerButton = MakeTextButton(Rows, TEXT("+  INVITE PLAYER"), 19);
+	InvitePlayerButton->OnClicked.AddDynamic(this, &UVNHLobbyMenuWidget::HandleInviteClicked);
+	UVerticalBoxSlot* InviteSlot = Rows->AddChildToVerticalBox(InvitePlayerButton);
+	InviteSlot->SetPadding(FMargin(0.0f, 5.0f, 0.0f, 0.0f));
+}
+
+void UVNHLobbyMenuWidget::RefreshMatchSetupPresentation()
+{
+	const AVNHGameState* LobbyGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr;
+	const EPPGameMode CurrentMode = LobbyGameState ? LobbyGameState->GetLobbyGameMode() : EPPGameMode::BringYourIdiotHome;
+	const EPPLobbyCourseType CurrentCourse = LobbyGameState ? LobbyGameState->GetLobbyCourseType() : EPPLobbyCourseType::PresetMaps;
+	const EPPPresetMap CurrentMap = LobbyGameState ? LobbyGameState->GetLobbyPresetMap() : EPPPresetMap::FactoryFiasco;
+
+	if (UTextBlock* ModeTextBlock = ModeValueText.Get())
+	{
+		ModeTextBlock->SetText(FText::FromString(LobbyModeText(CurrentMode)));
+	}
+	if (UTextBlock* SetupTextBlock = SetupValueText.Get())
+	{
+		const FString SetupLabel = CurrentCourse == EPPLobbyCourseType::PresetMaps
+			? FString::Printf(TEXT("%s - %s"), *LobbyCourseText(CurrentCourse), *LobbyPresetMapText(CurrentMap))
+			: LobbyCourseText(CurrentCourse);
+		SetupTextBlock->SetText(FText::FromString(SetupLabel));
+	}
+}
+
+void UVNHLobbyMenuWidget::RefreshTeamPresentation()
+{
+	const AVNHGameState* LobbyGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr;
+	const AVNHPlayerState* LocalLobbyState = GetOwningPlayer() ? GetOwningPlayer()->GetPlayerState<AVNHPlayerState>() : nullptr;
+	int32 TeamCounts[3] = {0, 0, 0};
+	if (LobbyGameState)
+	{
+		for (const APlayerState* CandidateState : LobbyGameState->PlayerArray)
+		{
+			const AVNHPlayerState* CandidateLobbyState = Cast<AVNHPlayerState>(CandidateState);
+			if (CandidateLobbyState && CandidateLobbyState->GetLobbyTeamId() >= 0 && CandidateLobbyState->GetLobbyTeamId() < 3)
+			{
+				++TeamCounts[CandidateLobbyState->GetLobbyTeamId()];
+			}
+		}
+	}
+
+	const int32 LocalTeamId = LocalLobbyState ? LocalLobbyState->GetLobbyTeamId() : INDEX_NONE;
+	const int32 PlayerTotal = LobbyGameState ? LobbyGameState->PlayerArray.Num() : 1;
+	const int32 AvailableTeamCount = FMath::Clamp((PlayerTotal + 1) / 2, 2, 3);
+	const auto FormatTeamCount = [](int32 Count)
+	{
+		return FText::FromString(FString::Printf(TEXT("%d PLAYER%s"), Count, Count == 1 ? TEXT("") : TEXT("S")));
+	};
+
+	if (UButton* OrangeButtonWidget = OrangeTeamButton.Get())
+	{
+		OrangeButtonWidget->SetStyle(TeamButtonStyle(LobbyOrange, LocalTeamId == 0));
+		OrangeButtonWidget->SetIsEnabled(LocalTeamId == 0 || TeamCounts[0] < 2);
+	}
+	if (UButton* BlueButtonWidget = BlueTeamButton.Get())
+	{
+		BlueButtonWidget->SetStyle(TeamButtonStyle(LobbyBlue, LocalTeamId == 1));
+		BlueButtonWidget->SetIsEnabled(LocalTeamId == 1 || TeamCounts[1] < 2);
+	}
+	if (UButton* GreenButtonWidget = GreenTeamButton.Get())
+	{
+		GreenButtonWidget->SetVisibility(AvailableTeamCount >= 3 ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		GreenButtonWidget->SetStyle(TeamButtonStyle(LobbyGreen, LocalTeamId == 2));
+		GreenButtonWidget->SetIsEnabled(LocalTeamId == 2 || TeamCounts[2] < 2);
+	}
+	if (UTextBlock* CountText = OrangeTeamCountText.Get()) CountText->SetText(FormatTeamCount(TeamCounts[0]));
+	if (UTextBlock* CountText = BlueTeamCountText.Get()) CountText->SetText(FormatTeamCount(TeamCounts[1]));
+	if (UTextBlock* CountText = GreenTeamCountText.Get()) CountText->SetText(FormatTeamCount(TeamCounts[2]));
+}
+
+void UVNHLobbyMenuWidget::RefreshHostJoinedPresentation()
+{
+	AVNHPlayerController* LobbyController = Cast<AVNHPlayerController>(GetOwningPlayer());
+	const bool bHost = LobbyController && LobbyController->IsLocalLobbyHost();
+	const AVNHPlayerState* LocalLobbyState = LobbyController ? LobbyController->GetPlayerState<AVNHPlayerState>() : nullptr;
+	const bool bReady = LocalLobbyState && LocalLobbyState->IsPreRoundReady();
+
+	if (UButton* SetupButtonWidget = MatchSetupButton.Get()) SetupButtonWidget->SetIsEnabled(bHost);
+	if (UTextBlock* SetupButtonText = MatchSetupButtonLabel.Get())
+	{
+		SetupButtonText->SetText(bHost
+			? NSLOCTEXT("VNH", "LobbyMatchSetupButton", "MATCH SETUP")
+			: NSLOCTEXT("VNH", "LobbyHostControlsSetupButton", "HOST CONTROLS SETUP"));
+	}
+	if (UButton* ActionButtonWidget = PrimaryActionButton.Get())
+	{
+		ActionButtonWidget->SetIsEnabled(!bHost && !bReady);
+	}
+	if (UTextBlock* ActionTitle = PrimaryActionTitleText.Get())
+	{
+		ActionTitle->SetText(bHost
+			? NSLOCTEXT("VNH", "LobbyStartGameTitle", "START GAME")
+			: (bReady ? NSLOCTEXT("VNH", "LobbyReadyTitle", "READY") : NSLOCTEXT("VNH", "LobbyReadyUpTitle", "READY UP")));
+	}
+	if (UTextBlock* ActionSubtitle = PrimaryActionSubtitleText.Get())
+	{
+		ActionSubtitle->SetText(bHost
+			? NSLOCTEXT("VNH", "LobbyHostStartHint", "Use the start console once everyone is ready")
+			: (bReady ? NSLOCTEXT("VNH", "LobbyReadyWaitingHint", "Waiting for the host to start") : NSLOCTEXT("VNH", "LobbyReadyClickHint", "Click to ready up")));
+	}
+}
+
+void UVNHLobbyMenuWidget::RefreshMatchSetupDialogSelection()
+{
+	if (UButton* SelectionButton = ModeTogetherButton.Get()) SelectionButton->SetStyle(TeamButtonStyle(LobbyOrange, PendingGameMode == EPPGameMode::BringYourIdiotHome));
+	if (UButton* SelectionButton = ModeAttachedButton.Get()) SelectionButton->SetStyle(TeamButtonStyle(LobbyOrange, PendingGameMode == EPPGameMode::AttachedAtTheHip));
+	if (UButton* SelectionButton = CoursePresetButton.Get()) SelectionButton->SetStyle(TeamButtonStyle(LobbyOrange, PendingCourseType == EPPLobbyCourseType::PresetMaps));
+	if (UButton* SelectionButton = CourseBuildButton.Get()) SelectionButton->SetStyle(TeamButtonStyle(LobbyOrange, PendingCourseType == EPPLobbyCourseType::BuildForOtherTeam));
+	if (UButton* SelectionButton = CourseObstacleButton.Get()) SelectionButton->SetStyle(TeamButtonStyle(LobbyOrange, PendingCourseType == EPPLobbyCourseType::OneCustomObstacle));
+	if (UButton* SelectionButton = MapFactoryButton.Get()) SelectionButton->SetStyle(TeamButtonStyle(LobbyOrange, PendingPresetMap == EPPPresetMap::FactoryFiasco));
+	if (UButton* SelectionButton = MapSkyButton.Get()) SelectionButton->SetStyle(TeamButtonStyle(LobbyOrange, PendingPresetMap == EPPPresetMap::SkyScramble));
+	if (UButton* SelectionButton = MapJungleButton.Get()) SelectionButton->SetStyle(TeamButtonStyle(LobbyOrange, PendingPresetMap == EPPPresetMap::JungleJam));
+	if (UButton* SelectionButton = MapPipeButton.Get()) SelectionButton->SetStyle(TeamButtonStyle(LobbyOrange, PendingPresetMap == EPPPresetMap::PipePanic));
+	if (UWidget* PresetSectionWidget = PresetMapsSection.Get())
+	{
+		PresetSectionWidget->SetVisibility(PendingCourseType == EPPLobbyCourseType::PresetMaps ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	}
+}
+
+void UVNHLobbyMenuWidget::SetMatchSetupDialogVisible(bool bVisible)
+{
+	AVNHPlayerController* LobbyController = Cast<AVNHPlayerController>(GetOwningPlayer());
+	if (bVisible && (!LobbyController || !LobbyController->IsLocalLobbyHost()))
+	{
+		return;
+	}
+	if (bVisible)
+	{
+		const AVNHGameState* LobbyGameState = GetWorld() ? GetWorld()->GetGameState<AVNHGameState>() : nullptr;
+		PendingGameMode = LobbyGameState ? LobbyGameState->GetLobbyGameMode() : EPPGameMode::BringYourIdiotHome;
+		PendingCourseType = LobbyGameState ? LobbyGameState->GetLobbyCourseType() : EPPLobbyCourseType::PresetMaps;
+		PendingPresetMap = LobbyGameState ? LobbyGameState->GetLobbyPresetMap() : EPPPresetMap::FactoryFiasco;
+		RefreshMatchSetupDialogSelection();
+	}
+	if (UBorder* SetupDialogWidget = MatchSetupDialog.Get())
+	{
+		SetupDialogWidget->SetVisibility(bVisible ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	}
+}
+
+void UVNHLobbyMenuWidget::ApplyLobbyHudVisibility()
+{
+	if (UCanvasPanel* HudLayerWidget = LobbyHudLayer.Get())
+	{
+		HudLayerWidget->SetVisibility(bLobbyHudHidden ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	}
+	if (UTextBlock* HiddenHintText = HudHiddenHint.Get())
+	{
+		HiddenHintText->SetVisibility(bLobbyHudHidden ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	if (bLobbyHudHidden)
+	{
+		SetInviteDialogVisible(false);
+		SetMatchSetupDialogVisible(false);
 	}
 }
 
@@ -986,6 +1320,117 @@ void UVNHLobbyMenuWidget::HandleCustomizeClicked()
 	if (UVNHGameInstance* VNHGameInstance = GetGameInstance<UVNHGameInstance>())
 	{
 		VNHGameInstance->ShowCharacterCustomizer(true);
+	}
+}
+
+void UVNHLobbyMenuWidget::HandleMatchSetupClicked()
+{
+	SetMatchSetupDialogVisible(true);
+}
+
+void UVNHLobbyMenuWidget::HandleCloseMatchSetupClicked()
+{
+	SetMatchSetupDialogVisible(false);
+}
+
+void UVNHLobbyMenuWidget::HandleSaveMatchSetupClicked()
+{
+	if (AVNHPlayerController* LobbyController = Cast<AVNHPlayerController>(GetOwningPlayer()))
+	{
+		LobbyController->RequestLobbyMatchSetup(PendingGameMode, PendingCourseType, PendingPresetMap);
+	}
+	SetMatchSetupDialogVisible(false);
+}
+
+void UVNHLobbyMenuWidget::HandleModeTogetherClicked()
+{
+	PendingGameMode = EPPGameMode::BringYourIdiotHome;
+	RefreshMatchSetupDialogSelection();
+}
+
+void UVNHLobbyMenuWidget::HandleModeAttachedClicked()
+{
+	PendingGameMode = EPPGameMode::AttachedAtTheHip;
+	RefreshMatchSetupDialogSelection();
+}
+
+void UVNHLobbyMenuWidget::HandleCoursePresetClicked()
+{
+	PendingCourseType = EPPLobbyCourseType::PresetMaps;
+	RefreshMatchSetupDialogSelection();
+}
+
+void UVNHLobbyMenuWidget::HandleCourseBuildClicked()
+{
+	PendingCourseType = EPPLobbyCourseType::BuildForOtherTeam;
+	RefreshMatchSetupDialogSelection();
+}
+
+void UVNHLobbyMenuWidget::HandleCourseObstacleClicked()
+{
+	PendingCourseType = EPPLobbyCourseType::OneCustomObstacle;
+	RefreshMatchSetupDialogSelection();
+}
+
+void UVNHLobbyMenuWidget::HandleMapFactoryClicked()
+{
+	PendingPresetMap = EPPPresetMap::FactoryFiasco;
+	RefreshMatchSetupDialogSelection();
+}
+
+void UVNHLobbyMenuWidget::HandleMapSkyClicked()
+{
+	PendingPresetMap = EPPPresetMap::SkyScramble;
+	RefreshMatchSetupDialogSelection();
+}
+
+void UVNHLobbyMenuWidget::HandleMapJungleClicked()
+{
+	PendingPresetMap = EPPPresetMap::JungleJam;
+	RefreshMatchSetupDialogSelection();
+}
+
+void UVNHLobbyMenuWidget::HandleMapPipeClicked()
+{
+	PendingPresetMap = EPPPresetMap::PipePanic;
+	RefreshMatchSetupDialogSelection();
+}
+
+void UVNHLobbyMenuWidget::HandleOrangeTeamClicked()
+{
+	if (AVNHPlayerController* LobbyController = Cast<AVNHPlayerController>(GetOwningPlayer())) LobbyController->RequestLobbyTeam(0);
+}
+
+void UVNHLobbyMenuWidget::HandleBlueTeamClicked()
+{
+	if (AVNHPlayerController* LobbyController = Cast<AVNHPlayerController>(GetOwningPlayer())) LobbyController->RequestLobbyTeam(1);
+}
+
+void UVNHLobbyMenuWidget::HandleGreenTeamClicked()
+{
+	if (AVNHPlayerController* LobbyController = Cast<AVNHPlayerController>(GetOwningPlayer())) LobbyController->RequestLobbyTeam(2);
+}
+
+void UVNHLobbyMenuWidget::HandleMascotClicked()
+{
+	if (AVNHPlayerController* LobbyController = Cast<AVNHPlayerController>(GetOwningPlayer()))
+	{
+		LobbyController->ClientReceiveInteractionText(TEXT("Choose Your Mascot is coming in the next lobby phase."));
+	}
+}
+
+void UVNHLobbyMenuWidget::HandleHideHudClicked()
+{
+	bLobbyHudHidden = !bLobbyHudHidden;
+	ApplyLobbyHudVisibility();
+}
+
+void UVNHLobbyMenuWidget::HandlePrimaryActionClicked()
+{
+	AVNHPlayerController* LobbyController = Cast<AVNHPlayerController>(GetOwningPlayer());
+	if (LobbyController && !LobbyController->IsLocalLobbyHost())
+	{
+		LobbyController->RequestPreRoundCustomizationReady();
 	}
 }
 

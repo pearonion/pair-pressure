@@ -47,6 +47,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Pair Pressure|Physical State")
 	void AddReviveProgress(float DeltaSeconds, AActor* Reviver);
 
+	UFUNCTION(BlueprintCallable, Category = "Pair Pressure|Physical State|Debug")
+	void RequestDebugRagdoll();
+
+	UFUNCTION(BlueprintCallable, Category = "Pair Pressure|Physical State|Debug")
+	void RequestDebugRecovery();
+
 	UPROPERTY(BlueprintAssignable, Category = "Pair Pressure|Physical State")
 	FPPPhysicalStateChanged OnPhysicalStateChanged;
 
@@ -62,6 +68,12 @@ private:
 	UFUNCTION(Server, Reliable)
 	void ServerRequestRecovery();
 
+	UFUNCTION(Server, Reliable)
+	void ServerRequestDebugRagdoll();
+
+	UFUNCTION(Server, Reliable)
+	void ServerRequestDebugRecovery();
+
 	UFUNCTION()
 	void OnRep_PhysicalState();
 
@@ -72,6 +84,10 @@ private:
 	void SetPhysicalStateAuthoritative(EPPPhysicalState NewState, float StateDurationSeconds = 0.0f);
 	void EnterRagdollVisualState();
 	void ExitRagdollVisualState();
+	void BeginGroundedRecovery(float RequiredGroundedSeconds);
+	bool IsRagdollRestingOnGround() const;
+	void ApplyRagdollPropulsion(const FPPImpactData& ImpactData, float EffectiveSeverity);
+	void PlayGetUpFrontAnimation();
 	void RecoverFromCurrentState();
 	void AddDazeAuthoritative(float DazeAmount);
 

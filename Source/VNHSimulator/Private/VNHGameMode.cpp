@@ -164,6 +164,11 @@ void AVNHGameMode::PostLogin(APlayerController* NewPlayer)
 	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
 	if (MapName.Contains(TEXT("Lobby")))
 	{
+		if (AVNHPlayerState* LobbyPlayerState = NewPlayer ? NewPlayer->GetPlayerState<AVNHPlayerState>() : nullptr)
+		{
+			const int32 PlayerIndex = GameState ? GameState->PlayerArray.IndexOfByKey(LobbyPlayerState) : INDEX_NONE;
+			LobbyPlayerState->SetLobbyTeamId(FMath::Clamp(FMath::Max(PlayerIndex, 0) / 2, 0, 2));
+		}
 		if (AVNHShopperCharacter* LobbyPawn = NewPlayer ? Cast<AVNHShopperCharacter>(NewPlayer->GetPawn()) : nullptr)
 		{
 			LobbyPawn->SetPossessedByAlien(true);

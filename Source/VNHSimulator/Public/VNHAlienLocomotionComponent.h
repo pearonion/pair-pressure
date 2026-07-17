@@ -67,8 +67,23 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Alien Locomotion")
 	void ClearInput();
 
+	UFUNCTION(BlueprintCallable, Category = "VNH|Alien Locomotion|Camera")
+	void SetCameraOrbitActive(bool bNewCameraOrbitActive);
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Alien Locomotion|Camera")
+	bool IsCameraOrbitDetached() const { return bCameraOrbitActive; }
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Alien Locomotion")
+	void SetGrabMovementMultiplier(float NewGrabMovementMultiplier);
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Alien Locomotion")
+	void SetGrabTurnMultiplier(float NewGrabTurnMultiplier);
+
 	UFUNCTION(BlueprintPure, Category = "VNH|Alien Locomotion")
 	FVNHAlienLocomotionState GetLocomotionState() const { return LocomotionState; }
+
+	UFUNCTION(BlueprintPure, Category = "VNH|Alien Locomotion")
+	FVector GetCameraRelativeMoveDirection() const;
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Alien Locomotion")
 	FString DescribeLocomotionState() const;
@@ -78,58 +93,58 @@ protected:
 	TObjectPtr<UVNHMovementTuningData> TuningData;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "0.0"))
-	float DefaultWalkSpeed = 285.0f;
+	float DefaultWalkSpeed = 500.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "0.0"))
-	float DefaultMinWalkSpeed = 95.0f;
+	float DefaultMinWalkSpeed = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "0.0"))
-	float DefaultFastWalkSpeed = 415.0f;
+	float DefaultFastWalkSpeed = 500.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "0.0"))
-	float DefaultAcceleration = 520.0f;
+	float DefaultAcceleration = 850.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "0.0"))
-	float DefaultCoastBraking = 320.0f;
+	float DefaultCoastBraking = 520.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "1.0"))
-	float DefaultManualBrakeMultiplier = 2.0f;
+	float DefaultManualBrakeMultiplier = 1.65f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "0.0"))
-	float DefaultBodyTurnRateDegrees = 220.0f;
+	float DefaultBodyTurnRateDegrees = 360.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Tuning", meta = (ClampMin = "0.0", ClampMax = "180.0"))
 	float DefaultCorrectionStepAngleDegrees = 120.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.0"))
-	float StabilityBuildRate = 0.65f;
+	float StabilityBuildRate = 1.25f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.0"))
-	float StabilityDecayRate = 1.15f;
+	float StabilityDecayRate = 1.6f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.0"))
-	float AbruptTurnInstability = 0.35f;
+	float AbruptTurnInstability = 0.12f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.0"))
-	float FastWalkInstability = 0.22f;
+	float FastWalkInstability = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.0"))
 	float WobbleFrequencyHz = 1.85f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.0"))
-	float WobbleYawDegrees = 14.0f;
+	float WobbleYawDegrees = 3.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.0"))
-	float LateralDriftStrength = 0.34f;
+	float LateralDriftStrength = 0.04f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.0"))
-	float UnevenStrideStrength = 0.18f;
+	float UnevenStrideStrength = 0.03f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.1"))
-	float MinAlienAnimRate = 0.72f;
+	float MinAlienAnimRate = 0.96f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Alien Locomotion|Instability", meta = (ClampMin = "0.1"))
-	float MaxAlienAnimRate = 1.18f;
+	float MaxAlienAnimRate = 1.04f;
 
 private:
 	UPROPERTY(BlueprintReadOnly, Category = "VNH|Alien Locomotion", meta = (AllowPrivateAccess = "true"))
@@ -138,6 +153,9 @@ private:
 	FVector2D MoveInput = FVector2D::ZeroVector;
 	FVector LastDesiredDirection = FVector::ZeroVector;
 	float WobblePhaseRadians = 0.0f;
+	bool bCameraOrbitActive = false;
+	float GrabMovementMultiplier = 1.0f;
+	float GrabTurnMultiplier = 1.0f;
 
 	TWeakObjectPtr<ACharacter> OwnerCharacter;
 	TWeakObjectPtr<UCharacterMovementComponent> MovementComponent;
