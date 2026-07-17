@@ -29,6 +29,33 @@ constexpr float PPPhysicalSpinnerFullThrowSeverity = 100.0f;
 constexpr float PPPhysicalSpinnerHalfThrowSpeed = 790.0f;
 constexpr float PPPhysicalSpinnerFullThrowSpeed = 1580.0f;
 constexpr float PPPhysicalMaxRagdollAngularSpeedDegrees = 120.0f;
+constexpr float PPPhysicalRagdollRecoveryBlendSeconds = 0.28f;
+
+bool IsPPPhysicalStateSpinnerStyleCourseObstacle(const AActor* ObstacleActor)
+{
+	if (!ObstacleActor)
+	{
+		return false;
+	}
+
+	const FString ObstacleName = ObstacleActor->GetName();
+	return ObstacleActor->ActorHasTag(TEXT("PP_SpinnerObstacle"))
+		|| ObstacleName.Contains(TEXT("Spinner_V2"), ESearchCase::IgnoreCase)
+		|| ObstacleName.Contains(TEXT("SwingBall"), ESearchCase::IgnoreCase)
+		|| ObstacleName.Contains(TEXT("Turntable"), ESearchCase::IgnoreCase);
+}
+
+bool IsPPPhysicalStatePusherCourseObstacle(const AActor* ObstacleActor)
+{
+	const FString ObstacleName = ObstacleActor ? ObstacleActor->GetName() : FString();
+	return ObstacleName.Contains(TEXT("Pusher_V1"), ESearchCase::IgnoreCase)
+		|| ObstacleName.Contains(TEXT("Pusher_V2"), ESearchCase::IgnoreCase);
+}
+
+bool IsPPPhysicalStateDropPropellerCourseObstacle(const AActor* ObstacleActor)
+{
+	return ObstacleActor && ObstacleActor->GetName().Contains(TEXT("Drop_V1"), ESearchCase::IgnoreCase);
+}
 
 FName ResolvePPPhysicalRagdollRootBone(const USkeletalMeshComponent* CharacterMesh)
 {
@@ -118,6 +145,7 @@ void UPPPhysicalStateComponent::BeginPlay()
 void UPPPhysicalStateComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+	UpdateRagdollRecoveryBlend(DeltaTime);
 
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
@@ -389,9 +417,9 @@ void UPPPhysicalStateComponent::ApplyImpactAuthoritative(const FPPImpactData& Im
 	}
 
 	float EffectiveSeverity = FMath::Clamp(ImpactData.Severity, 0.0f, 150.0f);
-	const bool bSpinnerImpact = ImpactData.InstigatorActor
-		&& (ImpactData.InstigatorActor->ActorHasTag(TEXT("PP_SpinnerObstacle"))
-			|| ImpactData.InstigatorActor->GetName().Contains(TEXT("Spinner_V2"), ESearchCase::IgnoreCase));
+	const bool bSpinnerImpact = IsPPPhysicalStateSpinnerStyleCourseObstacle(ImpactData.InstigatorActor);
+	const bool bPusherImpact = IsPPPhysicalStatePusherCourseObstacle(ImpactData.InstigatorActor);
+	const bool bDropPropellerImpact = IsPPPhysicalStateDropPropellerCourseObstacle(ImpactData.InstigatorActor);
 	const double CurrentTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 	if (CurrentTime - LastKnockdownTimeSeconds < 1.5)
 	{
@@ -414,6 +442,22 @@ void UPPPhysicalStateComponent::ApplyImpactAuthoritative(const FPPImpactData& Im
 			EffectiveSeverity);
 		SetPhysicalStateAuthoritative(EPPPhysicalState::Ragdolled, SpinnerRagdollSeconds);
 		ApplyRagdollPropulsion(ImpactData, EffectiveSeverity);
+		return;
+	}
+	if (bPusherImpact)
+	{
+		// Pushers produce a predictable short squash ragdoll, independent of the
+		// force from their timeline-driven collision sweep.
+		AddDazeAuthoritative(8.0f);
+		LastKnockdownTimeSeconds = CurrentTime;
+		SetPhysicalStateAuthoritative(EPPPhysicalState::Ragdolled, 1.0f);
+		return;
+	}
+	if (bDropPropellerImpact)
+	{
+		AddDazeAuthoritative(8.0f);
+		LastKnockdownTimeSeconds = CurrentTime;
+		SetPhysicalStateAuthoritative(EPPPhysicalState::Ragdolled, 1.0f);
 		return;
 	}
 
@@ -449,7 +493,9 @@ void UPPPhysicalStateComponent::SetPhysicalStateAuthoritative(EPPPhysicalState N
 		return;
 	}
 
-	if (NewState == EPPPhysicalState::Ragdolled || NewState == EPPPhysicalState::Unconscious)
+	const bool bTimedRagdollState = NewState == EPPPhysicalState::Ragdolled
+		|| NewState == EPPPhysicalState::Unconscious;
+	if (bTimedRagdollState)
 	{
 		// Every ragdoll source gets a bounded launch/recovery window. This also
 		// protects debug and future callers that omit a duration.
@@ -468,11 +514,17 @@ void UPPPhysicalStateComponent::SetPhysicalStateAuthoritative(EPPPhysicalState N
 		GetWorld()->GetTimerManager().ClearTimer(RecoveryTimerHandle);
 		if (StateDurationSeconds > 0.0f)
 		{
+			// Begin the standing blend inside the authored recovery window. The mesh
+			// remains locked throughout the blend, so movement returns at the original
+			// duration instead of adding another visible recovery delay.
+			const float RecoveryTimerDelay = bTimedRagdollState
+				? FMath::Max(0.05f, StateDurationSeconds - PPPhysicalRagdollRecoveryBlendSeconds)
+				: StateDurationSeconds;
 			GetWorld()->GetTimerManager().SetTimer(
 				RecoveryTimerHandle,
 				this,
 				&UPPPhysicalStateComponent::RecoverFromCurrentState,
-				StateDurationSeconds,
+				RecoveryTimerDelay,
 				false);
 		}
 	}
@@ -485,6 +537,9 @@ void UPPPhysicalStateComponent::EnterRagdollVisualState()
 	{
 		return;
 	}
+	bRagdollRecoveryBlendActive = false;
+	RagdollRecoveryBlendElapsedSeconds = 0.0f;
+	SetComponentTickInterval(0.1f);
 	if (OwnerCharacter->HasAuthority())
 	{
 		if (UPPGrabberComponent* GrabberComponent = OwnerCharacter->FindComponentByClass<UPPGrabberComponent>();
@@ -554,8 +609,10 @@ void UPPPhysicalStateComponent::ExitRagdollVisualState()
 
 	USkeletalMeshComponent* CharacterMesh = OwnerCharacter->GetMesh();
 	UCapsuleComponent* Capsule = OwnerCharacter->GetCapsuleComponent();
+	FVector RecoveryForward = OwnerCharacter->GetActorForwardVector().GetSafeNormal2D();
 	if (CharacterMesh && CharacterMesh->IsAnySimulatingPhysics())
 	{
+		const FTransform RagdollMeshWorldTransform = CharacterMesh->GetComponentTransform();
 		FVector RecoveryLocation = CharacterMesh->GetComponentLocation();
 		const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
 		if (!RagdollRootBone.IsNone())
@@ -571,15 +628,16 @@ void UPPPhysicalStateComponent::ExitRagdollVisualState()
 			const FQuat RecoveryBodyRotation = CharacterMesh->GetBoneQuaternion(RagdollRootBone);
 			LastRecoveryBodyUp = RecoveryBodyRotation.GetUpVector();
 			LastRecoveryBodyRight = RecoveryBodyRotation.GetRightVector();
-			CharacterMesh->SetAllBodiesBelowPhysicsBlendWeight(RagdollRootBone, 0.0f, false, true);
-			CharacterMesh->SetAllBodiesBelowSimulatePhysics(RagdollRootBone, false, true);
+			RecoveryForward = RecoveryBodyRotation.GetForwardVector().GetSafeNormal2D();
 		}
-		CharacterMesh->SetAllBodiesSimulatePhysics(false);
-		CharacterMesh->SetAllUseCCD(false);
-		CharacterMesh->SetEnablePhysicsBlending(false);
+		CharacterMesh->SetAllPhysicsLinearVelocity(FVector::ZeroVector);
+		CharacterMesh->SetAllPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
+		CharacterMesh->SetEnableGravity(false);
+		// Frozen ragdoll bodies must not keep receiving pushes while their visible
+		// pose is blending into the standing capsule target.
+		CharacterMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		CharacterMesh->SetEnablePhysicsBlending(true);
 		CharacterMesh->bPauseAnims = false;
-		CharacterMesh->SetCollisionProfileName(TEXT("CharacterMesh"));
-		CharacterMesh->SetRelativeTransform(InitialMeshRelativeTransform);
 		if (UWorld* World = GetWorld(); World && Capsule)
 		{
 			FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PPRagdollRecoveryGround), false, OwnerCharacter);
@@ -595,9 +653,96 @@ void UPPPhysicalStateComponent::ExitRagdollVisualState()
 				RecoveryLocation = GroundHit.ImpactPoint + FVector(0.0f, 0.0f, CapsuleHalfHeight);
 			}
 		}
+		if (!RecoveryForward.IsNearlyZero())
+		{
+			OwnerCharacter->SetActorRotation(RecoveryForward.Rotation(), ETeleportType::TeleportPhysics);
+		}
 		OwnerCharacter->SetActorLocation(RecoveryLocation, false, nullptr, ETeleportType::TeleportPhysics);
+		// Move the collision capsule to its safe standing target while keeping the
+		// rendered ragdoll exactly where physics left it. The mesh then blends into
+		// its authored standing transform instead of visibly teleporting upward.
+		CharacterMesh->SetWorldTransform(RagdollMeshWorldTransform, false, nullptr, ETeleportType::TeleportPhysics);
+		RagdollRecoveryBlendStartTransform = CharacterMesh->GetRelativeTransform();
+		RagdollRecoveryBlendElapsedSeconds = 0.0f;
+		bRagdollRecoveryBlendActive = true;
+		SetComponentTickInterval(0.0f);
+		SetComponentTickEnabled(true);
 	}
-	if (Capsule)
+	else
+	{
+		if (CharacterMesh)
+		{
+			CharacterMesh->SetRelativeTransform(InitialMeshRelativeTransform);
+		}
+		if (Capsule)
+		{
+			Capsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		}
+		if (UCharacterMovementComponent* MovementComponent = OwnerCharacter->GetCharacterMovement())
+		{
+			MovementComponent->SetMovementMode(MOVE_Walking);
+		}
+	}
+	if (UCharacterMovementComponent* MovementComponent = OwnerCharacter->GetCharacterMovement();
+		MovementComponent && bRagdollRecoveryBlendActive)
+	{
+		MovementComponent->DisableMovement();
+	}
+}
+
+void UPPPhysicalStateComponent::UpdateRagdollRecoveryBlend(float DeltaTime)
+{
+	if (!bRagdollRecoveryBlendActive)
+	{
+		return;
+	}
+
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
+	if (!OwnerCharacter || !CharacterMesh || IsRagdolled())
+	{
+		bRagdollRecoveryBlendActive = false;
+		SetComponentTickInterval(0.1f);
+		return;
+	}
+
+	RagdollRecoveryBlendElapsedSeconds += FMath::Max(DeltaTime, 0.0f);
+	const float LinearAlpha = FMath::Clamp(
+		RagdollRecoveryBlendElapsedSeconds / PPPhysicalRagdollRecoveryBlendSeconds,
+		0.0f,
+		1.0f);
+	const float BlendAlpha = FMath::SmoothStep(0.0f, 1.0f, LinearAlpha);
+	FTransform BlendedRelativeTransform;
+	BlendedRelativeTransform.Blend(
+		RagdollRecoveryBlendStartTransform,
+		InitialMeshRelativeTransform,
+		BlendAlpha);
+	CharacterMesh->SetRelativeTransform(BlendedRelativeTransform);
+
+	const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
+	if (!RagdollRootBone.IsNone())
+	{
+		CharacterMesh->SetAllBodiesBelowPhysicsBlendWeight(
+			RagdollRootBone,
+			1.0f - BlendAlpha,
+			false,
+			true);
+	}
+	if (LinearAlpha < 1.0f)
+	{
+		return;
+	}
+
+	bRagdollRecoveryBlendActive = false;
+	RagdollRecoveryBlendElapsedSeconds = 0.0f;
+	SetComponentTickInterval(0.1f);
+	CharacterMesh->SetAllBodiesSimulatePhysics(false);
+	CharacterMesh->SetAllUseCCD(false);
+	CharacterMesh->SetEnableGravity(true);
+	CharacterMesh->SetEnablePhysicsBlending(false);
+	CharacterMesh->SetCollisionProfileName(TEXT("CharacterMesh"));
+	CharacterMesh->SetRelativeTransform(InitialMeshRelativeTransform);
+	if (UCapsuleComponent* Capsule = OwnerCharacter->GetCapsuleComponent())
 	{
 		Capsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	}

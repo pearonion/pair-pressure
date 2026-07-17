@@ -15,6 +15,7 @@ public:
 	UPPImpactSensorComponent();
 
 	virtual void BeginPlay() override;
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Pair Pressure|Impact")
 	void ReportImpact(float Severity, AActor* InstigatorActor, FName BodyRegion = NAME_None, bool bHeavyObstacle = false);
@@ -53,4 +54,5 @@ private:
 	FName HeavyObstacleTag = TEXT("PP_HeavyObstacle");
 
 	TMap<TWeakObjectPtr<AActor>, double> LastImpactTimes;
+	TArray<TWeakObjectPtr<UPrimitiveComponent>> PusherContactComponents;
 };

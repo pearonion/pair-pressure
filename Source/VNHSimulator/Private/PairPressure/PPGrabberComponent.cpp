@@ -35,6 +35,46 @@ constexpr float PPGrabAlignmentScoreWeight = 1000.0f;
 constexpr float PPGrabPriorityScoreWeight = 100.0f;
 constexpr float PPGrabDistanceScoreWeight = 125.0f;
 constexpr float PPGrabLineOfSightScore = 50.0f;
+
+FVector GetPPBridgePerimeterPoint(const FBox& BridgeBounds, const FVector& QueryLocation)
+{
+	FVector PerimeterPoint = BridgeBounds.GetClosestPointTo(QueryLocation);
+	const bool bInsideHorizontalBounds = QueryLocation.X >= BridgeBounds.Min.X && QueryLocation.X <= BridgeBounds.Max.X
+		&& QueryLocation.Y >= BridgeBounds.Min.Y && QueryLocation.Y <= BridgeBounds.Max.Y;
+	if (bInsideHorizontalBounds)
+	{
+		const float DistanceToMinX = QueryLocation.X - BridgeBounds.Min.X;
+		const float DistanceToMaxX = BridgeBounds.Max.X - QueryLocation.X;
+		const float DistanceToMinY = QueryLocation.Y - BridgeBounds.Min.Y;
+		const float DistanceToMaxY = BridgeBounds.Max.Y - QueryLocation.Y;
+		const float NearestSideDistance = FMath::Min(
+			FMath::Min(DistanceToMinX, DistanceToMaxX),
+			FMath::Min(DistanceToMinY, DistanceToMaxY));
+		if (NearestSideDistance == DistanceToMinX)
+		{
+			PerimeterPoint.X = BridgeBounds.Min.X;
+		}
+		else if (NearestSideDistance == DistanceToMaxX)
+		{
+			PerimeterPoint.X = BridgeBounds.Max.X;
+		}
+		else if (NearestSideDistance == DistanceToMinY)
+		{
+			PerimeterPoint.Y = BridgeBounds.Min.Y;
+		}
+		else
+		{
+			PerimeterPoint.Y = BridgeBounds.Max.Y;
+		}
+	}
+	PerimeterPoint.Z = BridgeBounds.Max.Z - 8.0f;
+	return PerimeterPoint;
+}
+
+bool IsPPBridgeLedge(const AActor* CandidateActor)
+{
+	return CandidateActor && CandidateActor->GetName().Contains(TEXT("Bridge_V1"), ESearchCase::IgnoreCase);
+}
 }
 
 UPPGrabberComponent::UPPGrabberComponent()
@@ -457,9 +497,30 @@ FPPGrabTargetData UPPGrabberComponent::FindBestTarget(const FVector& CameraForwa
 	for (const FOverlapResult& LedgeOverlap : LedgeOverlaps)
 	{
 		AActor* LedgeActor = LedgeOverlap.GetActor();
-		if (LedgeActor && (LedgeActor->ActorHasTag(TEXT("PP.Grab.Ledge")) || LedgeActor->ActorHasTag(TEXT("PP.Grab.Handle"))))
+		if (LedgeActor && (LedgeActor->ActorHasTag(TEXT("PP.Grab.Ledge")) || LedgeActor->ActorHasTag(TEXT("PP.Grab.Handle")) || IsPPBridgeLedge(LedgeActor)))
 		{
 			CandidateActors.AddUnique(LedgeActor);
+		}
+	}
+	// Bridge V1 is used by both Lobby bridge instances (including the actor
+	// labelled Bridge_V2). Its broad platform bounds can leave a side edge out
+	// of the chest sphere, so add it by nearest perimeter distance instead.
+	for (TActorIterator<AActor> ActorIterator(World); ActorIterator; ++ActorIterator)
+	{
+		AActor* BridgeActor = *ActorIterator;
+		if (!IsPPBridgeLedge(BridgeActor))
+		{
+			continue;
+		}
+		FVector BridgeBoundsOrigin;
+		FVector BridgeBoundsExtent;
+		BridgeActor->GetActorBounds(true, BridgeBoundsOrigin, BridgeBoundsExtent);
+		const FVector NearestBridgePoint = GetPPBridgePerimeterPoint(
+			FBox::BuildAABB(BridgeBoundsOrigin, BridgeBoundsExtent),
+			TraceStart);
+		if (FVector::DistSquared(TraceStart, NearestBridgePoint) <= FMath::Square(340.0f))
+		{
+			CandidateActors.AddUnique(BridgeActor);
 		}
 	}
 
@@ -601,12 +662,12 @@ FPPGrabProfile UPPGrabberComponent::GetBlueprintGrabProfile(AActor* CandidateAct
 	{
 		ResultProfile.TargetType = EPPGrabTargetType::Player;
 	}
-	else if (CandidateActor->ActorHasTag(TEXT("PP.Grab.Ledge")) || CandidateActor->ActorHasTag(TEXT("PP.Grab.Handle")))
+	else if (CandidateActor->ActorHasTag(TEXT("PP.Grab.Ledge")) || CandidateActor->ActorHasTag(TEXT("PP.Grab.Handle")) || IsPPBridgeLedge(CandidateActor))
 	{
 		ResultProfile.TargetType = EPPGrabTargetType::LedgeOrHandle;
 		if (!bHasAuthoredProfile)
 		{
-			ResultProfile.MaximumRange = 190.0f;
+			ResultProfile.MaximumRange = IsPPBridgeLedge(CandidateActor) ? 340.0f : 190.0f;
 			ResultProfile.BreakForce = 125000.0f;
 			ResultProfile.MovementSpeedMultiplier = 0.35f;
 		}
@@ -673,7 +734,8 @@ bool UPPGrabberComponent::BuildTargetData(
 	}
 	UPPGrabbableComponent* GrabbableComponent = FindGrabbableComponent(CandidateActor);
 	const bool bUsesBlueprintContract = ImplementsBlueprintGrabbableContract(CandidateActor);
-	if (!OwnerActor || (!GrabbableComponent && !bUsesBlueprintContract)
+	const bool bBridgeLedge = IsPPBridgeLedge(CandidateActor);
+	if (!OwnerActor || (!GrabbableComponent && !bUsesBlueprintContract && !bBridgeLedge)
 		|| (GrabbableComponent && !IPPGrabbable::Execute_CanBeGrabbed(GrabbableComponent, OwnerActor))
 		|| (!GrabbableComponent && bUsesBlueprintContract && !IsBlueprintGrabEnabled(CandidateActor)))
 	{
@@ -706,7 +768,27 @@ bool UPPGrabberComponent::BuildTargetData(
 	UPrimitiveComponent* CandidatePrimitive = GrabbableComponent
 		? IPPGrabbable::Execute_GetGrabPrimitive(GrabbableComponent)
 		: Cast<UPrimitiveComponent>(CandidateActor->GetRootComponent());
-	if (!CandidatePrimitive)
+	if (bBridgeLedge)
+	{
+		TInlineComponentArray<UPrimitiveComponent*> CandidatePrimitives;
+		CandidateActor->GetComponents(CandidatePrimitives);
+		float NearestBridgeEdgeDistanceSquared = TNumericLimits<float>::Max();
+		for (UPrimitiveComponent* PrimitiveComponent : CandidatePrimitives)
+		{
+			if (!PrimitiveComponent || PrimitiveComponent->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
+			{
+				continue;
+			}
+			const FVector NearestEdgePoint = GetPPBridgePerimeterPoint(PrimitiveComponent->Bounds.GetBox(), TraceStart);
+			const float EdgeDistanceSquared = FVector::DistSquared(TraceStart, NearestEdgePoint);
+			if (EdgeDistanceSquared < NearestBridgeEdgeDistanceSquared)
+			{
+				NearestBridgeEdgeDistanceSquared = EdgeDistanceSquared;
+				CandidatePrimitive = PrimitiveComponent;
+			}
+		}
+	}
+	else if (!CandidatePrimitive)
 	{
 		TInlineComponentArray<UPrimitiveComponent*> CandidatePrimitives;
 		CandidateActor->GetComponents(CandidatePrimitives);
@@ -746,9 +828,16 @@ bool UPPGrabberComponent::BuildTargetData(
 			}
 		}
 	}
+	if (bBridgeLedge)
+	{
+		const FBox BridgeBounds = CandidatePrimitive->Bounds.GetBox();
+		CandidateGrabPoint = GetPPBridgePerimeterPoint(BridgeBounds, TraceStart);
+	}
 	const FVector ToCandidate = CandidateGrabPoint - TraceStart;
 	const float CandidateDistance = ToCandidate.Size();
-	const float EffectiveMaximumRange = bLedgeTarget
+	const float EffectiveMaximumRange = bBridgeLedge
+		? FMath::Max(CandidateProfile.MaximumRange, 340.0f)
+		: bLedgeTarget
 		? FMath::Min(SearchReach, FMath::Max(CandidateProfile.MaximumRange, 250.0f))
 		: FMath::Min(SearchReach, CandidateProfile.MaximumRange);
 	if (CandidateDistance > EffectiveMaximumRange || CandidateDistance <= UE_KINDA_SMALL_NUMBER)
@@ -772,8 +861,8 @@ bool UPPGrabberComponent::BuildTargetData(
 		? 1.0f
 		: FVector::DotProduct(OwnerActor->GetActorForwardVector().GetSafeNormal2D(), HorizontalOffset / HorizontalDistance);
 	const bool bLedgeFacingValid = bLedgeTarget
-		&& HorizontalFacingAlignment >= -0.35f
-		&& CameraAlignment >= -0.2f;
+		&& HorizontalFacingAlignment >= (bBridgeLedge ? -0.55f : -0.35f)
+		&& CameraAlignment >= (bBridgeLedge ? -0.4f : -0.2f);
 	if ((!bLedgeTarget && !bPushableTarget && !bCloseGameplayItem && !bClosePlayer
 			&& (FacingAlignment <= 0.0f
 				|| CameraAlignment < FMath::Cos(FMath::DegreesToRadians(CandidateProfile.MaximumAngleDegrees))))

@@ -4,13 +4,87 @@
 #include "Components/PrimitiveComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/Character.h"
 #include "PairPressure/PPGameplayTypes.h"
 #include "PairPressure/PPPhysicalStateComponent.h"
 
 UPPImpactSensorComponent::UPPImpactSensorComponent()
 {
-	PrimaryComponentTick.bCanEverTick = false;
+	PrimaryComponentTick.bCanEverTick = true;
+	PrimaryComponentTick.bStartWithTickEnabled = false;
+	PrimaryComponentTick.TickInterval = 0.05f;
+}
+
+namespace
+{
+bool IsPPImpactCourseObstacle(const AActor* ObstacleActor)
+{
+	if (!ObstacleActor)
+	{
+		return false;
+	}
+
+	const FString ObstacleName = ObstacleActor->GetName();
+	return ObstacleActor->ActorHasTag(TEXT("PP_SpinnerObstacle"))
+		|| ObstacleName.Contains(TEXT("Spinner_V2"), ESearchCase::IgnoreCase)
+		|| ObstacleName.Contains(TEXT("SwingBall"), ESearchCase::IgnoreCase)
+		|| ObstacleName.Contains(TEXT("Turntable"), ESearchCase::IgnoreCase)
+		|| ObstacleName.Contains(TEXT("Drop_V1"), ESearchCase::IgnoreCase)
+		|| ObstacleName.Contains(TEXT("Pusher_V1"), ESearchCase::IgnoreCase)
+		|| ObstacleName.Contains(TEXT("Pusher_V2"), ESearchCase::IgnoreCase);
+}
+
+bool IsPPImpactSensorSpinnerStyleCourseObstacle(const AActor* ObstacleActor)
+{
+	if (!ObstacleActor)
+	{
+		return false;
+	}
+
+	const FString ObstacleName = ObstacleActor->GetName();
+	return ObstacleActor->ActorHasTag(TEXT("PP_SpinnerObstacle"))
+		|| ObstacleName.Contains(TEXT("Spinner_V2"), ESearchCase::IgnoreCase)
+		|| ObstacleName.Contains(TEXT("SwingBall"), ESearchCase::IgnoreCase)
+		|| ObstacleName.Contains(TEXT("Turntable"), ESearchCase::IgnoreCase);
+}
+
+bool IsPPImpactSensorPusherObstacle(const AActor* ObstacleActor)
+{
+	const FString ObstacleName = ObstacleActor ? ObstacleActor->GetName() : FString();
+	return ObstacleName.Contains(TEXT("Pusher_V1"), ESearchCase::IgnoreCase)
+		|| ObstacleName.Contains(TEXT("Pusher_V2"), ESearchCase::IgnoreCase);
+}
+
+bool IsPPImpactSensorPusherContactComponent(const AActor* ObstacleActor, const UPrimitiveComponent* ObstacleComponent)
+{
+	if (!IsPPImpactSensorPusherObstacle(ObstacleActor) || !ObstacleComponent)
+	{
+		return false;
+	}
+
+	const FString ObstacleName = ObstacleActor->GetName();
+	const FString ComponentName = ObstacleComponent->GetName();
+	if (ObstacleName.Contains(TEXT("Pusher_V1"), ESearchCase::IgnoreCase))
+	{
+		return ComponentName.Equals(TEXT("SM_Spinner_V1"), ESearchCase::IgnoreCase);
+	}
+	return ComponentName.Equals(TEXT("SM_Pusher_V1"), ESearchCase::IgnoreCase)
+		|| ComponentName.Equals(TEXT("StaticMesh"), ESearchCase::IgnoreCase)
+		|| ComponentName.Equals(TEXT("StaticMesh1"), ESearchCase::IgnoreCase);
+}
+
+bool IsPPDropPropellerImpact(const AActor* ObstacleActor, const UPrimitiveComponent* HitObstacleComponent)
+{
+	if (!ObstacleActor || !HitObstacleComponent || !ObstacleActor->GetName().Contains(TEXT("Drop_V1"), ESearchCase::IgnoreCase))
+	{
+		return false;
+	}
+
+	const FString ComponentName = HitObstacleComponent->GetName();
+	return ComponentName.Contains(TEXT("Propeller_V1"), ESearchCase::IgnoreCase)
+		|| ComponentName.Equals(TEXT("StaticMesh7"), ESearchCase::IgnoreCase);
+}
 }
 
 void UPPImpactSensorComponent::BeginPlay()
@@ -36,6 +110,69 @@ void UPPImpactSensorComponent::BeginPlay()
 	if (USkeletalMeshComponent* OwnerMesh = OwnerCharacter->GetMesh())
 	{
 		OwnerMesh->OnComponentHit.AddDynamic(this, &UPPImpactSensorComponent::HandleComponentHit);
+	}
+	for (TActorIterator<AActor> ActorIterator(GetWorld()); ActorIterator; ++ActorIterator)
+	{
+		AActor* CourseActor = *ActorIterator;
+		if (!IsPPImpactCourseObstacle(CourseActor))
+		{
+			continue;
+		}
+
+		TInlineComponentArray<UPrimitiveComponent*> PrimitiveComponents;
+		CourseActor->GetComponents(PrimitiveComponents);
+		for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+		{
+			if (PrimitiveComponent)
+			{
+				PrimitiveComponent->SetNotifyRigidBodyCollision(true);
+				if (IsPPImpactSensorPusherContactComponent(CourseActor, PrimitiveComponent))
+				{
+					PusherContactComponents.Add(PrimitiveComponent);
+				}
+			}
+		}
+	}
+	SetComponentTickEnabled(!PusherContactComponents.IsEmpty());
+}
+
+void UPPImpactSensorComponent::TickComponent(
+	float DeltaTime,
+	ELevelTick TickType,
+	FActorComponentTickFunction* ThisTickFunction)
+{
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	UPPPhysicalStateComponent* PhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(OwnerCharacter);
+	UCapsuleComponent* OwnerCapsule = OwnerCharacter ? OwnerCharacter->GetCapsuleComponent() : nullptr;
+	if (!OwnerCharacter || !OwnerCharacter->HasAuthority() || !OwnerCapsule || !PhysicalState
+		|| OwnerCapsule->GetCollisionEnabled() == ECollisionEnabled::NoCollision
+		|| PhysicalState->IsRagdolled())
+	{
+		return;
+	}
+
+	const FCollisionShape OwnerCollisionShape = OwnerCapsule->GetCollisionShape(-2.0f);
+	for (const TWeakObjectPtr<UPrimitiveComponent>& WeakPusherComponent : PusherContactComponents)
+	{
+		UPrimitiveComponent* PusherComponent = WeakPusherComponent.Get();
+		AActor* PusherActor = PusherComponent ? PusherComponent->GetOwner() : nullptr;
+		if (!PusherComponent || !PusherActor || !CanReportImpact(PusherActor))
+		{
+			continue;
+		}
+		if (!PusherComponent->OverlapComponent(
+			OwnerCapsule->GetComponentLocation(),
+			OwnerCapsule->GetComponentQuat(),
+			OwnerCollisionShape))
+		{
+			continue;
+		}
+
+		ReportImpact(30.0f, PusherActor, NAME_None, true);
+		RememberImpact(PusherActor);
+		break;
 	}
 }
 
@@ -77,13 +214,20 @@ void UPPImpactSensorComponent::HandleComponentHit(
 	}
 
 	float Severity = CalculateImpactSeverity(HitComponent, OtherComponent, NormalImpulse, Hit);
-	const bool bSpinnerImpact = OtherActor
-		&& (OtherActor->ActorHasTag(TEXT("PP_SpinnerObstacle"))
-			|| OtherActor->GetName().Contains(TEXT("Spinner_V2"), ESearchCase::IgnoreCase));
+	const bool bSpinnerImpact = IsPPImpactSensorSpinnerStyleCourseObstacle(OtherActor);
+	const bool bDropPropellerImpact = IsPPDropPropellerImpact(OtherActor, OtherComponent);
+	if (OtherActor && OtherActor->GetName().Contains(TEXT("Drop_V1"), ESearchCase::IgnoreCase) && !bDropPropellerImpact)
+	{
+		return;
+	}
 	if (bSpinnerImpact)
 	{
 		// Slow spinner grazes should still topple the mascot, but must not be
 		// promoted to a mid-strength launch.
+		Severity = FMath::Max(Severity, 30.0f);
+	}
+	if (bDropPropellerImpact)
+	{
 		Severity = FMath::Max(Severity, 30.0f);
 	}
 	if (Severity < MinimumReportedSeverity)
@@ -97,7 +241,7 @@ void UPPImpactSensorComponent::HandleComponentHit(
 	ImpactData.ImpactDirection = NormalImpulse.IsNearlyZero() ? -Hit.ImpactNormal : NormalImpulse.GetSafeNormal();
 	ImpactData.BodyRegion = Hit.BoneName;
 	ImpactData.InstigatorActor = OtherActor;
-	ImpactData.bHeavyObstacle = bSpinnerImpact || (OtherActor && OtherActor->ActorHasTag(HeavyObstacleTag));
+	ImpactData.bHeavyObstacle = bSpinnerImpact || bDropPropellerImpact || (OtherActor && OtherActor->ActorHasTag(HeavyObstacleTag));
 	PhysicalState->ReceiveImpactData_Implementation(ImpactData);
 	RememberImpact(OtherActor);
 }

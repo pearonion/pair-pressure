@@ -144,6 +144,7 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 	bUseControllerRotationYaw = false;
 	JumpMaxHoldTime = 0.0f;
+	JumpMaxCount = 1;
 
 	if (UCapsuleComponent* ShopperCapsule = GetCapsuleComponent())
 	{
@@ -280,6 +281,7 @@ void AVNHShopperCharacter::BeginPlay()
 	// Do this at runtime as well as on the CDO so an inherited Blueprint cannot
 	// reintroduce variable-height jumps through a stale default value.
 	JumpMaxHoldTime = 0.0f;
+	JumpMaxCount = 1;
 	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
 	{
 		MovementComponent->JumpZVelocity = 650.0f;
@@ -330,6 +332,7 @@ void AVNHShopperCharacter::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	UpdateRagdollCameraAnchor(DeltaSeconds);
 	UpdateAdaptiveFollowCamera(DeltaSeconds);
+	UpdateCourseObstacleInteractions();
 	UpdatePairPressureAnimationPresentation();
 
 	const bool bIsPairPressureMap = GetWorld() && GetWorld()->GetMapName().Contains(TEXT("PP_"));
@@ -357,6 +360,7 @@ void AVNHShopperCharacter::PossessedBy(AController* NewController)
 
 void AVNHShopperCharacter::UnPossessed()
 {
+	HandleJumpInputReleased();
 	SetFirstPersonViewEnabled(false);
 	Super::UnPossessed();
 }
@@ -445,10 +449,90 @@ void AVNHShopperCharacter::SetPossessedByAlien(bool bNewPossessedByAlien)
 
 void AVNHShopperCharacter::UpdateAdaptiveFollowCamera(float DeltaSeconds)
 {
-	if (!IsLocallyControlled() || !FollowCameraBoom || !FollowCamera || !FollowCamera->IsActive())
+	const bool bLocallyControlledCharacter = IsLocallyControlled();
+	if (!bLocallyControlledCharacter && !HasAuthority())
 	{
 		return;
 	}
+
+	bool bInsideCourseCameraVolume = false;
+	bool bInsideSpinningTube = false;
+	if (!bCourseCameraActorsCached)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<AActor> ActorIterator(World); ActorIterator; ++ActorIterator)
+			{
+				AActor* CourseActor = *ActorIterator;
+				if (!CourseActor)
+				{
+					continue;
+				}
+				const FString CourseActorName = CourseActor->GetName();
+				if (CourseActorName.Contains(TEXT("SpinningTube"), ESearchCase::IgnoreCase)
+					|| CourseActorName.Contains(TEXT("Pusher_V2"), ESearchCase::IgnoreCase)
+					|| CourseActorName.Contains(TEXT("Drop_V1"), ESearchCase::IgnoreCase))
+				{
+					CourseCameraActors.Add(CourseActor);
+				}
+			}
+			bCourseCameraActorsCached = true;
+		}
+	}
+
+	for (const TWeakObjectPtr<AActor>& WeakCourseActor : CourseCameraActors)
+	{
+		AActor* CourseActor = WeakCourseActor.Get();
+		if (!CourseActor)
+		{
+			continue;
+		}
+		const bool bSpinningTube = CourseActor->GetName().Contains(TEXT("SpinningTube"), ESearchCase::IgnoreCase);
+		FVector BoundsOrigin;
+		FVector BoundsExtent;
+		CourseActor->GetActorBounds(true, BoundsOrigin, BoundsExtent);
+		const float BoundsPadding = bSpinningTube ? 140.0f : 80.0f;
+		if (FBox::BuildAABB(BoundsOrigin, BoundsExtent + FVector(BoundsPadding)).IsInsideOrOn(GetActorLocation()))
+		{
+			bInsideCourseCameraVolume = true;
+			bInsideSpinningTube |= bSpinningTube;
+		}
+	}
+	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	{
+		if (bInsideSpinningTube && !bIsCrouched && !bAutoCrouchedForCourseTube)
+		{
+			// The authored tube opening is lower than the standing capsule. Use the
+			// engine's collision-safe crouch path at full run speed before the entrance,
+			// then restore only the settings this course helper changed on exit.
+			CourseTubePreviousCrouchedHalfHeight = MovementComponent->GetCrouchedHalfHeight();
+			CourseTubePreviousMaxWalkSpeedCrouched = MovementComponent->MaxWalkSpeedCrouched;
+			MovementComponent->SetCrouchedHalfHeight(62.0f);
+			MovementComponent->MaxWalkSpeedCrouched = MovementComponent->MaxWalkSpeed;
+			Crouch(false);
+			bAutoCrouchedForCourseTube = true;
+		}
+		else if (!bInsideSpinningTube && bAutoCrouchedForCourseTube)
+		{
+			UnCrouch(false);
+			if (!bIsCrouched)
+			{
+				MovementComponent->SetCrouchedHalfHeight(CourseTubePreviousCrouchedHalfHeight);
+				MovementComponent->MaxWalkSpeedCrouched = CourseTubePreviousMaxWalkSpeedCrouched;
+				bAutoCrouchedForCourseTube = false;
+			}
+		}
+	}
+	if (!bLocallyControlledCharacter || !FollowCameraBoom || !FollowCamera || !FollowCamera->IsActive())
+	{
+		return;
+	}
+	FollowCameraBoom->bDoCollisionTest = !bInsideCourseCameraVolume;
+	FollowCameraBoom->TargetArmLength = FMath::FInterpTo(
+		FollowCameraBoom->TargetArmLength,
+		bInsideCourseCameraVolume ? 245.0f : 620.0f,
+		DeltaSeconds,
+		8.0f);
 
 	const FVector BoomOrigin = FollowCameraBoom->GetComponentLocation() + FollowCameraBoom->TargetOffset;
 	const float CurrentCameraDistance = FVector::Distance(BoomOrigin, FollowCamera->GetComponentLocation());
@@ -477,6 +561,57 @@ void AVNHShopperCharacter::UpdateAdaptiveFollowCamera(float DeltaSeconds)
 			6.0f);
 		ShopperController->SetControlRotation(AdaptiveControlRotation);
 	}
+}
+
+void AVNHShopperCharacter::UpdateCourseObstacleInteractions()
+{
+	if (!HasAuthority() || !GetWorld() || !GetWorld()->GetMapName().Contains(TEXT("Lobby")))
+	{
+		return;
+	}
+
+	UPrimitiveComponent* FloorTile = Cast<UPrimitiveComponent>(GetCharacterMovement()
+		? GetCharacterMovement()->GetMovementBaseObject()
+		: nullptr);
+	if (!FloorTile || CollapsingCourseTiles.Contains(FloorTile))
+	{
+		return;
+	}
+
+	AActor* TileOwner = FloorTile->GetOwner();
+	if (!TileOwner || !TileOwner->GetName().Contains(TEXT("Floor_V1"), ESearchCase::IgnoreCase))
+	{
+		return;
+	}
+
+	CollapsingCourseTiles.Add(FloorTile);
+	TWeakObjectPtr<UPrimitiveComponent> WeakFloorTile(FloorTile);
+	TWeakObjectPtr<AVNHShopperCharacter> WeakShopper(this);
+	FTimerHandle CollapseTimerHandle;
+	GetWorldTimerManager().SetTimer(
+		CollapseTimerHandle,
+		[WeakFloorTile, WeakShopper]()
+		{
+			if (UPrimitiveComponent* CollapsedTile = WeakFloorTile.Get())
+			{
+				// Visibility must stay local to the touched mesh; propagating it hides
+				// attached neighbours without removing their collision.
+				CollapsedTile->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+				CollapsedTile->SetCollisionResponseToAllChannels(ECR_Ignore);
+				CollapsedTile->SetVisibility(false, false);
+				if (AVNHShopperCharacter* Shopper = WeakShopper.Get())
+				{
+					if (UCharacterMovementComponent* MovementComponent = Shopper->GetCharacterMovement();
+						MovementComponent && MovementComponent->GetMovementBaseObject() == CollapsedTile)
+					{
+						MovementComponent->SetBase(static_cast<UPrimitiveComponent*>(nullptr));
+						MovementComponent->SetMovementMode(MOVE_Falling);
+					}
+				}
+			}
+		},
+		0.5f,
+		false);
 }
 
 void AVNHShopperCharacter::PrepareForPlayerPossession()
@@ -1163,6 +1298,39 @@ bool AVNHShopperCharacter::CanJumpInternal_Implementation() const
 		&& (!PairPressureActionRouter || !PairPressureActionRouter->IsAirDiveActive());
 }
 
+void AVNHShopperCharacter::HandleJumpInputPressed()
+{
+	bJumpInputHeld = true;
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent)
+	{
+		Jump();
+		return;
+	}
+
+	if (MovementComponent->IsMovingOnGround())
+	{
+		bLandingJumpRequested = false;
+		if (CanJump())
+		{
+			Jump();
+		}
+	}
+	else if (MovementComponent->IsFalling())
+	{
+		// Do not call ACharacter::Jump while airborne. Jump() mutates
+		// bPressedJump even when CanJump rejects the impulse, which creates a
+		// one-frame saved-move boundary and feels like an airborne hitch.
+		bLandingJumpRequested = true;
+	}
+}
+
+void AVNHShopperCharacter::HandleJumpInputReleased()
+{
+	bJumpInputHeld = false;
+	bLandingJumpRequested = false;
+}
+
 void AVNHShopperCharacter::OnJumped_Implementation()
 {
 	Super::OnJumped_Implementation();
@@ -1178,6 +1346,29 @@ void AVNHShopperCharacter::Landed(const FHitResult& Hit)
 	if (PairPressureActionRouter)
 	{
 		PairPressureActionRouter->NotifyLanded();
+	}
+}
+
+void AVNHShopperCharacter::OnMovementModeChanged(EMovementMode PreviousMovementMode, uint8 PreviousCustomMode)
+{
+	Super::OnMovementModeChanged(PreviousMovementMode, PreviousCustomMode);
+
+	if (PreviousMovementMode != MOVE_Falling)
+	{
+		return;
+	}
+
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	const bool bShouldJumpOnLanding = MovementComponent
+		&& MovementComponent->IsMovingOnGround()
+		&& bLandingJumpRequested
+		&& bJumpInputHeld;
+	// Never carry a buffered press through Falling -> Flying/None/Custom. A later
+	// unrelated landing must not consume input from a ledge, dive, or ragdoll handoff.
+	bLandingJumpRequested = false;
+	if (bShouldJumpOnLanding && CanJump())
+	{
+		Jump();
 	}
 }
 

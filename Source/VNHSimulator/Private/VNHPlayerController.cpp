@@ -2661,12 +2661,23 @@ void AVNHPlayerController::HandleJumpPressed()
 				return;
 			}
 		}
-		ControlledCharacter->Jump();
+		if (AVNHShopperCharacter* ShopperCharacter = Cast<AVNHShopperCharacter>(ControlledCharacter))
+		{
+			ShopperCharacter->HandleJumpInputPressed();
+		}
+		else
+		{
+			ControlledCharacter->Jump();
+		}
 	}
 }
 
 void AVNHPlayerController::HandleJumpReleased()
 {
+	if (AVNHShopperCharacter* ShopperCharacter = Cast<AVNHShopperCharacter>(GetPawn()))
+	{
+		ShopperCharacter->HandleJumpInputReleased();
+	}
 	// Pair Pressure uses JumpMaxHoldTime = 0 for a fixed-height jump. Clearing
 	// the press immediately on key release can race CharacterMovement's next
 	// update and turn a quick tap into a skipped jump.

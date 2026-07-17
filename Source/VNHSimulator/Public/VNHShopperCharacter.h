@@ -24,6 +24,7 @@ class USpringArmComponent;
 class UStaticMeshComponent;
 class USkeletalMeshComponent;
 class UPhysicsHandleComponent;
+class UPrimitiveComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FVNHActNaturalUsed, EVNHActNaturalRecovery, Recovery);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FVNHPublicTestReceived, EVNHPublicTestType, TestType);
@@ -38,6 +39,9 @@ public:
 	virtual bool CanJumpInternal_Implementation() const override;
 	virtual void OnJumped_Implementation() override;
 	virtual void Landed(const FHitResult& Hit) override;
+	virtual void OnMovementModeChanged(EMovementMode PreviousMovementMode, uint8 PreviousCustomMode = 0) override;
+	void HandleJumpInputPressed();
+	void HandleJumpInputReleased();
 
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
@@ -190,6 +194,7 @@ public:
 
 private:
 	void UpdateAdaptiveFollowCamera(float DeltaSeconds);
+	void UpdateCourseObstacleInteractions();
 	void UpdateRagdollCameraAnchor(float DeltaSeconds);
 	bool ShouldUsePairPressureMascotVisuals() const;
 	void UpdatePairPressureAnimationPresentation();
@@ -257,6 +262,14 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Shopper", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UCameraComponent> FirstPersonCamera;
 
+	TSet<TWeakObjectPtr<UPrimitiveComponent>> CollapsingCourseTiles;
+	TArray<TWeakObjectPtr<AActor>> CourseCameraActors;
+	bool bJumpInputHeld = false;
+	bool bLandingJumpRequested = false;
+	bool bCourseCameraActorsCached = false;
+	bool bAutoCrouchedForCourseTube = false;
+	float CourseTubePreviousCrouchedHalfHeight = 0.0f;
+	float CourseTubePreviousMaxWalkSpeedCrouched = 0.0f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Shopper", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UStaticMeshComponent> DebugBodyMesh;
 

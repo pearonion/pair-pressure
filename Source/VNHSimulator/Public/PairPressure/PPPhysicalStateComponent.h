@@ -88,6 +88,7 @@ private:
 	void SetPhysicalStateAuthoritative(EPPPhysicalState NewState, float StateDurationSeconds = 0.0f);
 	void EnterRagdollVisualState();
 	void ExitRagdollVisualState();
+	void UpdateRagdollRecoveryBlend(float DeltaTime);
 	void BeginGroundedRecovery(float RequiredGroundedSeconds);
 	bool IsRagdollRestingOnGround() const;
 	void ApplyRagdollPropulsion(const FPPImpactData& ImpactData, float EffectiveSeverity);
@@ -121,5 +122,8 @@ private:
 	FTransform InitialMeshRelativeTransform;
 	FVector LastRecoveryBodyUp = FVector::UpVector;
 	FVector LastRecoveryBodyRight = FVector::RightVector;
+	FTransform RagdollRecoveryBlendStartTransform;
+	float RagdollRecoveryBlendElapsedSeconds = 0.0f;
+	bool bRagdollRecoveryBlendActive = false;
 	FTimerHandle RecoveryTimerHandle;
 };
