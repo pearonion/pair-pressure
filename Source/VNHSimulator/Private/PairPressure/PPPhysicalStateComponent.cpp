@@ -18,6 +18,18 @@
 
 namespace
 {
+const FName PPStablePenguinRagdollBones[] = {
+	FName(TEXT("hips")), FName(TEXT("chest"))
+};
+
+// These match the held dummy's charged throw after its 0.70 launch multiplier:
+// a slow spinner behaves as a half throw, while a fast one can reach a full throw.
+constexpr float PPPhysicalSpinnerMinimumSeverity = 30.0f;
+constexpr float PPPhysicalSpinnerFullThrowSeverity = 100.0f;
+constexpr float PPPhysicalSpinnerHalfThrowSpeed = 790.0f;
+constexpr float PPPhysicalSpinnerFullThrowSpeed = 1580.0f;
+constexpr float PPPhysicalMaxRagdollAngularSpeedDegrees = 120.0f;
+
 FName ResolvePPPhysicalRagdollRootBone(const USkeletalMeshComponent* CharacterMesh)
 {
 	if (!CharacterMesh)
@@ -37,6 +49,40 @@ FName ResolvePPPhysicalRagdollRootBone(const USkeletalMeshComponent* CharacterMe
 		}
 	}
 	return NAME_None;
+}
+
+bool UsesPPStablePenguinRagdoll(const USkeletalMeshComponent* CharacterMesh)
+{
+	if (!CharacterMesh)
+	{
+		return false;
+	}
+
+	for (const FName RagdollBone : PPStablePenguinRagdollBones)
+	{
+		if (!CharacterMesh->GetBodyInstance(RagdollBone))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+void ConfigurePPStablePenguinRagdoll(USkeletalMeshComponent* CharacterMesh)
+{
+	if (!UsesPPStablePenguinRagdoll(CharacterMesh))
+	{
+		return;
+	}
+
+	// A small fully simulated core lets the mascot topple, while the tight
+	// hips-to-chest joint keeps the body silhouette intact without a loose head.
+	CharacterMesh->SetAllBodiesSimulatePhysics(false);
+	for (const FName RagdollBone : PPStablePenguinRagdollBones)
+	{
+		CharacterMesh->SetBodySimulatePhysics(RagdollBone, true);
+		CharacterMesh->SetAllBodiesBelowPhysicsBlendWeight(RagdollBone, 1.0f, false, true);
+	}
 }
 }
 
@@ -78,6 +124,37 @@ void UPPPhysicalStateComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 		return;
 	}
 
+	if (IsRagdolled())
+	{
+		ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+		USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
+		const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
+		if (CharacterMesh && !RagdollRootBone.IsNone())
+		{
+			FVector RootVelocity = CharacterMesh->GetBoneLinearVelocity(RagdollRootBone);
+			if (RootVelocity.Z > 850.0f)
+			{
+				// A positive runaway value means a malformed constraint is injecting
+				// energy. Cancel it with a small downward bias instead of allowing a
+				// capped-but-still-infinite climb.
+				RootVelocity.Z = -150.0f;
+				CharacterMesh->SetPhysicsLinearVelocity(RootVelocity, false, RagdollRootBone);
+			}
+
+			// Constraints can retain angular energy after the launch. Clamp the live
+			// hips velocity as well as the initial throw spin so the whole penguin
+			// tumbles naturally instead of pinwheeling while ragdolled.
+			const FVector RootAngularVelocity = CharacterMesh->GetPhysicsAngularVelocityInDegrees(RagdollRootBone);
+			if (RootAngularVelocity.SizeSquared() > FMath::Square(PPPhysicalMaxRagdollAngularSpeedDegrees))
+			{
+				CharacterMesh->SetPhysicsAngularVelocityInDegrees(
+					RootAngularVelocity.GetClampedToMaxSize(PPPhysicalMaxRagdollAngularSpeedDegrees),
+					false,
+					RagdollRootBone);
+			}
+		}
+	}
+
 	if ((PhysicalState == EPPPhysicalState::Grounded || PhysicalState == EPPPhysicalState::Reactive) && Daze > 0.0f)
 	{
 		const float PreviousDaze = Daze;
@@ -115,13 +192,17 @@ void UPPPhysicalStateComponent::RequestRagdoll_Implementation(float DazeAmount)
 	}
 
 	AddDazeAuthoritative(FMath::Max(0.0f, DazeAmount));
+	const float RequestedRagdollSeconds = FMath::GetMappedRangeValueClamped(
+		FVector2D(0.0f, 10.0f),
+		FVector2D(0.85f, 1.6f),
+		DazeAmount);
 	if (Daze >= MaxDaze)
 	{
-		SetPhysicalStateAuthoritative(EPPPhysicalState::Unconscious, NaturalUnconsciousSeconds);
+		SetPhysicalStateAuthoritative(EPPPhysicalState::Unconscious, RequestedRagdollSeconds);
 	}
 	else
 	{
-		SetPhysicalStateAuthoritative(EPPPhysicalState::Ragdolled, NormalRagdollSeconds);
+		SetPhysicalStateAuthoritative(EPPPhysicalState::Ragdolled, RequestedRagdollSeconds);
 	}
 }
 
@@ -208,7 +289,7 @@ void UPPPhysicalStateComponent::RequestDebugRagdoll()
 		return;
 	}
 
-	SetPhysicalStateAuthoritative(EPPPhysicalState::Ragdolled);
+	SetPhysicalStateAuthoritative(EPPPhysicalState::Ragdolled, 1.25f);
 }
 
 void UPPPhysicalStateComponent::RequestDebugRecovery()
@@ -225,6 +306,34 @@ void UPPPhysicalStateComponent::RequestDebugRecovery()
 	}
 
 	RecoverFromCurrentState();
+}
+
+void UPPPhysicalStateComponent::RequestThrownRagdoll(const FVector& InitialVelocity, const FVector& InitialAngularVelocity)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	const float ThrowRagdollSeconds = FMath::GetMappedRangeValueClamped(
+		FVector2D(500.0f, 2600.0f),
+		FVector2D(1.0f, 3.0f),
+		InitialVelocity.Size());
+	SetPhysicalStateAuthoritative(EPPPhysicalState::Ragdolled, ThrowRagdollSeconds);
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
+	if (!CharacterMesh || !CharacterMesh->IsAnySimulatingPhysics())
+	{
+		return;
+	}
+
+	const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
+	CharacterMesh->SetPhysicsLinearVelocity(InitialVelocity, false, RagdollRootBone);
+	CharacterMesh->SetPhysicsAngularVelocityInDegrees(
+		InitialAngularVelocity.GetClampedToMaxSize(90.0f),
+		false,
+		RagdollRootBone);
+	CharacterMesh->WakeAllRigidBodies();
 }
 
 UPPPhysicalStateComponent* UPPPhysicalStateComponent::FindPhysicalStateComponent(const AActor* Actor)
@@ -260,14 +369,7 @@ void UPPPhysicalStateComponent::OnRep_PhysicalState()
 	}
 	else
 	{
-		const ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
-		const USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
-		const bool bWasRagdollVisual = CharacterMesh && CharacterMesh->IsAnySimulatingPhysics();
 		ExitRagdollVisualState();
-		if (bWasRagdollVisual && PhysicalState == EPPPhysicalState::Grounded)
-		{
-			PlayGetUpFrontAnimation();
-		}
 	}
 	OnPhysicalStateChanged.Broadcast(PhysicalState, GetDazeNormalized_Implementation());
 }
@@ -279,6 +381,13 @@ void UPPPhysicalStateComponent::OnRep_Daze()
 
 void UPPPhysicalStateComponent::ApplyImpactAuthoritative(const FPPImpactData& ImpactData)
 {
+	// The spinner can overlap again while the body is still tumbling. Do not
+	// stack repeated launch velocities or restart the ragdoll timer mid-fall.
+	if (IsRagdolled())
+	{
+		return;
+	}
+
 	float EffectiveSeverity = FMath::Clamp(ImpactData.Severity, 0.0f, 150.0f);
 	const bool bSpinnerImpact = ImpactData.InstigatorActor
 		&& (ImpactData.InstigatorActor->ActorHasTag(TEXT("PP_SpinnerObstacle"))
@@ -293,15 +402,18 @@ void UPPPhysicalStateComponent::ApplyImpactAuthoritative(const FPPImpactData& Im
 		// Timeline-driven rotating meshes can report a small/zero normal impulse even
 		// at high tangential speed, so preserve measured severity but guarantee that
 		// a confirmed spinner contact crosses the ragdoll threshold.
-		EffectiveSeverity = FMath::Max(EffectiveSeverity, 60.0f);
+		EffectiveSeverity = FMath::Max(EffectiveSeverity, PPPhysicalSpinnerMinimumSeverity);
 		AddDazeAuthoritative(FMath::GetMappedRangeValueClamped(
-			FVector2D(60.0f, 150.0f),
-			FVector2D(12.0f, 35.0f),
+			FVector2D(PPPhysicalSpinnerMinimumSeverity, 150.0f),
+			FVector2D(6.0f, 25.0f),
 			EffectiveSeverity));
 		LastKnockdownTimeSeconds = CurrentTime;
-		SetPhysicalStateAuthoritative(EPPPhysicalState::Ragdolled);
+		const float SpinnerRagdollSeconds = FMath::GetMappedRangeValueClamped(
+			FVector2D(PPPhysicalSpinnerMinimumSeverity, 150.0f),
+			FVector2D(0.85f, 2.25f),
+			EffectiveSeverity);
+		SetPhysicalStateAuthoritative(EPPPhysicalState::Ragdolled, SpinnerRagdollSeconds);
 		ApplyRagdollPropulsion(ImpactData, EffectiveSeverity);
-		BeginGroundedRecovery(1.5f);
 		return;
 	}
 
@@ -320,9 +432,13 @@ void UPPPhysicalStateComponent::ApplyImpactAuthoritative(const FPPImpactData& Im
 		const float DazeGain = EffectiveSeverity > 80.0f ? (ImpactData.bHeavyObstacle ? 50.0f : 40.0f) : 25.0f;
 		AddDazeAuthoritative(DazeGain);
 		LastKnockdownTimeSeconds = CurrentTime;
+		const float ImpactRagdollSeconds = FMath::GetMappedRangeValueClamped(
+			FVector2D(50.0f, 150.0f),
+			FVector2D(1.0f, 3.0f),
+			EffectiveSeverity);
 		SetPhysicalStateAuthoritative(
 			Daze >= MaxDaze ? EPPPhysicalState::Unconscious : EPPPhysicalState::Ragdolled,
-			Daze >= MaxDaze ? NaturalUnconsciousSeconds : NormalRagdollSeconds);
+			ImpactRagdollSeconds);
 	}
 }
 
@@ -331,6 +447,16 @@ void UPPPhysicalStateComponent::SetPhysicalStateAuthoritative(EPPPhysicalState N
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
 		return;
+	}
+
+	if (NewState == EPPPhysicalState::Ragdolled || NewState == EPPPhysicalState::Unconscious)
+	{
+		// Every ragdoll source gets a bounded launch/recovery window. This also
+		// protects debug and future callers that omit a duration.
+		StateDurationSeconds = FMath::Clamp(
+			StateDurationSeconds > 0.0f ? StateDurationSeconds : 1.25f,
+			0.85f,
+			3.0f);
 	}
 
 	PhysicalState = NewState;
@@ -368,6 +494,8 @@ void UPPPhysicalStateComponent::EnterRagdollVisualState()
 		}
 	}
 
+	USkeletalMeshComponent* CharacterMesh = OwnerCharacter->GetMesh();
+	const bool bUseStablePenguinRagdoll = UsesPPStablePenguinRagdoll(CharacterMesh);
 	if (UCharacterMovementComponent* MovementComponent = OwnerCharacter->GetCharacterMovement())
 	{
 		MovementComponent->StopMovementImmediately();
@@ -377,7 +505,7 @@ void UPPPhysicalStateComponent::EnterRagdollVisualState()
 	{
 		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	}
-	if (USkeletalMeshComponent* CharacterMesh = OwnerCharacter->GetMesh())
+	if (CharacterMesh)
 	{
 		CharacterMesh->SetCollisionProfileName(TEXT("Ragdoll"));
 		CharacterMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
@@ -392,25 +520,26 @@ void UPPPhysicalStateComponent::EnterRagdollVisualState()
 			if (BodyInstance)
 			{
 				BodyInstance->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-				BodyInstance->LinearDamping = 0.35f;
-				BodyInstance->AngularDamping = 1.15f;
-				BodyInstance->UpdateDampingProperties();
+				if (!bUseStablePenguinRagdoll)
+				{
+					BodyInstance->LinearDamping = 0.35f;
+					BodyInstance->AngularDamping = 1.15f;
+					BodyInstance->UpdateDampingProperties();
+				}
 			}
 		}
 		CharacterMesh->SetAllMotorsAngularPositionDrive(false, false, false);
 		CharacterMesh->SetAllMotorsAngularVelocityDrive(false, false, false);
 		CharacterMesh->SetAllMotorsAngularDriveParams(0.0f, 0.0f, 0.0f, false);
 		CharacterMesh->SetEnablePhysicsBlending(true);
-		// A full knockdown is controlled by Chaos only. Keeping the compact Penguin
-		// rig's locomotion pose evaluating here makes it hover and inflate against
-		// its own constraints instead of falling naturally under gravity.
 		CharacterMesh->bPauseAnims = true;
 		const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
-		if (!RagdollRootBone.IsNone())
+		if (!bUseStablePenguinRagdoll && !RagdollRootBone.IsNone())
 		{
 			CharacterMesh->SetAllBodiesBelowSimulatePhysics(RagdollRootBone, true, true);
 			CharacterMesh->SetAllBodiesBelowPhysicsBlendWeight(RagdollRootBone, 1.0f, false, true);
 		}
+		ConfigurePPStablePenguinRagdoll(CharacterMesh);
 		CharacterMesh->WakeAllRigidBodies();
 	}
 }
@@ -439,6 +568,9 @@ void UPPPhysicalStateComponent::ExitRagdollVisualState()
 		}
 		if (!RagdollRootBone.IsNone())
 		{
+			const FQuat RecoveryBodyRotation = CharacterMesh->GetBoneQuaternion(RagdollRootBone);
+			LastRecoveryBodyUp = RecoveryBodyRotation.GetUpVector();
+			LastRecoveryBodyRight = RecoveryBodyRotation.GetRightVector();
 			CharacterMesh->SetAllBodiesBelowPhysicsBlendWeight(RagdollRootBone, 0.0f, false, true);
 			CharacterMesh->SetAllBodiesBelowSimulatePhysics(RagdollRootBone, false, true);
 		}
@@ -448,6 +580,21 @@ void UPPPhysicalStateComponent::ExitRagdollVisualState()
 		CharacterMesh->bPauseAnims = false;
 		CharacterMesh->SetCollisionProfileName(TEXT("CharacterMesh"));
 		CharacterMesh->SetRelativeTransform(InitialMeshRelativeTransform);
+		if (UWorld* World = GetWorld(); World && Capsule)
+		{
+			FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PPRagdollRecoveryGround), false, OwnerCharacter);
+			FHitResult GroundHit;
+			const float CapsuleHalfHeight = Capsule->GetScaledCapsuleHalfHeight();
+			if (World->LineTraceSingleByChannel(
+				GroundHit,
+				RecoveryLocation + FVector(0.0f, 0.0f, CapsuleHalfHeight + 100.0f),
+				RecoveryLocation - FVector(0.0f, 0.0f, CapsuleHalfHeight + 250.0f),
+				ECC_Visibility,
+				QueryParams))
+			{
+				RecoveryLocation = GroundHit.ImpactPoint + FVector(0.0f, 0.0f, CapsuleHalfHeight);
+			}
+		}
 		OwnerCharacter->SetActorLocation(RecoveryLocation, false, nullptr, ETeleportType::TeleportPhysics);
 	}
 	if (Capsule)
@@ -545,17 +692,24 @@ void UPPPhysicalStateComponent::ApplyRagdollPropulsion(const FPPImpactData& Impa
 			? (OwnerCharacter->GetActorLocation() - ImpactData.InstigatorActor->GetActorLocation()).GetSafeNormal()
 			: OwnerCharacter->GetActorForwardVector();
 	}
-	PropelDirection.Z = FMath::Max(PropelDirection.Z, 0.22f);
+	// Spinner normals can contain a large vertical impulse. Keep all knockback
+	// predominantly lateral so a rotating obstacle behaves like a throw, not a launcher.
+	PropelDirection.Z = FMath::Clamp(PropelDirection.Z, 0.08f, 0.20f);
 	PropelDirection.Normalize();
-	const float PropelSpeed = FMath::GetMappedRangeValueClamped(
-		FVector2D(60.0f, 150.0f),
-		FVector2D(500.0f, 1450.0f),
+	const float SpinnerThrowStrength = FMath::GetMappedRangeValueClamped(
+		FVector2D(PPPhysicalSpinnerMinimumSeverity, PPPhysicalSpinnerFullThrowSeverity),
+		FVector2D(0.0f, 1.0f),
 		EffectiveSeverity);
-	CharacterMesh->SetAllPhysicsLinearVelocity(PropelDirection * PropelSpeed, false);
+	const float PropelSpeed = FMath::Lerp(
+		PPPhysicalSpinnerHalfThrowSpeed,
+		PPPhysicalSpinnerFullThrowSpeed,
+		SpinnerThrowStrength);
+	const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
+	CharacterMesh->SetPhysicsLinearVelocity(PropelDirection * PropelSpeed, false, RagdollRootBone);
 	CharacterMesh->WakeAllRigidBodies();
 }
 
-void UPPPhysicalStateComponent::PlayGetUpFrontAnimation()
+void UPPPhysicalStateComponent::PlayGetUpAnimation()
 {
 	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
 	USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
@@ -564,7 +718,7 @@ void UPPPhysicalStateComponent::PlayGetUpFrontAnimation()
 		return;
 	}
 
-	UAnimSequence* GetUpFrontAnimation = nullptr;
+	UAnimSequence* GetUpAnimation = nullptr;
 	if (UDataTable* MascotAnimationTable = LoadObject<UDataTable>(
 		nullptr,
 		TEXT("/Game/PairPressure/Data/DT_MascotAnimations.DT_MascotAnimations")))
@@ -574,30 +728,40 @@ void UPPPhysicalStateComponent::PlayGetUpFrontAnimation()
 			TEXT("Physical-state get-up"),
 			false))
 		{
-			GetUpFrontAnimation = PenguinRow->GetUpFront.LoadSynchronous();
+			const float SideUpAmount = LastRecoveryBodyRight.Z;
+			if (FMath::Abs(SideUpAmount) >= 0.45f)
+			{
+				GetUpAnimation = (SideUpAmount > 0.0f ? PenguinRow->GetUpLeft : PenguinRow->GetUpRight).LoadSynchronous();
+			}
+			else
+			{
+				// The table has a front recovery for both belly/back landings and
+				// side-specific recovery clips for lateral landings.
+				GetUpAnimation = PenguinRow->GetUpFront.LoadSynchronous();
+			}
 		}
 	}
-	if (!GetUpFrontAnimation)
+	if (!GetUpAnimation)
 	{
-		GetUpFrontAnimation = LoadObject<UAnimSequence>(
+		GetUpAnimation = LoadObject<UAnimSequence>(
 			nullptr,
 			TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_wakesup1.AS_Penguin_UE_Anim_wakesup1"));
 	}
-	if (!GetUpFrontAnimation)
+	if (!GetUpAnimation)
 	{
 		return;
 	}
 
 	UClass* LocomotionAnimClass = CharacterMesh->GetAnimClass();
 	CharacterMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
-	CharacterMesh->SetAnimation(GetUpFrontAnimation);
+	CharacterMesh->SetAnimation(GetUpAnimation);
 	CharacterMesh->Play(false);
 	if (UCharacterMovementComponent* MovementComponent = OwnerCharacter->GetCharacterMovement())
 	{
 		MovementComponent->DisableMovement();
 	}
 
-	const float AnimationDuration = FMath::Max(0.1f, GetUpFrontAnimation->GetPlayLength());
+	const float AnimationDuration = FMath::Max(0.1f, GetUpAnimation->GetPlayLength());
 	TWeakObjectPtr<ACharacter> WeakOwnerCharacter(OwnerCharacter);
 	TWeakObjectPtr<USkeletalMeshComponent> WeakCharacterMesh(CharacterMesh);
 	FTimerHandle GetUpTimerHandle;
@@ -637,6 +801,13 @@ void UPPPhysicalStateComponent::RecoverFromCurrentState()
 		return;
 	}
 
+	if (IsRagdolled() && !IsRagdollRestingOnGround())
+	{
+		// The duration controls when recovery may begin; movement remains locked
+		// until the body has actually fallen and settled onto a traced surface.
+		BeginGroundedRecovery(0.1f);
+		return;
+	}
 	if (PhysicalState == EPPPhysicalState::Unconscious)
 	{
 		Daze = FMath::Min(Daze, MaxDaze * 0.8f);

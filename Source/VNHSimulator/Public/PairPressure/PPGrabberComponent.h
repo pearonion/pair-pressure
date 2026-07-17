@@ -148,6 +148,9 @@ private:
 	void ServerThrowHeldItem(FVector_NetQuantizeNormal ThrowDirection);
 
 	UFUNCTION(Server, Reliable)
+	void ServerThrowHeldItemCharged(FVector_NetQuantizeNormal ThrowDirection, float ChargeAlpha);
+
+	UFUNCTION(Server, Reliable)
 	void ServerRequestDirectionalEscape(FVector_NetQuantizeNormal EscapeDirection);
 
 	UFUNCTION(Server, Reliable)
@@ -180,6 +183,9 @@ private:
 	void UpdatePlayerGrab(float DeltaTime);
 	void UpdatePushable(float DeltaTime);
 	void UpdateLedgeGrab(float DeltaTime);
+	bool IsGrabDummyPenguin(const ACharacter* TargetCharacter) const;
+	void BeginGrabDummyCarry(ACharacter* TargetCharacter);
+	void EndGrabDummyCarry();
 	void BeginIncomingPlayerGrab(AActor* NewIncomingGrabber);
 	void EndIncomingPlayerGrab(AActor* PreviousIncomingGrabber, bool bApplyImmunity);
 	void ApplyIncomingGrabRagdoll(bool bEnableRagdoll);
@@ -199,6 +205,7 @@ private:
 	FVector GetGrabOrigin() const;
 	FVector GetHandCarryLocation(float ForwardDistance) const;
 	FVector GetPlayerCarryLocation() const;
+	FVector GetGrabDummyCarryLocation() const;
 	void SetGrabPresentation(EPPGrabState NewGrabState, AActor* NewGrabTarget);
 
 	UPROPERTY(Transient)
@@ -226,7 +233,9 @@ private:
 	FVector LockedPushAxis = FVector::ForwardVector;
 	FRotator LockedOwnerRotation = FRotator::ZeroRotator;
 	FRotator LockedGrabbedRotation = FRotator::ZeroRotator;
+	FRotator LockedGrabDummyCarryRotation = FRotator::ZeroRotator;
 	FTransform IncomingGrabInitialMeshRelativeTransform;
+	TWeakObjectPtr<ACharacter> CarriedGrabDummy;
 	FName ActivePlayerGrabBone = NAME_None;
 	float ConstraintForceEstimate = 0.0f;
 	float SustainedGrabSeconds = 0.0f;

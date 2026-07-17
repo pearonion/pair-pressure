@@ -82,7 +82,9 @@ void UPPImpactSensorComponent::HandleComponentHit(
 			|| OtherActor->GetName().Contains(TEXT("Spinner_V2"), ESearchCase::IgnoreCase));
 	if (bSpinnerImpact)
 	{
-		Severity = FMath::Max(Severity, 60.0f);
+		// Slow spinner grazes should still topple the mascot, but must not be
+		// promoted to a mid-strength launch.
+		Severity = FMath::Max(Severity, 30.0f);
 	}
 	if (Severity < MinimumReportedSeverity)
 	{

@@ -1642,10 +1642,10 @@ void AVNHPlayerController::HandlePairPressureGrabPressed()
 
 void AVNHPlayerController::HandlePairPressureGrabReleased()
 {
-	if (!bPairPressureGrabInputDown)
-	{
-		return;
-	}
+	// Enhanced Input can deliver both Completed and Canceled for the same mouse
+	// release.  Do not let the bookkeeping guard suppress the actual release:
+	// the server grab state is the source of truth, and a duplicate release is
+	// harmless while a missed ledge release leaves the player visually hanging.
 	bPairPressureGrabInputDown = false;
 
 	APawn* ControlledPawn = GetPawn();
@@ -2044,7 +2044,7 @@ void AVNHPlayerController::ServerPerformUniversalAction_Implementation(EVNHUnive
 void AVNHPlayerController::ServerThrowHeldProp_Implementation(float ChargeAlpha, FVector_NetQuantizeNormal ThrowDirection)
 {
 	AVNHShopperCharacter* Shopper = GetPawn<AVNHShopperCharacter>();
-	if (IsPairPressureInputTestWorld(GetWorld()) && Shopper)
+	if (Shopper)
 	{
 		if (UPPGrabberComponent* GrabberComponent = Shopper->FindComponentByClass<UPPGrabberComponent>();
 			GrabberComponent
@@ -2667,10 +2667,9 @@ void AVNHPlayerController::HandleJumpPressed()
 
 void AVNHPlayerController::HandleJumpReleased()
 {
-	if (ACharacter* ControlledCharacter = Cast<ACharacter>(GetPawn()))
-	{
-		ControlledCharacter->StopJumping();
-	}
+	// Pair Pressure uses JumpMaxHoldTime = 0 for a fixed-height jump. Clearing
+	// the press immediately on key release can race CharacterMovement's next
+	// update and turn a quick tap into a skipped jump.
 }
 
 void AVNHPlayerController::HandleCrouchPressed()
@@ -2737,7 +2736,6 @@ void AVNHPlayerController::HandleThrowChargePressed()
 	}
 	bThrowInputDown = true;
 
-	if (IsPairPressureInputTestWorld(GetWorld()))
 	{
 		APawn* ControlledPawn = GetPawn();
 		UPPGrabberComponent* GrabberComponent = ControlledPawn
@@ -2792,7 +2790,10 @@ void AVNHPlayerController::HandleThrowChargeReleased()
 			|| IPPGrabber::Execute_GetGrabState(GrabberComponent) == EPPGrabState::GrabbingPlayer))
 	{
 		const FVector NativeThrowDirection = (ControlledPawn->GetActorForwardVector() + FVector::UpVector * 0.18f).GetSafeNormal();
-		ServerThrowHeldProp(ChargeAlpha, NativeThrowDirection);
+		// The grab component owns the special dummy carry state.  Route the charge
+		// directly through it so client input reaches its owning-server RPC instead
+		// of depending on the controller's generic held-prop route.
+		GrabberComponent->RequestChargedThrow(NativeThrowDirection, ChargeAlpha);
 		UpdateThrowChargeIndicator();
 		return;
 	}
@@ -3684,6 +3685,13 @@ void AVNHPlayerController::PollAlienKeyboardInput()
 	if (!bEnablePolledAlienKeyboardInput || !IsLocalController())
 	{
 		return;
+	}
+
+	// Keep mouse-up authoritative even if an Enhanced Input cancellation is lost
+	// while the character transitions into a ledge hang.
+	if (bPairPressureGrabInputDown && !IsInputKeyDown(EKeys::LeftMouseButton))
+	{
+		HandlePairPressureGrabReleased();
 	}
 
 	if (IsCharacterCustomizerScreenOpen(this))

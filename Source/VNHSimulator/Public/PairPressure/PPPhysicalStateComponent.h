@@ -53,6 +53,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Pair Pressure|Physical State|Debug")
 	void RequestDebugRecovery();
 
+	// Authority-only throw entry point used by the dedicated grab dummy. It
+	// starts the normal ragdoll/recovery path while preserving an authored launch.
+	void RequestThrownRagdoll(const FVector& InitialVelocity, const FVector& InitialAngularVelocity);
+
 	UPROPERTY(BlueprintAssignable, Category = "Pair Pressure|Physical State")
 	FPPPhysicalStateChanged OnPhysicalStateChanged;
 
@@ -87,7 +91,7 @@ private:
 	void BeginGroundedRecovery(float RequiredGroundedSeconds);
 	bool IsRagdollRestingOnGround() const;
 	void ApplyRagdollPropulsion(const FPPImpactData& ImpactData, float EffectiveSeverity);
-	void PlayGetUpFrontAnimation();
+	void PlayGetUpAnimation();
 	void RecoverFromCurrentState();
 	void AddDazeAuthoritative(float DazeAmount);
 
@@ -115,5 +119,7 @@ private:
 	float ReviveProgressSeconds = 0.0f;
 	double LastKnockdownTimeSeconds = -100.0;
 	FTransform InitialMeshRelativeTransform;
+	FVector LastRecoveryBodyUp = FVector::UpVector;
+	FVector LastRecoveryBodyRight = FVector::RightVector;
 	FTimerHandle RecoveryTimerHandle;
 };

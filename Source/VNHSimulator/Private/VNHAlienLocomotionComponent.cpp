@@ -95,6 +95,12 @@ void UVNHAlienLocomotionComponent::TickComponent(float DeltaTime, ELevelTick Tic
 
 	const FVector DesiredDirection = BuildCameraRelativeMoveDirection();
 	UpdateInstability(DeltaTime, DesiredDirection);
+	if (bIsFalling)
+	{
+		// Ground wobble is intentionally expressive, but feeding it into air
+		// steering causes visible mid-air body twitching.
+		LocomotionState.WobbleDegrees = 0.0f;
+	}
 	UpdateSpeed(DeltaTime, DesiredDirection);
 	ApplyMovement(DeltaTime, DesiredDirection);
 	UpdateBodyFacing(DeltaTime, DesiredDirection);
@@ -187,7 +193,7 @@ bool UVNHAlienLocomotionComponent::ShouldDriveLocomotion() const
 		? GetOwner()->FindComponentByClass<UPPPlayerActionRouterComponent>()
 		: nullptr;
 	return Controller && Controller->IsPlayerController() && OwnerCharacter->IsLocallyControlled()
-		&& (!ActionRouter || !ActionRouter->IsAirDiveActive());
+		&& (!ActionRouter || !ActionRouter->IsAirDiveRecovering());
 }
 
 FVector UVNHAlienLocomotionComponent::BuildCameraRelativeMoveDirection() const
@@ -288,7 +294,7 @@ void UVNHAlienLocomotionComponent::UpdateSpeed(float DeltaTime, const FVector& D
 	}
 }
 
-void UVNHAlienLocomotionComponent::ApplyMovement(float DeltaTime, const FVector& DesiredDirection)
+void UVNHAlienLocomotionComponent::ApplyMovement(float /*DeltaTime*/, const FVector& DesiredDirection)
 {
 	if (!OwnerCharacter.IsValid() || !MovementComponent.IsValid() || DesiredDirection.IsNearlyZero()
 		|| GrabMovementMultiplier <= KINDA_SMALL_NUMBER)
@@ -305,24 +311,13 @@ void UVNHAlienLocomotionComponent::ApplyMovement(float DeltaTime, const FVector&
 		}
 
 		const float AirControlMultiplier = GetAirborneControlMultiplier();
-		MovementComponent->AirControl = DefaultAirControl * AirControlMultiplier;
+		MovementComponent->AirControl = FMath::Max(DefaultAirControl, 0.75f) * AirControlMultiplier;
 		MovementComponent->MaxAcceleration = AirborneAcceleration;
 		MovementComponent->MaxWalkSpeed = FMath::Max(1.0f, AirborneHorizontalSpeedCap);
-
-		const FVector HorizontalVelocity = OwnerCharacter->GetVelocity().GetSafeNormal2D();
-		FVector LimitedDirection = DesiredDirection.GetSafeNormal2D();
-		if (!HorizontalVelocity.IsNearlyZero())
-		{
-			const float CurrentYaw = HorizontalVelocity.Rotation().Yaw;
-			const float DesiredYaw = LimitedDirection.Rotation().Yaw;
-			const float MaxYawStep = AirborneSteeringDegreesPerSecond * AirControlMultiplier * DeltaTime;
-			const float LimitedYaw = CurrentYaw + FMath::Clamp(
-				FMath::FindDeltaAngleDegrees(CurrentYaw, DesiredYaw),
-				-MaxYawStep,
-				MaxYawStep);
-			LimitedDirection = FRotator(0.0f, LimitedYaw, 0.0f).Vector();
-		}
-		OwnerCharacter->AddMovementInput(LimitedDirection, AirControlMultiplier);
+		// Apply the air-control multiplier only through CharacterMovement. Full
+		// camera-relative input keeps forward-plus-A/D perceptible without the
+		// prior second multiplier reducing it to near zero.
+		OwnerCharacter->AddMovementInput(DesiredDirection.GetSafeNormal2D(), 1.0f);
 		return;
 	}
 
@@ -371,9 +366,11 @@ void UVNHAlienLocomotionComponent::UpdateBodyFacing(float /*DeltaTime*/, const F
 		return;
 	}
 
-	const float WobbleYaw = !DesiredDirection.IsNearlyZero() ? LocomotionState.WobbleDegrees : 0.0f;
+	const float WobbleYaw = !MovementComponent->IsFalling() && !DesiredDirection.IsNearlyZero()
+		? LocomotionState.WobbleDegrees
+		: 0.0f;
 	const float TargetBodyYaw = DesiredDirection.Rotation().Yaw + WobbleYaw;
-	const float AirborneTurnMultiplier = MovementComponent->IsFalling() ? 0.30f * GetAirborneControlMultiplier() : 1.0f;
+	const float AirborneTurnMultiplier = MovementComponent->IsFalling() ? 0.75f * GetAirborneControlMultiplier() : 1.0f;
 	MovementComponent->RotationRate = FRotator(0.0f, GetBodyTurnRateDegrees() * GrabTurnMultiplier * AirborneTurnMultiplier, 0.0f);
 	LocomotionState.BodyYawDeltaDegrees = FMath::FindDeltaAngleDegrees(
 		OwnerCharacter->GetActorRotation().Yaw,
@@ -409,7 +406,7 @@ bool UVNHAlienLocomotionComponent::IsControlledAirSteeringAllowed() const
 		? OwnerActor->FindComponentByClass<UPPPlayerActionRouterComponent>()
 		: nullptr;
 	return (!PhysicalState || (!PhysicalState->IsRagdolled() && !PhysicalState->IsUnconscious()))
-		&& (!ActionRouter || !ActionRouter->IsAirDiveActive());
+		&& (!ActionRouter || !ActionRouter->IsAirDiveRecovering());
 }
 
 void UVNHAlienLocomotionComponent::UpdateTetherTensionFromWorld()
@@ -468,6 +465,11 @@ void UVNHAlienLocomotionComponent::UpdateAnimationRate()
 {
 	if (!OwnerCharacter.IsValid() || !OwnerCharacter->GetMesh())
 	{
+		return;
+	}
+	if (MovementComponent.IsValid() && MovementComponent->IsFalling())
+	{
+		OwnerCharacter->GetMesh()->GlobalAnimRateScale = 1.0f;
 		return;
 	}
 

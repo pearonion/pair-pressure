@@ -343,8 +343,11 @@ private:
 	FTimerHandle UniversalActionMovementLockTimerHandle;
 	FTimerHandle PairPressurePresentationTimerHandle;
 	FTimerHandle PairPressureDiveRecoveryPresentationTimerHandle;
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimSequence> PairPressureDiveAnimation;
 	double PairPressureDivePresentationStartTimeSeconds = -1.0;
 	bool bPairPressureActionPresentationActive = false;
+	bool bPairPressureDiveRecoveryPresentationPlayed = false;
 	bool bFirstPersonViewEnabled = false;
 	bool bStandingStillPenaltyApplied = false;
 	bool bWasWatchedByHunter = false;

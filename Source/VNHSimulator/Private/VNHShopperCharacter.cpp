@@ -143,6 +143,7 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 	AIControllerClass = AVNHShopperAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 	bUseControllerRotationYaw = false;
+	JumpMaxHoldTime = 0.0f;
 
 	if (UCapsuleComponent* ShopperCapsule = GetCapsuleComponent())
 	{
@@ -276,11 +277,22 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 void AVNHShopperCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	// Do this at runtime as well as on the CDO so an inherited Blueprint cannot
+	// reintroduce variable-height jumps through a stale default value.
+	JumpMaxHoldTime = 0.0f;
+	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	{
+		MovementComponent->JumpZVelocity = 650.0f;
+	}
 
 	ConfigureCharacterVisuals();
 	ApplyCharacterCustomization();
 	if (ShouldUsePairPressureMascotVisuals())
 	{
+		// Load before the first input so diving never waits on synchronous asset IO.
+		PairPressureDiveAnimation = LoadObject<UAnimSequence>(
+			nullptr,
+			TEXT("/Game/CuteChubbyPenguin_V2/Content/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_falls_forward.AS_Penguin_UE_falls_forward"));
 		// Camera anchoring must follow physics every frame while the capsule is
 		// disabled and the mascot body is being propelled or carried.
 		PrimaryActorTick.TickInterval = 0.0f;
@@ -1144,7 +1156,9 @@ void AVNHShopperCharacter::UpdateRagdollCameraAnchor(float DeltaSeconds)
 
 bool AVNHShopperCharacter::CanJumpInternal_Implementation() const
 {
-	return Super::CanJumpInternal_Implementation()
+	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	return (!MovementComponent || !MovementComponent->IsFalling())
+		&& Super::CanJumpInternal_Implementation()
 		&& (!PairPressureGrabber || PairPressureGrabber->CanJumpOrDive())
 		&& (!PairPressureActionRouter || !PairPressureActionRouter->IsAirDiveActive());
 }
@@ -1307,6 +1321,14 @@ void AVNHShopperCharacter::HandlePairPressureGrabStateChanged(EPPGrabState NewGr
 	}
 	if (NewGrabState == EPPGrabState::Releasing)
 	{
+		if (PairPressureGrabber
+			&& PairPressureGrabber->GetActiveGrabProfile().TargetType == EPPGrabTargetType::LargePushable)
+		{
+			GetWorldTimerManager().ClearTimer(PairPressurePresentationTimerHandle);
+			bPairPressureActionPresentationActive = false;
+			RestorePairPressureLocomotionAnimation();
+			return;
+		}
 		UAnimSequence* ReleaseAnimation = ResolvePairPressureMascotAnimation(NewGrabState);
 		PlayPairPressureMascotAnimation(ReleaseAnimation, false);
 		GetWorldTimerManager().SetTimer(PairPressurePresentationTimerHandle, this, &AVNHShopperCharacter::RestorePairPressureLocomotionAnimation, 0.22f, false);
@@ -1314,6 +1336,17 @@ void AVNHShopperCharacter::HandlePairPressureGrabStateChanged(EPPGrabState NewGr
 	}
 	if (NewGrabState == EPPGrabState::HangingFromLedge)
 	{
+		// A ledge handoff interrupts a dive. Clear both the delayed recovery and
+		// any recovery montage that may already have begun on the landing frame.
+		bPairPressureDiveRecoveryPresentationPlayed = true;
+		GetWorldTimerManager().ClearTimer(PairPressureDiveRecoveryPresentationTimerHandle);
+		if (USkeletalMeshComponent* CharacterMesh = GetMesh())
+		{
+			if (UAnimInstance* AnimInstance = CharacterMesh->GetAnimInstance())
+			{
+				AnimInstance->StopSlotAnimation(0.03f, TEXT("DefaultSlot"));
+			}
+		}
 		PlayPairPressureMascotAnimation(ResolvePairPressureMascotAnimation(NewGrabState), true);
 		return;
 	}
@@ -1350,14 +1383,14 @@ void AVNHShopperCharacter::HandlePairPressureAirDiveStateChanged(bool bIsDiving)
 	if (!bIsDiving)
 	{
 		PairPressureDivePresentationStartTimeSeconds = -1.0;
+		bPairPressureDiveRecoveryPresentationPlayed = false;
 		GetWorldTimerManager().ClearTimer(PairPressureDiveRecoveryPresentationTimerHandle);
 		RestorePairPressureLocomotionAnimation();
 		return;
 	}
 	PairPressureDivePresentationStartTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
-	UAnimSequence* DiveAnimation = LoadObject<UAnimSequence>(
-		nullptr,
-		TEXT("/Game/CuteChubbyPenguin_V2/Content/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_falls_forward.AS_Penguin_UE_falls_forward"));
+	bPairPressureDiveRecoveryPresentationPlayed = false;
+	UAnimSequence* DiveAnimation = PairPressureDiveAnimation.Get();
 	USkeletalMeshComponent* CharacterMesh = GetMesh();
 	UAnimInstance* AnimInstance = CharacterMesh ? CharacterMesh->GetAnimInstance() : nullptr;
 	if (DiveAnimation && AnimInstance && !CharacterMesh->IsAnySimulatingPhysics())
@@ -1369,24 +1402,23 @@ void AVNHShopperCharacter::HandlePairPressureAirDiveStateChanged(bool bIsDiving)
 			TEXT("DefaultSlot"),
 			0.0f,
 			0.01f,
-			1.0f,
+			1.12f,
 			9999,
 			-1.0f,
-			0.0f);
+			0.06f);
 	}
 }
 
 void AVNHShopperCharacter::HandlePairPressureAirDiveRecoveryStateChanged(bool bIsRecovering)
 {
 	GetWorldTimerManager().ClearTimer(PairPressureDiveRecoveryPresentationTimerHandle);
-	if (!bIsRecovering || !GetWorld())
+	if (!bIsRecovering || !GetWorld() || bPairPressureDiveRecoveryPresentationPlayed)
 	{
 		return;
 	}
+	bPairPressureDiveRecoveryPresentationPlayed = true;
 
-	UAnimSequence* DiveAnimation = LoadObject<UAnimSequence>(
-		nullptr,
-		TEXT("/Game/CuteChubbyPenguin_V2/Content/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_falls_forward.AS_Penguin_UE_falls_forward"));
+	UAnimSequence* DiveAnimation = PairPressureDiveAnimation.Get();
 	USkeletalMeshComponent* CharacterMesh = GetMesh();
 	UAnimInstance* AnimInstance = CharacterMesh ? CharacterMesh->GetAnimInstance() : nullptr;
 	if (DiveAnimation && AnimInstance && !CharacterMesh->IsAnySimulatingPhysics())
@@ -1406,7 +1438,7 @@ void AVNHShopperCharacter::HandlePairPressureAirDiveRecoveryStateChanged(bool bI
 		PairPressureDiveRecoveryPresentationTimerHandle,
 		this,
 		&AVNHShopperCharacter::PlayPairPressureDiveRecoveryAnimation,
-		0.75f,
+		0.60f,
 		false);
 }
 

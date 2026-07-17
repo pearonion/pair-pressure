@@ -14,6 +14,7 @@ class VNHSIMULATOR_API UPPPlayerActionRouterComponent : public UActorComponent
 
 public:
 	UPPPlayerActionRouterComponent();
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	UFUNCTION(BlueprintCallable, Category = "Pair Pressure|Actions")
@@ -24,6 +25,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Pair Pressure|Actions")
 	void NotifyLanded();
+
+	// Server-side handoff used when an active air dive catches a ledge.
+	void CancelAirDiveForLedgeGrab();
 
 	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Actions")
 	bool CanAirDive() const;
@@ -66,6 +70,7 @@ private:
 	void PerformDiveAuthoritative();
 	void BeginDiveRecovery();
 	void FinishDiveRecovery();
+	void CancelInterruptedDive();
 
 	UPROPERTY(Replicated)
 	bool bAirDiveArmed = false;
@@ -86,10 +91,10 @@ private:
 	float MinimumDivePresentationSeconds = 0.56f;
 
 	UPROPERTY(EditAnywhere, Category = "Pair Pressure|Actions|Dive", meta = (ClampMin = "0.0"))
-	float DiveLandingRecoverySeconds = 0.52f;
+	float DiveLandingRecoverySeconds = 0.42f;
 
 	UPROPERTY(EditAnywhere, Category = "Pair Pressure|Actions|Dive", meta = (ClampMin = "0.0"))
-	float DiveLandingGetUpDelaySeconds = 0.75f;
+	float DiveLandingGetUpDelaySeconds = 0.60f;
 
 	double DiveStartTimeSeconds = -1.0;
 	FTimerHandle DiveRecoveryTimerHandle;

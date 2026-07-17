@@ -10,8 +10,30 @@
 
 UPPPlayerActionRouterComponent::UPPPlayerActionRouterComponent()
 {
-	PrimaryComponentTick.bCanEverTick = false;
+	PrimaryComponentTick.bCanEverTick = true;
 	SetIsReplicatedByDefault(true);
+}
+
+void UPPPlayerActionRouterComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+{
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+	if (!bAirDiveActive || bAirDiveRecoveryActive)
+	{
+		return;
+	}
+
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	UCharacterMovementComponent* OwnerMovement = OwnerCharacter ? OwnerCharacter->GetCharacterMovement() : nullptr;
+	const UPPPhysicalStateComponent* PhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(GetOwner());
+	const UPPGrabberComponent* GrabberComponent = GetOwner()
+		? GetOwner()->FindComponentByClass<UPPGrabberComponent>()
+		: nullptr;
+	if (!OwnerMovement || !OwnerMovement->IsFalling()
+		|| (PhysicalState && PhysicalState->IsRagdolled())
+		|| (GrabberComponent && GrabberComponent->GetGrabState_Implementation() != EPPGrabState::None))
+	{
+		CancelInterruptedDive();
+	}
 }
 
 void UPPPlayerActionRouterComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -62,6 +84,24 @@ void UPPPlayerActionRouterComponent::NotifyLanded()
 	}
 }
 
+void UPPPlayerActionRouterComponent::CancelAirDiveForLedgeGrab()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority() || !bAirDiveActive)
+	{
+		return;
+	}
+
+	if (GetWorld())
+	{
+		GetWorld()->GetTimerManager().ClearTimer(DiveRecoveryTimerHandle);
+	}
+	bAirDiveArmed = false;
+	bAirDiveRecoveryActive = false;
+	OnRep_AirDiveRecoveryActive();
+	bAirDiveActive = false;
+	OnRep_AirDiveActive();
+}
+
 bool UPPPlayerActionRouterComponent::CanAirDive() const
 {
 	const ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
@@ -70,7 +110,11 @@ bool UPPPlayerActionRouterComponent::CanAirDive() const
 		? GetOwner()->FindComponentByClass<UPPGrabberComponent>()
 		: nullptr;
 	const UPPPhysicalStateComponent* PhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(GetOwner());
-	return bAirDiveArmed && !bAirDiveActive && OwnerMovement && OwnerMovement->IsFalling()
+	// The jump notification and the dive key can arrive in either order across
+	// the client/server boundary. While ascending from a jump, permit the dive
+	// immediately instead of waiting for the arm RPC to replicate back.
+	const bool bIsJumpAscent = OwnerMovement && OwnerMovement->IsFalling() && OwnerMovement->Velocity.Z > 0.0f;
+	return (bAirDiveArmed || bIsJumpAscent) && !bAirDiveActive && OwnerMovement && OwnerMovement->IsFalling()
 		&& (!PhysicalState || (!PhysicalState->IsRagdolled() && !PhysicalState->IsUnconscious()))
 		&& (!GrabberComponent || GrabberComponent->CanJumpOrDive());
 }
@@ -154,11 +198,8 @@ void UPPPlayerActionRouterComponent::PerformDiveAuthoritative()
 			DiveDirection = FVector::ForwardVector;
 		}
 		const float ExistingHorizontalSpeed = OwnerCharacter->GetVelocity().Size2D();
-		const float AppliedHorizontalSpeed = FMath::Max(DiveHorizontalSpeed, ExistingHorizontalSpeed);
-		OwnerCharacter->LaunchCharacter(
-			DiveDirection * AppliedHorizontalSpeed + FVector(0.0f, 0.0f, DiveVerticalSpeed),
-			true,
-			true);
+		const float AppliedHorizontalSpeed = FMath::Max(DiveHorizontalSpeed + 70.0f, ExistingHorizontalSpeed + 55.0f);
+		OwnerCharacter->LaunchCharacter(DiveDirection * AppliedHorizontalSpeed, true, false);
 	}
 }
 
@@ -211,6 +252,21 @@ void UPPPlayerActionRouterComponent::FinishDiveRecovery()
 			OwnerMovement->SetMovementMode(MOVE_Walking);
 		}
 	}
+}
+
+void UPPPlayerActionRouterComponent::CancelInterruptedDive()
+{
+	if (!bAirDiveActive || bAirDiveRecoveryActive)
+	{
+		return;
+	}
+	if (GetWorld())
+	{
+		GetWorld()->GetTimerManager().ClearTimer(DiveRecoveryTimerHandle);
+	}
+	bAirDiveArmed = false;
+	bAirDiveActive = false;
+	OnRep_AirDiveActive();
 }
 
 void UPPPlayerActionRouterComponent::BeginAssist()

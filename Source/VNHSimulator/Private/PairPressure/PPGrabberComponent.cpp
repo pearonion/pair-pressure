@@ -138,16 +138,21 @@ void UPPGrabberComponent::BeginGrab_Implementation(const FVector& CameraForward)
 	{
 		return;
 	}
-	if (const UPPPlayerActionRouterComponent* ActionRouter = OwnerActor->FindComponentByClass<UPPPlayerActionRouterComponent>();
-		ActionRouter && ActionRouter->IsAirDiveActive())
-	{
-		return;
-	}
-
 	const FVector SafeCameraForward = CameraForward.GetSafeNormal();
 	if (SafeCameraForward.IsNearlyZero())
 	{
 		return;
+	}
+	if (const UPPPlayerActionRouterComponent* ActionRouter = OwnerActor->FindComponentByClass<UPPPlayerActionRouterComponent>();
+		ActionRouter && ActionRouter->IsAirDiveActive())
+	{
+		// Dives can hand off directly to an authored ledge, but must not turn into
+		// a general mid-air pickup or player-grab action.
+		const FPPGrabTargetData DiveTarget = FindBestTarget(SafeCameraForward);
+		if (!DiveTarget.IsValid() || DiveTarget.Profile.TargetType != EPPGrabTargetType::LedgeOrHandle)
+		{
+			return;
+		}
 	}
 
 	if (!OwnerActor->HasAuthority())
@@ -243,11 +248,24 @@ void UPPGrabberComponent::RequestHeldItemThrow(const FVector& ThrowDirection)
 void UPPGrabberComponent::RequestChargedThrow(const FVector& ThrowDirection, float ChargeAlpha)
 {
 	AActor* OwnerActor = GetOwner();
-	if (!OwnerActor || !OwnerActor->HasAuthority())
+	if (!OwnerActor)
 	{
 		return;
 	}
-	PerformHeldItemThrow(ThrowDirection.GetSafeNormal(), FMath::Clamp(ChargeAlpha, 0.0f, 1.0f));
+
+	const FVector SafeThrowDirection = ThrowDirection.GetSafeNormal();
+	if (SafeThrowDirection.IsNearlyZero())
+	{
+		return;
+	}
+
+	const float ClampedChargeAlpha = FMath::Clamp(ChargeAlpha, 0.0f, 1.0f);
+	if (!OwnerActor->HasAuthority())
+	{
+		ServerThrowHeldItemCharged(SafeThrowDirection, ClampedChargeAlpha);
+		return;
+	}
+	PerformHeldItemThrow(SafeThrowDirection, ClampedChargeAlpha);
 }
 
 void UPPGrabberComponent::RequestDirectionalEscape(const FVector& EscapeDirection)
@@ -305,6 +323,11 @@ void UPPGrabberComponent::ServerReleaseGrab_Implementation()
 void UPPGrabberComponent::ServerThrowHeldItem_Implementation(FVector_NetQuantizeNormal ThrowDirection)
 {
 	PerformHeldItemThrow(ThrowDirection, 0.0f);
+}
+
+void UPPGrabberComponent::ServerThrowHeldItemCharged_Implementation(FVector_NetQuantizeNormal ThrowDirection, float ChargeAlpha)
+{
+	PerformHeldItemThrow(ThrowDirection, FMath::Clamp(ChargeAlpha, 0.0f, 1.0f));
 }
 
 void UPPGrabberComponent::ServerRequestDirectionalEscape_Implementation(FVector_NetQuantizeNormal EscapeDirection)
@@ -398,6 +421,26 @@ FPPGrabTargetData UPPGrabberComponent::FindBestTarget(const FVector& CameraForwa
 	for (const FOverlapResult& CloseOverlap : CloseOverlaps)
 	{
 		CandidateActors.AddUnique(CloseOverlap.GetActor());
+	}
+
+	// Push/pull blocks are intentionally context-free: a player can take hold of
+	// any reachable face, not just the face currently in the camera sweep.
+	const float PushableSearchRadius = FMath::Max(SearchRadius * 3.0f, 225.0f);
+	TArray<FOverlapResult> PushableOverlaps;
+	World->OverlapMultiByObjectType(
+		PushableOverlaps,
+		ClosePickupCenter,
+		FQuat::Identity,
+		ObjectQueryParams,
+		FCollisionShape::MakeSphere(PushableSearchRadius),
+		QueryParams);
+	for (const FOverlapResult& PushableOverlap : PushableOverlaps)
+	{
+		AActor* PushableActor = PushableOverlap.GetActor();
+		if (PushableActor && PushableActor->ActorHasTag(TEXT("PP.Grab.Pushable")))
+		{
+			CandidateActors.AddUnique(PushableActor);
+		}
 	}
 
 	// Ledge grips are intentionally forgiving: their authored grip point may sit
@@ -641,6 +684,7 @@ bool UPPGrabberComponent::BuildTargetData(
 		? IPPGrabbable::Execute_GetGrabProfile(GrabbableComponent)
 		: GetBlueprintGrabProfile(CandidateActor);
 	const bool bLedgeTarget = CandidateProfile.TargetType == EPPGrabTargetType::LedgeOrHandle;
+	const bool bPushableTarget = CandidateProfile.TargetType == EPPGrabTargetType::LargePushable;
 	if (CandidateProfile.TargetType == EPPGrabTargetType::None)
 	{
 		return false;
@@ -730,7 +774,7 @@ bool UPPGrabberComponent::BuildTargetData(
 	const bool bLedgeFacingValid = bLedgeTarget
 		&& HorizontalFacingAlignment >= -0.35f
 		&& CameraAlignment >= -0.2f;
-	if ((!bLedgeTarget && !bCloseGameplayItem && !bClosePlayer
+	if ((!bLedgeTarget && !bPushableTarget && !bCloseGameplayItem && !bClosePlayer
 			&& (FacingAlignment <= 0.0f
 				|| CameraAlignment < FMath::Cos(FMath::DegreesToRadians(CandidateProfile.MaximumAngleDegrees))))
 		|| (bCloseGameplayItem && HorizontalFacingAlignment < -0.4f)
@@ -910,46 +954,55 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 			return;
 		}
 
-		TargetGrabber->BeginIncomingPlayerGrab(GetOwner());
-		ActivePlayerGrabBone = ResolvePlayerGrabBone(TargetMesh);
-		const FBodyInstance* PlayerGrabBodyInstance = ActivePlayerGrabBone.IsNone()
-			? nullptr
-			: TargetMesh->GetBodyInstance(ActivePlayerGrabBone);
-		if (!PlayerGrabBodyInstance || !PlayerGrabBodyInstance->IsValidBodyInstance()
-			|| !TargetMesh->IsAnySimulatingPhysics())
+		if (IsGrabDummyPenguin(TargetCharacter))
 		{
-			TargetGrabber->EndIncomingPlayerGrab(GetOwner(), false);
-			GrabbedPrimitive = nullptr;
-			SetGrabPresentation(EPPGrabState::None, nullptr);
-			ClientGrabRejected();
-			return;
+			BeginGrabDummyCarry(TargetCharacter);
+			GrabbedPrimitive = TargetMesh;
+			PresentationGrabPoint = GetGrabDummyCarryLocation();
 		}
-		const FVector PlayerGrabLocation = ActivePlayerGrabBone.IsNone()
-			? TargetMesh->GetComponentLocation()
-			: TargetMesh->GetBoneLocation(ActivePlayerGrabBone);
-		PhysicsHandle->SetLinearStiffness(ActiveProfile.LinearStiffness);
-		PhysicsHandle->SetLinearDamping(ActiveProfile.LinearDamping);
-		PhysicsHandle->SetAngularStiffness(ActiveProfile.AngularStiffness);
-		PhysicsHandle->SetAngularDamping(ActiveProfile.AngularDamping);
-		PhysicsHandle->SetInterpolationSpeed(18.0f);
-		LockedGrabbedRotation = TargetMesh->GetComponentRotation();
-		PhysicsHandle->GrabComponentAtLocationWithRotation(
-			TargetMesh,
-			ActivePlayerGrabBone,
-			PlayerGrabLocation,
-			LockedGrabbedRotation);
-		if (PhysicsHandle->GetGrabbedComponent() != TargetMesh)
+		else
 		{
-			TargetGrabber->EndIncomingPlayerGrab(GetOwner(), false);
-			GrabbedPrimitive = nullptr;
-			SetGrabPresentation(EPPGrabState::None, nullptr);
-			ClientGrabRejected();
-			return;
+			TargetGrabber->BeginIncomingPlayerGrab(GetOwner());
+			ActivePlayerGrabBone = ResolvePlayerGrabBone(TargetMesh);
+			const FBodyInstance* PlayerGrabBodyInstance = ActivePlayerGrabBone.IsNone()
+				? nullptr
+				: TargetMesh->GetBodyInstance(ActivePlayerGrabBone);
+			if (!PlayerGrabBodyInstance || !PlayerGrabBodyInstance->IsValidBodyInstance()
+				|| !TargetMesh->IsAnySimulatingPhysics())
+			{
+				TargetGrabber->EndIncomingPlayerGrab(GetOwner(), false);
+				GrabbedPrimitive = nullptr;
+				SetGrabPresentation(EPPGrabState::None, nullptr);
+				ClientGrabRejected();
+				return;
+			}
+			const FVector PlayerGrabLocation = ActivePlayerGrabBone.IsNone()
+				? TargetMesh->GetComponentLocation()
+				: TargetMesh->GetBoneLocation(ActivePlayerGrabBone);
+			PhysicsHandle->SetLinearStiffness(ActiveProfile.LinearStiffness);
+			PhysicsHandle->SetLinearDamping(ActiveProfile.LinearDamping);
+			PhysicsHandle->SetAngularStiffness(ActiveProfile.AngularStiffness);
+			PhysicsHandle->SetAngularDamping(ActiveProfile.AngularDamping);
+			PhysicsHandle->SetInterpolationSpeed(18.0f);
+			LockedGrabbedRotation = TargetMesh->GetComponentRotation();
+			PhysicsHandle->GrabComponentAtLocationWithRotation(
+				TargetMesh,
+				ActivePlayerGrabBone,
+				PlayerGrabLocation,
+				LockedGrabbedRotation);
+			if (PhysicsHandle->GetGrabbedComponent() != TargetMesh)
+			{
+				TargetGrabber->EndIncomingPlayerGrab(GetOwner(), false);
+				GrabbedPrimitive = nullptr;
+				SetGrabPresentation(EPPGrabState::None, nullptr);
+				ClientGrabRejected();
+				return;
+			}
+			PhysicsHandle->SetTargetLocation(GetPlayerCarryLocation());
+			PhysicsHandle->SetTargetRotation(LockedGrabbedRotation);
+			GrabbedPrimitive = TargetMesh;
+			PresentationGrabPoint = GetPlayerCarryLocation();
 		}
-		PhysicsHandle->SetTargetLocation(GetPlayerCarryLocation());
-		PhysicsHandle->SetTargetRotation(LockedGrabbedRotation);
-		GrabbedPrimitive = TargetMesh;
-		PresentationGrabPoint = GetPlayerCarryLocation();
 		UE_LOG(LogVNH, Display, TEXT("PairPressureGrab: player hold started. Grabber=%s Target=%s Bone=%s"),
 			*GetNameSafe(GetOwner()),
 			*GetNameSafe(TargetCharacter),
@@ -984,6 +1037,13 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 		SetGrabPresentation(EPPGrabState::PushingObject, TargetData.TargetActor);
 		break;
 	case EPPGrabTargetType::LedgeOrHandle:
+		// Publish the handoff first so the dive-cancel presentation can see that
+		// this is a ledge grab, rather than restoring a landing/get-up montage.
+		SetGrabPresentation(EPPGrabState::HangingFromLedge, TargetData.TargetActor);
+		if (UPPPlayerActionRouterComponent* ActionRouter = GetOwner()->FindComponentByClass<UPPPlayerActionRouterComponent>())
+		{
+			ActionRouter->CancelAirDiveForLedgeGrab();
+		}
 		if (ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner()))
 		{
 			if (UCharacterMovementComponent* OwnerMovement = OwnerCharacter->GetCharacterMovement())
@@ -998,7 +1058,6 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 				nullptr,
 				ETeleportType::TeleportPhysics);
 		}
-		SetGrabPresentation(EPPGrabState::HangingFromLedge, TargetData.TargetActor);
 		break;
 	case EPPGrabTargetType::None:
 	default:
@@ -1018,15 +1077,21 @@ void UPPGrabberComponent::ReleaseGrabAuthoritative(bool bPlayRecoveryAnimation, 
 
 	AActor* PreviousGrabTarget = GrabTarget;
 	const EPPGrabState PreviousGrabState = GrabState;
+	const bool bWasGrabDummyCarry = CarriedGrabDummy.IsValid();
 	const bool bWasPairedRelease = bReleasingPairedGrab;
 	bReleasingPairedGrab = true;
-	if (PreviousGrabState != EPPGrabState::HangingFromLedge || bPlayLedgeClimbAnimation)
+	if ((PreviousGrabState != EPPGrabState::HangingFromLedge || bPlayLedgeClimbAnimation)
+		&& PreviousGrabState != EPPGrabState::Reaching)
 	{
 		SetGrabPresentation(EPPGrabState::Releasing, PreviousGrabTarget);
 	}
 	if (PhysicsHandle)
 	{
 		PhysicsHandle->ReleaseComponent();
+	}
+	if (CarriedGrabDummy.IsValid())
+	{
+		EndGrabDummyCarry();
 	}
 	if (PreviousGrabState == EPPGrabState::HangingFromLedge)
 	{
@@ -1047,7 +1112,9 @@ void UPPGrabberComponent::ReleaseGrabAuthoritative(bool bPlayRecoveryAnimation, 
 	{
 		NotifyBlueprintGrabEvent(PreviousGrabTarget, false);
 	}
-	if ((PreviousGrabState == EPPGrabState::GrabbingPlayer || PreviousGrabState == EPPGrabState::MutualGrab) && PreviousGrabTarget)
+	if (!bWasGrabDummyCarry
+		&& (PreviousGrabState == EPPGrabState::GrabbingPlayer || PreviousGrabState == EPPGrabState::MutualGrab)
+		&& PreviousGrabTarget)
 	{
 		if (UPPGrabberComponent* TargetGrabber = PreviousGrabTarget->FindComponentByClass<UPPGrabberComponent>())
 		{
@@ -1075,6 +1142,8 @@ void UPPGrabberComponent::ReleaseGrabAuthoritative(bool bPlayRecoveryAnimation, 
 	SetGrabPresentation(EPPGrabState::None, nullptr);
 	bReleasingPairedGrab = false;
 	if (bPlayRecoveryAnimation && PreviousGrabState != EPPGrabState::None
+		&& PreviousGrabState != EPPGrabState::PushingObject
+		&& PreviousGrabState != EPPGrabState::Reaching
 		&& (PreviousGrabState != EPPGrabState::HangingFromLedge || bPlayLedgeClimbAnimation))
 	{
 		MulticastGrabReleasedPresentation(
@@ -1104,12 +1173,36 @@ void UPPGrabberComponent::PerformHeldItemThrow(const FVector& ThrowDirection, fl
 
 	const bool bThrowingPlayer = GrabState == EPPGrabState::GrabbingPlayer;
 	ACharacter* ThrownCharacter = bThrowingPlayer ? Cast<ACharacter>(GrabTarget) : nullptr;
+	const bool bThrowingGrabDummy = ThrownCharacter && ThrownCharacter == CarriedGrabDummy.Get();
 	USkeletalMeshComponent* ThrownCharacterMesh = ThrownCharacter ? ThrownCharacter->GetMesh() : nullptr;
 	UPrimitiveComponent* ThrownPrimitive = GrabbedPrimitive;
 	const FVector InheritedVelocity = OwnerActor->GetVelocity();
 	const float ThrowSpeed = FMath::Lerp(HeldItemThrowSpeed * 0.55f, HeldItemThrowSpeed * 2.15f, FMath::Clamp(ChargeAlpha, 0.0f, 1.0f));
 	ReleaseGrabAuthoritative(false);
 	MulticastGrabThrowPresentation(ChargeAlpha >= 0.45f);
+	if (bThrowingGrabDummy)
+	{
+		// Do not add a full jump's vertical velocity to an already upward throw.
+		// That combination was the source of the unstable airborne dummy launch.
+		const FVector DummyInheritedVelocity(
+			InheritedVelocity.X,
+			InheritedVelocity.Y,
+			FMath::Clamp(InheritedVelocity.Z, -120.0f, 120.0f));
+		const FVector DummyThrowVelocity = DummyInheritedVelocity + ValidatedThrowDirection * (ThrowSpeed * 0.70f);
+		const FVector DummyForward = ThrownCharacter->GetActorForwardVector().GetSafeNormal2D();
+		const FVector ThrowRollAxis = FVector::CrossProduct(ValidatedThrowDirection, FVector::UpVector).GetSafeNormal();
+		const float FacingThrowDot = FVector::DotProduct(DummyForward, ValidatedThrowDirection.GetSafeNormal2D());
+		const FVector DummyAngularVelocity = ThrowRollAxis * (FacingThrowDot >= 0.0f ? 75.0f : -75.0f);
+		if (UPPPhysicalStateComponent* DummyPhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(ThrownCharacter))
+		{
+			DummyPhysicalState->RequestThrownRagdoll(DummyThrowVelocity, DummyAngularVelocity);
+		}
+		else
+		{
+			ThrownCharacter->LaunchCharacter(DummyThrowVelocity, true, true);
+		}
+		return;
+	}
 	if (ThrownCharacter)
 	{
 		if (UPPPhysicalStateComponent* PhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(ThrownCharacter))
@@ -1317,6 +1410,23 @@ void UPPGrabberComponent::UpdatePlayerGrab(float DeltaTime)
 {
 	ACharacter* TargetCharacter = Cast<ACharacter>(GrabTarget);
 	USkeletalMeshComponent* TargetMesh = TargetCharacter ? TargetCharacter->GetMesh() : nullptr;
+	if (CarriedGrabDummy.IsValid())
+	{
+		if (!TargetCharacter || TargetCharacter != CarriedGrabDummy.Get() || !IsStandingPlayerStateValid(GetOwner()))
+		{
+			ReleaseGrabAuthoritative(false);
+			return;
+		}
+		const FVector DummyCarryLocation = GetGrabDummyCarryLocation();
+		TargetCharacter->SetActorLocationAndRotation(
+			DummyCarryLocation,
+			LockedGrabDummyCarryRotation,
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics);
+		PresentationGrabPoint = DummyCarryLocation;
+		return;
+	}
 	if (!TargetCharacter || !TargetMesh || !PhysicsHandle
 		|| PhysicsHandle->GetGrabbedComponent() != TargetMesh
 		|| !IsStandingPlayerStateValid(GetOwner())
@@ -1375,6 +1485,67 @@ void UPPGrabberComponent::UpdatePlayerGrab(float DeltaTime)
 			FColor::White,
 			0.05f,
 			false);
+	}
+}
+
+bool UPPGrabberComponent::IsGrabDummyPenguin(const ACharacter* TargetCharacter) const
+{
+	return TargetCharacter && TargetCharacter->GetClass()
+		&& TargetCharacter->GetClass()->GetName().Contains(TEXT("BP_PP_GrabDummyPenguin"), ESearchCase::IgnoreCase);
+}
+
+void UPPGrabberComponent::BeginGrabDummyCarry(ACharacter* TargetCharacter)
+{
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	if (!OwnerCharacter || !TargetCharacter || !OwnerCharacter->GetRootComponent())
+	{
+		return;
+	}
+	CarriedGrabDummy = TargetCharacter;
+	LockedGrabDummyCarryRotation = TargetCharacter->GetActorRotation();
+	if (UCharacterMovementComponent* DummyMovement = TargetCharacter->GetCharacterMovement())
+	{
+		DummyMovement->StopMovementImmediately();
+		DummyMovement->DisableMovement();
+	}
+	if (UCapsuleComponent* DummyCapsule = TargetCharacter->GetCapsuleComponent())
+	{
+		DummyCapsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+	if (USkeletalMeshComponent* DummyMesh = TargetCharacter->GetMesh())
+	{
+		DummyMesh->SetAllBodiesSimulatePhysics(false);
+		DummyMesh->SetEnableGravity(false);
+		DummyMesh->bPauseAnims = true;
+	}
+	TargetCharacter->AttachToComponent(OwnerCharacter->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+	TargetCharacter->SetActorLocationAndRotation(
+		GetGrabDummyCarryLocation(), LockedGrabDummyCarryRotation, false, nullptr, ETeleportType::TeleportPhysics);
+}
+
+void UPPGrabberComponent::EndGrabDummyCarry()
+{
+	ACharacter* DummyCharacter = CarriedGrabDummy.Get();
+	CarriedGrabDummy.Reset();
+	LockedGrabDummyCarryRotation = FRotator::ZeroRotator;
+	if (!DummyCharacter)
+	{
+		return;
+	}
+	DummyCharacter->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	if (USkeletalMeshComponent* DummyMesh = DummyCharacter->GetMesh())
+	{
+		DummyMesh->bPauseAnims = false;
+		DummyMesh->SetEnableGravity(true);
+		DummyMesh->SetCollisionProfileName(TEXT("CharacterMesh"));
+	}
+	if (UCapsuleComponent* DummyCapsule = DummyCharacter->GetCapsuleComponent())
+	{
+		DummyCapsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	}
+	if (UCharacterMovementComponent* DummyMovement = DummyCharacter->GetCharacterMovement())
+	{
+		DummyMovement->SetMovementMode(MOVE_Falling);
 	}
 }
 
@@ -1961,6 +2132,20 @@ FVector UPPGrabberComponent::GetPlayerCarryLocation() const
 	return OwnerActor->GetActorLocation()
 		+ Forward * PlayerHoldDistance
 		+ FVector::UpVector * PlayerHoldHeight;
+}
+
+FVector UPPGrabberComponent::GetGrabDummyCarryLocation() const
+{
+	const ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	if (!OwnerCharacter)
+	{
+		return FVector::ZeroVector;
+	}
+	const UCapsuleComponent* OwnerCapsule = OwnerCharacter->GetCapsuleComponent();
+	const float CarryDistance = (OwnerCapsule ? OwnerCapsule->GetScaledCapsuleRadius() : 42.0f) + 58.0f;
+	return OwnerCharacter->GetActorLocation()
+		+ OwnerCharacter->GetActorForwardVector().GetSafeNormal2D() * CarryDistance
+		+ FVector::UpVector * 8.0f;
 }
 
 void UPPGrabberComponent::SetGrabPresentation(EPPGrabState NewGrabState, AActor* NewGrabTarget)
