@@ -57,6 +57,22 @@ public:
 	// starts the normal ragdoll/recovery path while preserving an authored launch.
 	void RequestThrownRagdoll(const FVector& InitialVelocity, const FVector& InitialAngularVelocity);
 
+	// Builds the exact charged dummy launch before entering the shared thrown
+	// ragdoll path. Course obstacles use zero inherited velocity so their authored
+	// speed tier cannot be amplified by runtime collision velocity.
+	void RequestDummyThrowProfileRagdoll(
+		const FVector& ThrowDirection,
+		float ChargeAlpha,
+		const FVector& InheritedVelocity,
+		float BaseThrowSpeed);
+
+	// Authority-only course-hazard entry point. Authored speed selects quick,
+	// medium, or full dummy-throw strength without changing FPPImpactData layout.
+	void RequestCourseObstacleRagdoll(
+		const FVector& ImpactDirection,
+		float AuthoredObstacleSpeed,
+		const AActor* ObstacleActor);
+
 	UPROPERTY(BlueprintAssignable, Category = "Pair Pressure|Physical State")
 	FPPPhysicalStateChanged OnPhysicalStateChanged;
 
@@ -91,7 +107,6 @@ private:
 	void UpdateRagdollRecoveryBlend(float DeltaTime);
 	void BeginGroundedRecovery(float RequiredGroundedSeconds);
 	bool IsRagdollRestingOnGround() const;
-	void ApplyRagdollPropulsion(const FPPImpactData& ImpactData, float EffectiveSeverity);
 	void PlayGetUpAnimation();
 	void RecoverFromCurrentState();
 	void AddDazeAuthoritative(float DazeAmount);

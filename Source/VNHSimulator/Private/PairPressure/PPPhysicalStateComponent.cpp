@@ -22,39 +22,19 @@ const FName PPStablePenguinRagdollBones[] = {
 	FName(TEXT("hips")), FName(TEXT("chest"))
 };
 
-// These match the held dummy's charged throw after its 0.70 launch multiplier:
-// a slow spinner behaves as a half throw, while a fast one can reach a full throw.
-constexpr float PPPhysicalSpinnerMinimumSeverity = 30.0f;
-constexpr float PPPhysicalSpinnerFullThrowSeverity = 100.0f;
-constexpr float PPPhysicalSpinnerHalfThrowSpeed = 790.0f;
-constexpr float PPPhysicalSpinnerFullThrowSpeed = 1580.0f;
+constexpr float PPPhysicalDefaultHeldItemThrowSpeed = 1050.0f;
+constexpr float PPPhysicalMediumObstacleSpeed = 3.0f;
+constexpr float PPPhysicalFullObstacleSpeed = 5.0f;
 constexpr float PPPhysicalMaxRagdollAngularSpeedDegrees = 120.0f;
 constexpr float PPPhysicalRagdollRecoveryBlendSeconds = 0.28f;
 
-bool IsPPPhysicalStateSpinnerStyleCourseObstacle(const AActor* ObstacleActor)
+float ResolvePPObstacleThrowChargeAlpha(float CourseObstacleSpeed)
 {
-	if (!ObstacleActor)
+	if (CourseObstacleSpeed >= PPPhysicalFullObstacleSpeed)
 	{
-		return false;
+		return 1.0f;
 	}
-
-	const FString ObstacleName = ObstacleActor->GetName();
-	return ObstacleActor->ActorHasTag(TEXT("PP_SpinnerObstacle"))
-		|| ObstacleName.Contains(TEXT("Spinner_V2"), ESearchCase::IgnoreCase)
-		|| ObstacleName.Contains(TEXT("SwingBall"), ESearchCase::IgnoreCase)
-		|| ObstacleName.Contains(TEXT("Turntable"), ESearchCase::IgnoreCase);
-}
-
-bool IsPPPhysicalStatePusherCourseObstacle(const AActor* ObstacleActor)
-{
-	const FString ObstacleName = ObstacleActor ? ObstacleActor->GetName() : FString();
-	return ObstacleName.Contains(TEXT("Pusher_V1"), ESearchCase::IgnoreCase)
-		|| ObstacleName.Contains(TEXT("Pusher_V2"), ESearchCase::IgnoreCase);
-}
-
-bool IsPPPhysicalStateDropPropellerCourseObstacle(const AActor* ObstacleActor)
-{
-	return ObstacleActor && ObstacleActor->GetName().Contains(TEXT("Drop_V1"), ESearchCase::IgnoreCase);
+	return CourseObstacleSpeed >= PPPhysicalMediumObstacleSpeed ? 0.5f : 0.0f;
 }
 
 FName ResolvePPPhysicalRagdollRootBone(const USkeletalMeshComponent* CharacterMesh)
@@ -364,6 +344,80 @@ void UPPPhysicalStateComponent::RequestThrownRagdoll(const FVector& InitialVeloc
 	CharacterMesh->WakeAllRigidBodies();
 }
 
+void UPPPhysicalStateComponent::RequestDummyThrowProfileRagdoll(
+	const FVector& ThrowDirection,
+	float ChargeAlpha,
+	const FVector& InheritedVelocity,
+	float BaseThrowSpeed)
+{
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor || !OwnerActor->HasAuthority())
+	{
+		return;
+	}
+
+	FVector ValidatedThrowDirection = ThrowDirection.GetSafeNormal();
+	if (ValidatedThrowDirection.IsNearlyZero())
+	{
+		ValidatedThrowDirection = (OwnerActor->GetActorForwardVector().GetSafeNormal2D()
+			+ FVector::UpVector * 0.18f).GetSafeNormal();
+	}
+
+	const FVector ClampedInheritedVelocity(
+		InheritedVelocity.X,
+		InheritedVelocity.Y,
+		FMath::Clamp(InheritedVelocity.Z, -120.0f, 120.0f));
+	const float ClampedChargeAlpha = FMath::Clamp(ChargeAlpha, 0.0f, 1.0f);
+	const float ThrowSpeedBaseline = FMath::Max(0.0f, BaseThrowSpeed);
+	const float ProfileThrowSpeed = FMath::Lerp(
+		ThrowSpeedBaseline * 0.55f,
+		ThrowSpeedBaseline * 2.15f,
+		ClampedChargeAlpha);
+	const FVector ProfileThrowVelocity = ClampedInheritedVelocity
+		+ ValidatedThrowDirection * (ProfileThrowSpeed * 0.70f);
+	const FVector RagdollForward = OwnerActor->GetActorForwardVector().GetSafeNormal2D();
+	const FVector ThrowRollAxis = FVector::CrossProduct(ValidatedThrowDirection, FVector::UpVector).GetSafeNormal();
+	const float FacingThrowDot = FVector::DotProduct(RagdollForward, ValidatedThrowDirection.GetSafeNormal2D());
+	const FVector ProfileAngularVelocity = ThrowRollAxis * (FacingThrowDot >= 0.0f ? 75.0f : -75.0f);
+	RequestThrownRagdoll(ProfileThrowVelocity, ProfileAngularVelocity);
+}
+
+void UPPPhysicalStateComponent::RequestCourseObstacleRagdoll(
+	const FVector& ImpactDirection,
+	float AuthoredObstacleSpeed,
+	const AActor* ObstacleActor)
+{
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor || !OwnerActor->HasAuthority() || IsRagdolled())
+	{
+		return;
+	}
+
+	FVector CourseThrowDirection = ImpactDirection.GetSafeNormal2D();
+	if (CourseThrowDirection.IsNearlyZero() && ObstacleActor)
+	{
+		CourseThrowDirection = (OwnerActor->GetActorLocation()
+			- ObstacleActor->GetActorLocation()).GetSafeNormal2D();
+	}
+	if (CourseThrowDirection.IsNearlyZero())
+	{
+		CourseThrowDirection = OwnerActor->GetActorForwardVector().GetSafeNormal2D();
+	}
+	CourseThrowDirection = (CourseThrowDirection + FVector::UpVector * 0.18f).GetSafeNormal();
+
+	float ProfileBaseThrowSpeed = PPPhysicalDefaultHeldItemThrowSpeed;
+	if (const UPPGrabberComponent* OwnerGrabber = OwnerActor->FindComponentByClass<UPPGrabberComponent>())
+	{
+		ProfileBaseThrowSpeed = OwnerGrabber->HeldItemThrowSpeed;
+	}
+	LastKnockdownTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	RequestDummyThrowProfileRagdoll(
+		CourseThrowDirection,
+		ResolvePPObstacleThrowChargeAlpha(AuthoredObstacleSpeed),
+		FVector::ZeroVector,
+		ProfileBaseThrowSpeed);
+}
+
 UPPPhysicalStateComponent* UPPPhysicalStateComponent::FindPhysicalStateComponent(const AActor* Actor)
 {
 	return Actor ? Actor->FindComponentByClass<UPPPhysicalStateComponent>() : nullptr;
@@ -417,48 +471,10 @@ void UPPPhysicalStateComponent::ApplyImpactAuthoritative(const FPPImpactData& Im
 	}
 
 	float EffectiveSeverity = FMath::Clamp(ImpactData.Severity, 0.0f, 150.0f);
-	const bool bSpinnerImpact = IsPPPhysicalStateSpinnerStyleCourseObstacle(ImpactData.InstigatorActor);
-	const bool bPusherImpact = IsPPPhysicalStatePusherCourseObstacle(ImpactData.InstigatorActor);
-	const bool bDropPropellerImpact = IsPPPhysicalStateDropPropellerCourseObstacle(ImpactData.InstigatorActor);
 	const double CurrentTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 	if (CurrentTime - LastKnockdownTimeSeconds < 1.5)
 	{
 		EffectiveSeverity *= 0.55f;
-	}
-	if (bSpinnerImpact)
-	{
-		// Timeline-driven rotating meshes can report a small/zero normal impulse even
-		// at high tangential speed, so preserve measured severity but guarantee that
-		// a confirmed spinner contact crosses the ragdoll threshold.
-		EffectiveSeverity = FMath::Max(EffectiveSeverity, PPPhysicalSpinnerMinimumSeverity);
-		AddDazeAuthoritative(FMath::GetMappedRangeValueClamped(
-			FVector2D(PPPhysicalSpinnerMinimumSeverity, 150.0f),
-			FVector2D(6.0f, 25.0f),
-			EffectiveSeverity));
-		LastKnockdownTimeSeconds = CurrentTime;
-		const float SpinnerRagdollSeconds = FMath::GetMappedRangeValueClamped(
-			FVector2D(PPPhysicalSpinnerMinimumSeverity, 150.0f),
-			FVector2D(0.85f, 2.25f),
-			EffectiveSeverity);
-		SetPhysicalStateAuthoritative(EPPPhysicalState::Ragdolled, SpinnerRagdollSeconds);
-		ApplyRagdollPropulsion(ImpactData, EffectiveSeverity);
-		return;
-	}
-	if (bPusherImpact)
-	{
-		// Pushers produce a predictable short squash ragdoll, independent of the
-		// force from their timeline-driven collision sweep.
-		AddDazeAuthoritative(8.0f);
-		LastKnockdownTimeSeconds = CurrentTime;
-		SetPhysicalStateAuthoritative(EPPPhysicalState::Ragdolled, 1.0f);
-		return;
-	}
-	if (bDropPropellerImpact)
-	{
-		AddDazeAuthoritative(8.0f);
-		LastKnockdownTimeSeconds = CurrentTime;
-		SetPhysicalStateAuthoritative(EPPPhysicalState::Ragdolled, 1.0f);
-		return;
 	}
 
 	if (EffectiveSeverity <= 25.0f)
@@ -819,39 +835,6 @@ bool UPPPhysicalStateComponent::IsRagdollRestingOnGround() const
 		RootLocation - FVector(0.0f, 0.0f, 55.0f),
 		ECC_Visibility,
 		QueryParams);
-}
-
-void UPPPhysicalStateComponent::ApplyRagdollPropulsion(const FPPImpactData& ImpactData, float EffectiveSeverity)
-{
-	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
-	USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
-	if (!CharacterMesh || !CharacterMesh->IsAnySimulatingPhysics())
-	{
-		return;
-	}
-
-	FVector PropelDirection = ImpactData.ImpactDirection.GetSafeNormal();
-	if (PropelDirection.IsNearlyZero())
-	{
-		PropelDirection = ImpactData.InstigatorActor
-			? (OwnerCharacter->GetActorLocation() - ImpactData.InstigatorActor->GetActorLocation()).GetSafeNormal()
-			: OwnerCharacter->GetActorForwardVector();
-	}
-	// Spinner normals can contain a large vertical impulse. Keep all knockback
-	// predominantly lateral so a rotating obstacle behaves like a throw, not a launcher.
-	PropelDirection.Z = FMath::Clamp(PropelDirection.Z, 0.08f, 0.20f);
-	PropelDirection.Normalize();
-	const float SpinnerThrowStrength = FMath::GetMappedRangeValueClamped(
-		FVector2D(PPPhysicalSpinnerMinimumSeverity, PPPhysicalSpinnerFullThrowSeverity),
-		FVector2D(0.0f, 1.0f),
-		EffectiveSeverity);
-	const float PropelSpeed = FMath::Lerp(
-		PPPhysicalSpinnerHalfThrowSpeed,
-		PPPhysicalSpinnerFullThrowSpeed,
-		SpinnerThrowStrength);
-	const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
-	CharacterMesh->SetPhysicsLinearVelocity(PropelDirection * PropelSpeed, false, RagdollRootBone);
-	CharacterMesh->WakeAllRigidBodies();
 }
 
 void UPPPhysicalStateComponent::PlayGetUpAnimation()

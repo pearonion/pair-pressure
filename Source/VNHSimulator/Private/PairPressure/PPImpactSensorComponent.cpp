@@ -8,6 +8,7 @@
 #include "GameFramework/Character.h"
 #include "PairPressure/PPGameplayTypes.h"
 #include "PairPressure/PPPhysicalStateComponent.h"
+#include "UObject/UnrealType.h"
 
 UPPImpactSensorComponent::UPPImpactSensorComponent()
 {
@@ -29,6 +30,7 @@ bool IsPPImpactCourseObstacle(const AActor* ObstacleActor)
 	return ObstacleActor->ActorHasTag(TEXT("PP_SpinnerObstacle"))
 		|| ObstacleName.Contains(TEXT("Spinner_V2"), ESearchCase::IgnoreCase)
 		|| ObstacleName.Contains(TEXT("SwingBall"), ESearchCase::IgnoreCase)
+		|| ObstacleName.Contains(TEXT("SwingHammer"), ESearchCase::IgnoreCase)
 		|| ObstacleName.Contains(TEXT("Turntable"), ESearchCase::IgnoreCase)
 		|| ObstacleName.Contains(TEXT("Drop_V1"), ESearchCase::IgnoreCase)
 		|| ObstacleName.Contains(TEXT("Pusher_V1"), ESearchCase::IgnoreCase)
@@ -46,6 +48,7 @@ bool IsPPImpactSensorSpinnerStyleCourseObstacle(const AActor* ObstacleActor)
 	return ObstacleActor->ActorHasTag(TEXT("PP_SpinnerObstacle"))
 		|| ObstacleName.Contains(TEXT("Spinner_V2"), ESearchCase::IgnoreCase)
 		|| ObstacleName.Contains(TEXT("SwingBall"), ESearchCase::IgnoreCase)
+		|| ObstacleName.Contains(TEXT("SwingHammer"), ESearchCase::IgnoreCase)
 		|| ObstacleName.Contains(TEXT("Turntable"), ESearchCase::IgnoreCase);
 }
 
@@ -84,6 +87,79 @@ bool IsPPDropPropellerImpact(const AActor* ObstacleActor, const UPrimitiveCompon
 	const FString ComponentName = HitObstacleComponent->GetName();
 	return ComponentName.Contains(TEXT("Propeller_V1"), ESearchCase::IgnoreCase)
 		|| ComponentName.Equals(TEXT("StaticMesh7"), ESearchCase::IgnoreCase);
+}
+
+bool ReadPPAuthoredObstacleSpeed(const AActor* ObstacleActor, FName PropertyName, float& OutObstacleSpeed)
+{
+	if (!ObstacleActor || PropertyName.IsNone())
+	{
+		return false;
+	}
+
+	const FProperty* SpeedProperty = ObstacleActor->GetClass()->FindPropertyByName(PropertyName);
+	const FNumericProperty* NumericSpeedProperty = CastField<FNumericProperty>(SpeedProperty);
+	if (!NumericSpeedProperty)
+	{
+		return false;
+	}
+
+	const void* SpeedValueAddress = NumericSpeedProperty->ContainerPtrToValuePtr<void>(ObstacleActor);
+	const double NumericSpeedValue = NumericSpeedProperty->IsFloatingPoint()
+		? NumericSpeedProperty->GetFloatingPointPropertyValue(SpeedValueAddress)
+		: static_cast<double>(NumericSpeedProperty->GetSignedIntPropertyValue(SpeedValueAddress));
+	OutObstacleSpeed = FMath::Max(0.0f, static_cast<float>(NumericSpeedValue));
+	return FMath::IsFinite(OutObstacleSpeed);
+}
+
+float ResolvePPAuthoredCourseObstacleSpeed(
+	const AActor* ObstacleActor,
+	const UPrimitiveComponent* HitObstacleComponent)
+{
+	if (!ObstacleActor)
+	{
+		return -1.0f;
+	}
+
+	FName SpeedPropertyName = NAME_None;
+	if (IsPPImpactSensorSpinnerStyleCourseObstacle(ObstacleActor)
+		|| IsPPDropPropellerImpact(ObstacleActor, HitObstacleComponent))
+	{
+		SpeedPropertyName = FName(TEXT("SpinnerSpeed"));
+	}
+	else if (IsPPImpactSensorPusherContactComponent(ObstacleActor, HitObstacleComponent))
+	{
+		const FString ObstacleName = ObstacleActor->GetName();
+		if (ObstacleName.Contains(TEXT("Pusher_V1"), ESearchCase::IgnoreCase))
+		{
+			SpeedPropertyName = FName(TEXT("Speed"));
+		}
+		else
+		{
+			const FString ComponentName = HitObstacleComponent->GetName();
+			if (ComponentName.Equals(TEXT("StaticMesh"), ESearchCase::IgnoreCase))
+			{
+				SpeedPropertyName = FName(TEXT("Pusher1Speed"));
+			}
+			else if (ComponentName.Equals(TEXT("SM_Pusher_V1"), ESearchCase::IgnoreCase))
+			{
+				SpeedPropertyName = FName(TEXT("Pusher2Speed"));
+			}
+			else if (ComponentName.Equals(TEXT("StaticMesh1"), ESearchCase::IgnoreCase))
+			{
+				SpeedPropertyName = FName(TEXT("Pusher3Speed"));
+			}
+		}
+	}
+
+	float AuthoredObstacleSpeed = 0.0f;
+	if (SpeedPropertyName.IsNone()
+		|| !ReadPPAuthoredObstacleSpeed(ObstacleActor, SpeedPropertyName, AuthoredObstacleSpeed))
+	{
+		// A recognized course obstacle must never fall back to measured collision
+		// force. Missing authored data therefore selects the bounded quick profile.
+		return SpeedPropertyName.IsNone() ? -1.0f : 0.0f;
+	}
+	return AuthoredObstacleSpeed;
 }
 }
 
@@ -170,7 +246,22 @@ void UPPImpactSensorComponent::TickComponent(
 			continue;
 		}
 
-		ReportImpact(30.0f, PusherActor, NAME_None, true);
+		const FVector OwnerLocation = OwnerCapsule->GetComponentLocation();
+		FVector PusherImpactPoint = PusherComponent->GetComponentLocation();
+		PusherComponent->GetClosestPointOnCollision(OwnerLocation, PusherImpactPoint);
+		FVector PusherImpactDirection = (OwnerLocation - PusherImpactPoint).GetSafeNormal2D();
+		if (PusherImpactDirection.IsNearlyZero())
+		{
+			PusherImpactDirection = (OwnerLocation - PusherComponent->GetComponentLocation()).GetSafeNormal2D();
+		}
+		ReportResolvedImpact(
+			30.0f,
+			PusherActor,
+			NAME_None,
+			true,
+			PusherImpactPoint,
+			PusherImpactDirection,
+			ResolvePPAuthoredCourseObstacleSpeed(PusherActor, PusherComponent));
 		RememberImpact(PusherActor);
 		break;
 	}
@@ -183,20 +274,14 @@ void UPPImpactSensorComponent::ReportImpact(
 	bool bHeavyObstacle)
 {
 	AActor* OwnerActor = GetOwner();
-	UPPPhysicalStateComponent* PhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(OwnerActor);
-	if (!OwnerActor || !OwnerActor->HasAuthority() || !PhysicalState)
-	{
-		return;
-	}
-
-	FPPImpactData ImpactData;
-	ImpactData.Severity = FMath::Clamp(Severity, 0.0f, 150.0f);
-	ImpactData.ImpactPoint = OwnerActor->GetActorLocation();
-	ImpactData.ImpactDirection = FVector::UpVector;
-	ImpactData.BodyRegion = BodyRegion;
-	ImpactData.InstigatorActor = InstigatorActor;
-	ImpactData.bHeavyObstacle = bHeavyObstacle;
-	PhysicalState->ReceiveImpactData_Implementation(ImpactData);
+	ReportResolvedImpact(
+		Severity,
+		InstigatorActor,
+		BodyRegion,
+		bHeavyObstacle,
+		OwnerActor ? OwnerActor->GetActorLocation() : FVector::ZeroVector,
+		FVector::UpVector,
+		-1.0f);
 }
 
 void UPPImpactSensorComponent::HandleComponentHit(
@@ -215,19 +300,22 @@ void UPPImpactSensorComponent::HandleComponentHit(
 
 	float Severity = CalculateImpactSeverity(HitComponent, OtherComponent, NormalImpulse, Hit);
 	const bool bSpinnerImpact = IsPPImpactSensorSpinnerStyleCourseObstacle(OtherActor);
+	const bool bPusherActor = IsPPImpactSensorPusherObstacle(OtherActor);
+	const bool bPusherImpact = IsPPImpactSensorPusherContactComponent(OtherActor, OtherComponent);
 	const bool bDropPropellerImpact = IsPPDropPropellerImpact(OtherActor, OtherComponent);
 	if (OtherActor && OtherActor->GetName().Contains(TEXT("Drop_V1"), ESearchCase::IgnoreCase) && !bDropPropellerImpact)
 	{
 		return;
 	}
-	if (bSpinnerImpact)
+	if (bPusherActor && !bPusherImpact)
 	{
-		// Slow spinner grazes should still topple the mascot, but must not be
-		// promoted to a mid-strength launch.
-		Severity = FMath::Max(Severity, 30.0f);
+		return;
 	}
-	if (bDropPropellerImpact)
+	const float CourseObstacleSpeed = ResolvePPAuthoredCourseObstacleSpeed(OtherActor, OtherComponent);
+	if (CourseObstacleSpeed >= 0.0f)
 	{
+		// Timeline movement often reports little or no rigid-body impulse. A valid
+		// authored course contact must still enter its bounded throw profile.
 		Severity = FMath::Max(Severity, 30.0f);
 	}
 	if (Severity < MinimumReportedSeverity)
@@ -235,15 +323,58 @@ void UPPImpactSensorComponent::HandleComponentHit(
 		return;
 	}
 
-	FPPImpactData ImpactData;
-	ImpactData.Severity = Severity;
-	ImpactData.ImpactPoint = Hit.ImpactPoint;
-	ImpactData.ImpactDirection = NormalImpulse.IsNearlyZero() ? -Hit.ImpactNormal : NormalImpulse.GetSafeNormal();
-	ImpactData.BodyRegion = Hit.BoneName;
-	ImpactData.InstigatorActor = OtherActor;
-	ImpactData.bHeavyObstacle = bSpinnerImpact || bDropPropellerImpact || (OtherActor && OtherActor->ActorHasTag(HeavyObstacleTag));
-	PhysicalState->ReceiveImpactData_Implementation(ImpactData);
+	ReportResolvedImpact(
+		Severity,
+		OtherActor,
+		Hit.BoneName,
+		bSpinnerImpact || bPusherImpact || bDropPropellerImpact
+			|| (OtherActor && OtherActor->ActorHasTag(HeavyObstacleTag)),
+		Hit.ImpactPoint,
+		NormalImpulse.IsNearlyZero() ? -Hit.ImpactNormal : NormalImpulse.GetSafeNormal(),
+		CourseObstacleSpeed);
 	RememberImpact(OtherActor);
+}
+
+void UPPImpactSensorComponent::ReportResolvedImpact(
+	float Severity,
+	AActor* InstigatorActor,
+	FName BodyRegion,
+	bool bHeavyObstacle,
+	const FVector& ImpactPoint,
+	const FVector& ImpactDirection,
+	float CourseObstacleSpeed)
+{
+	AActor* OwnerActor = GetOwner();
+	UPPPhysicalStateComponent* PhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(OwnerActor);
+	if (!OwnerActor || !OwnerActor->HasAuthority() || !PhysicalState)
+	{
+		return;
+	}
+	if (CourseObstacleSpeed >= 0.0f)
+	{
+		FVector CourseImpactDirection = ImpactDirection.GetSafeNormal2D();
+		const FVector AwayFromContact = (OwnerActor->GetActorLocation() - ImpactPoint).GetSafeNormal2D();
+		if (!AwayFromContact.IsNearlyZero()
+			&& (CourseImpactDirection.IsNearlyZero()
+				|| FVector::DotProduct(CourseImpactDirection, AwayFromContact) < 0.0f))
+		{
+			CourseImpactDirection = AwayFromContact;
+		}
+		PhysicalState->RequestCourseObstacleRagdoll(
+			CourseImpactDirection,
+			CourseObstacleSpeed,
+			InstigatorActor);
+		return;
+	}
+
+	FPPImpactData ImpactData;
+	ImpactData.Severity = FMath::Clamp(Severity, 0.0f, 150.0f);
+	ImpactData.ImpactPoint = ImpactPoint;
+	ImpactData.ImpactDirection = ImpactDirection.GetSafeNormal();
+	ImpactData.BodyRegion = BodyRegion;
+	ImpactData.InstigatorActor = InstigatorActor;
+	ImpactData.bHeavyObstacle = bHeavyObstacle;
+	PhysicalState->ReceiveImpactData_Implementation(ImpactData);
 }
 
 float UPPImpactSensorComponent::CalculateImpactSeverity(

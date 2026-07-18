@@ -34,6 +34,14 @@ private:
 		const UPrimitiveComponent* OtherComponent,
 		const FVector& NormalImpulse,
 		const FHitResult& Hit) const;
+	void ReportResolvedImpact(
+		float Severity,
+		AActor* InstigatorActor,
+		FName BodyRegion,
+		bool bHeavyObstacle,
+		const FVector& ImpactPoint,
+		const FVector& ImpactDirection,
+		float CourseObstacleSpeed);
 
 	bool CanReportImpact(AActor* OtherActor) const;
 	void RememberImpact(AActor* OtherActor);

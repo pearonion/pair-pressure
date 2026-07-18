@@ -1271,23 +1271,24 @@ void UPPGrabberComponent::PerformHeldItemThrow(const FVector& ThrowDirection, fl
 	MulticastGrabThrowPresentation(ChargeAlpha >= 0.45f);
 	if (bThrowingGrabDummy)
 	{
-		// Do not add a full jump's vertical velocity to an already upward throw.
-		// That combination was the source of the unstable airborne dummy launch.
-		const FVector DummyInheritedVelocity(
-			InheritedVelocity.X,
-			InheritedVelocity.Y,
-			FMath::Clamp(InheritedVelocity.Z, -120.0f, 120.0f));
-		const FVector DummyThrowVelocity = DummyInheritedVelocity + ValidatedThrowDirection * (ThrowSpeed * 0.70f);
-		const FVector DummyForward = ThrownCharacter->GetActorForwardVector().GetSafeNormal2D();
-		const FVector ThrowRollAxis = FVector::CrossProduct(ValidatedThrowDirection, FVector::UpVector).GetSafeNormal();
-		const float FacingThrowDot = FVector::DotProduct(DummyForward, ValidatedThrowDirection.GetSafeNormal2D());
-		const FVector DummyAngularVelocity = ThrowRollAxis * (FacingThrowDot >= 0.0f ? 75.0f : -75.0f);
 		if (UPPPhysicalStateComponent* DummyPhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(ThrownCharacter))
 		{
-			DummyPhysicalState->RequestThrownRagdoll(DummyThrowVelocity, DummyAngularVelocity);
+			DummyPhysicalState->RequestDummyThrowProfileRagdoll(
+				ValidatedThrowDirection,
+				ChargeAlpha,
+				InheritedVelocity,
+				HeldItemThrowSpeed);
 		}
 		else
 		{
+			// Preserve the old non-physical fallback while the normal dummy path uses
+			// the same shared profile as authored course-obstacle impacts.
+			const FVector DummyInheritedVelocity(
+				InheritedVelocity.X,
+				InheritedVelocity.Y,
+				FMath::Clamp(InheritedVelocity.Z, -120.0f, 120.0f));
+			const FVector DummyThrowVelocity = DummyInheritedVelocity
+				+ ValidatedThrowDirection * (ThrowSpeed * 0.70f);
 			ThrownCharacter->LaunchCharacter(DummyThrowVelocity, true, true);
 		}
 		return;
