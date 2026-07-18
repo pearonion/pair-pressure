@@ -1269,8 +1269,10 @@ void AVNHShopperCharacter::UpdateRagdollCameraAnchor(float DeltaSeconds)
 	if (bFollowPhysicsBody)
 	{
 		FVector PhysicsAnchor = CharacterMesh->GetComponentLocation();
-		for (const FName Candidate : {
-			FName(TEXT("chest")), FName(TEXT("hips")), FName(TEXT("pelvis"))})
+		const FName CandidateBones[] = {
+			FName(TEXT("hips")), FName(TEXT("pelvis")), FName(TEXT("chest"))
+		};
+		for (const FName Candidate : CandidateBones)
 		{
 			if (CharacterMesh->GetBoneIndex(Candidate) != INDEX_NONE)
 			{
@@ -1278,7 +1280,10 @@ void AVNHShopperCharacter::UpdateRagdollCameraAnchor(float DeltaSeconds)
 				break;
 			}
 		}
-		DesiredRelativeLocation = RootComponent->GetComponentTransform().InverseTransformPositionNoScale(PhysicsAnchor);
+		if (!PhysicsAnchor.ContainsNaN())
+		{
+			DesiredRelativeLocation = RootComponent->GetComponentTransform().InverseTransformPositionNoScale(PhysicsAnchor);
+		}
 	}
 
 	const float FollowSpeed = bFollowPhysicsBody ? 15.0f : 9.0f;

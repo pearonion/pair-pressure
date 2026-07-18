@@ -28,7 +28,10 @@ constexpr float PPPhysicalFullObstacleSpeed = 5.0f;
 constexpr float PPPhysicalMaxRagdollAngularSpeedDegrees = 120.0f;
 constexpr float PPPhysicalRagdollRecoveryBlendSeconds = 0.28f;
 constexpr float PPPhysicalRagdollNetworkPublishIntervalSeconds = 0.05f;
-constexpr float PPPhysicalRagdollNetworkSnapDistance = 180.0f;
+constexpr float PPPhysicalRagdollNetworkSnapDistance = 250.0f;
+constexpr float PPPhysicalRagdollNetworkPositionCorrectionSpeed = 7.0f;
+constexpr float PPPhysicalRagdollNetworkRotationCorrectionSpeed = 5.0f;
+constexpr float PPPhysicalRagdollNetworkMaxCorrectionSpeed = 450.0f;
 
 float ResolvePPObstacleThrowChargeAlpha(float CourseObstacleSpeed)
 {
@@ -574,12 +577,14 @@ void UPPPhysicalStateComponent::ApplyRemoteRagdollNetworkState(bool bSnapToAutho
 	const bool bLargeCorrection = FVector::DistSquared(
 		CurrentBodyTransform.GetLocation(),
 		AuthoritativeLocation) > FMath::Square(PPPhysicalRagdollNetworkSnapDistance);
-	if (bSnapToAuthoritativeState || bLargeCorrection)
+	if (!bSnapToAuthoritativeState && !bLargeCorrection)
 	{
-		RootBodyInstance->SetBodyTransform(
-			FTransform(RagdollNetworkState.RootRotation, AuthoritativeLocation),
-			ETeleportType::TeleportPhysics);
+		return;
 	}
+
+	RootBodyInstance->SetBodyTransform(
+		FTransform(RagdollNetworkState.RootRotation, AuthoritativeLocation),
+		ETeleportType::TeleportPhysics);
 	CharacterMesh->SetPhysicsLinearVelocity(
 		FVector(RagdollNetworkState.LinearVelocity),
 		false,
@@ -628,26 +633,47 @@ void UPPPhysicalStateComponent::UpdateRemoteRagdollNetworkState(float DeltaTime)
 		return;
 	}
 
-	const float CorrectionAlpha = 1.0f - FMath::Exp(-16.0f * FMath::Max(0.0f, DeltaTime));
-	const FVector SmoothedLocation = FMath::Lerp(
-		CurrentBodyTransform.GetLocation(),
-		TargetLocation,
-		CorrectionAlpha);
-	const FQuat SmoothedRotation = FQuat::Slerp(
-		CurrentBodyTransform.GetRotation(),
-		RagdollNetworkState.RootRotation.Quaternion(),
-		CorrectionAlpha).GetNormalized();
-	RootBodyInstance->SetBodyTransform(
-		FTransform(SmoothedRotation, SmoothedLocation),
-		ETeleportType::TeleportPhysics);
-
+	// Keep the constrained two-body ragdoll physically continuous between
+	// snapshots. Teleporting hips every render tick while also applying the
+	// authoritative velocity injected energy into the chest constraint and made
+	// remote players orbit/jitter. A bounded velocity correction converges without
+	// fighting Chaos; only a genuinely large error uses the snap path above.
+	const FVector PositionCorrectionVelocity =
+		((TargetLocation - CurrentBodyTransform.GetLocation())
+			* PPPhysicalRagdollNetworkPositionCorrectionSpeed)
+		.GetClampedToMaxSize(PPPhysicalRagdollNetworkMaxCorrectionSpeed);
+	const FVector DesiredLinearVelocity =
+		FVector(RagdollNetworkState.LinearVelocity) + PositionCorrectionVelocity;
 	const FVector CurrentLinearVelocity = CharacterMesh->GetBoneLinearVelocity(RagdollRootBone);
 	const FVector SmoothedLinearVelocity = FMath::VInterpTo(
 		CurrentLinearVelocity,
-		FVector(RagdollNetworkState.LinearVelocity),
+		DesiredLinearVelocity,
 		DeltaTime,
-		10.0f);
+		12.0f);
 	CharacterMesh->SetPhysicsLinearVelocity(SmoothedLinearVelocity, false, RagdollRootBone);
+
+	FQuat RotationDelta = RagdollNetworkState.RootRotation.Quaternion()
+		* CurrentBodyTransform.GetRotation().Inverse();
+	RotationDelta.Normalize();
+	FVector RotationAxis = FVector::UpVector;
+	float RotationAngleRadians = 0.0f;
+	RotationDelta.ToAxisAndAngle(RotationAxis, RotationAngleRadians);
+	if (RotationAngleRadians > PI)
+	{
+		RotationAngleRadians -= 2.0f * PI;
+	}
+	const FVector RotationCorrectionVelocity = RotationAxis
+		* FMath::RadiansToDegrees(RotationAngleRadians)
+		* PPPhysicalRagdollNetworkRotationCorrectionSpeed;
+	const FVector DesiredAngularVelocity =
+		(FVector(RagdollNetworkState.AngularVelocityDegrees) + RotationCorrectionVelocity)
+		.GetClampedToMaxSize(PPPhysicalMaxRagdollAngularSpeedDegrees);
+	const FVector CurrentAngularVelocity =
+		CharacterMesh->GetPhysicsAngularVelocityInDegrees(RagdollRootBone);
+	CharacterMesh->SetPhysicsAngularVelocityInDegrees(
+		FMath::VInterpTo(CurrentAngularVelocity, DesiredAngularVelocity, DeltaTime, 10.0f),
+		false,
+		RagdollRootBone);
 }
 
 void UPPPhysicalStateComponent::ApplyImpactAuthoritative(const FPPImpactData& ImpactData)
@@ -801,7 +827,12 @@ void UPPPhysicalStateComponent::EnterRagdollVisualState()
 		CharacterMesh->SetAllMotorsAngularVelocityDrive(false, false, false);
 		CharacterMesh->SetAllMotorsAngularDriveParams(0.0f, 0.0f, 0.0f, false);
 		CharacterMesh->SetEnablePhysicsBlending(true);
-		CharacterMesh->bPauseAnims = true;
+		// Keep pose evaluation running during the hybrid two-body ragdoll. Physics
+		// fully overrides hips/chest, while the evaluated bodyless child bones inherit
+		// those simulated parents. Pausing animation or setting its rate to zero leaves
+		// feet and other bodyless parts behind at the disabled capsule.
+		CharacterMesh->bPauseAnims = false;
+		CharacterMesh->GlobalAnimRateScale = 1.0f;
 		const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
 		if (!bUseStablePenguinRagdoll && !RagdollRootBone.IsNone())
 		{
@@ -858,6 +889,7 @@ void UPPPhysicalStateComponent::ExitRagdollVisualState()
 		CharacterMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		CharacterMesh->SetEnablePhysicsBlending(true);
 		CharacterMesh->bPauseAnims = false;
+		CharacterMesh->GlobalAnimRateScale = 1.0f;
 		if (UWorld* World = GetWorld(); World && Capsule)
 		{
 			FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PPRagdollRecoveryGround), false, OwnerCharacter);
@@ -956,6 +988,7 @@ void UPPPhysicalStateComponent::UpdateRagdollRecoveryBlend(float DeltaTime)
 	CharacterMesh->SetAllUseCCD(false);
 	CharacterMesh->SetEnableGravity(true);
 	CharacterMesh->SetEnablePhysicsBlending(false);
+	CharacterMesh->GlobalAnimRateScale = 1.0f;
 	CharacterMesh->SetCollisionProfileName(TEXT("CharacterMesh"));
 	CharacterMesh->SetRelativeTransform(InitialMeshRelativeTransform);
 	if (UCapsuleComponent* Capsule = OwnerCharacter->GetCapsuleComponent())

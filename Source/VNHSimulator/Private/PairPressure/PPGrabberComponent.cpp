@@ -35,6 +35,9 @@ constexpr float PPGrabAlignmentScoreWeight = 1000.0f;
 constexpr float PPGrabPriorityScoreWeight = 100.0f;
 constexpr float PPGrabDistanceScoreWeight = 125.0f;
 constexpr float PPGrabLineOfSightScore = 50.0f;
+constexpr float PPGrabRemotePlayerCorrectionSpeed = 18.0f;
+constexpr float PPGrabRemotePlayerMaxCorrectionSpeed = 1200.0f;
+constexpr float PPGrabRemotePlayerSnapDistance = 250.0f;
 
 FVector GetPPBridgePerimeterPoint(const FBox& BridgeBounds, const FVector& QueryLocation)
 {
@@ -74,6 +77,15 @@ FVector GetPPBridgePerimeterPoint(const FBox& BridgeBounds, const FVector& Query
 bool IsPPBridgeLedge(const AActor* CandidateActor)
 {
 	return CandidateActor && CandidateActor->GetName().Contains(TEXT("Bridge_V1"), ESearchCase::IgnoreCase);
+}
+
+bool UsesPPGrabberStablePenguinRagdoll(const USkeletalMeshComponent* CharacterMesh)
+{
+	const UPhysicsAsset* PhysicsAsset = CharacterMesh ? CharacterMesh->GetPhysicsAsset() : nullptr;
+	return PhysicsAsset
+		&& PhysicsAsset->SkeletalBodySetups.Num() == 2
+		&& PhysicsAsset->FindBodyIndex(FName(TEXT("hips"))) != INDEX_NONE
+		&& PhysicsAsset->FindBodyIndex(FName(TEXT("chest"))) != INDEX_NONE;
 }
 }
 
@@ -1298,10 +1310,32 @@ void UPPGrabberComponent::PerformHeldItemThrow(const FVector& ThrowDirection, fl
 	const bool bThrowingPlayer = GrabState == EPPGrabState::GrabbingPlayer;
 	ACharacter* ThrownCharacter = bThrowingPlayer ? Cast<ACharacter>(GrabTarget) : nullptr;
 	const bool bThrowingGrabDummy = ThrownCharacter && ThrownCharacter == CarriedGrabDummy.Get();
-	USkeletalMeshComponent* ThrownCharacterMesh = ThrownCharacter ? ThrownCharacter->GetMesh() : nullptr;
 	UPrimitiveComponent* ThrownPrimitive = GrabbedPrimitive;
 	const FVector InheritedVelocity = OwnerActor->GetVelocity();
 	const float ThrowSpeed = FMath::Lerp(HeldItemThrowSpeed * 0.55f, HeldItemThrowSpeed * 2.15f, FMath::Clamp(ChargeAlpha, 0.0f, 1.0f));
+
+	// Complete incoming-grab cleanup first, then let the physical-state component
+	// take final ownership of the mesh in the same call stack. Entering the thrown
+	// state before ReleaseGrabAuthoritative let EndIncomingPlayerGrab restore the
+	// mesh/capsule afterward while the replicated state still said Ragdolled.
+	// This ordering mirrors the known-good dedicated-dummy release/throw handoff.
+	if (ThrownCharacter && !bThrowingGrabDummy)
+	{
+		if (UPPPhysicalStateComponent* ThrownPlayerPhysicalState =
+			UPPPhysicalStateComponent::FindPhysicalStateComponent(ThrownCharacter))
+		{
+			ReleaseGrabAuthoritative(false);
+			ThrownPlayerPhysicalState->RequestDummyThrowProfileRagdoll(
+				ValidatedThrowDirection,
+				ChargeAlpha,
+				InheritedVelocity,
+				HeldItemThrowSpeed,
+				true);
+			MulticastGrabThrowPresentation(ChargeAlpha >= 0.45f);
+			return;
+		}
+	}
+
 	ReleaseGrabAuthoritative(false);
 	MulticastGrabThrowPresentation(ChargeAlpha >= 0.45f);
 	if (bThrowingGrabDummy)
@@ -1330,24 +1364,8 @@ void UPPGrabberComponent::PerformHeldItemThrow(const FVector& ThrowDirection, fl
 	}
 	if (ThrownCharacter)
 	{
-		if (UPPPhysicalStateComponent* PhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(ThrownCharacter))
-		{
-			// Real players and the dedicated dummy must enter the same root-body
-			// launch path. Applying velocity to every constrained body made remote
-			// proxies diverge and spin, while the first replicated snapshot still
-			// described the pre-throw pose.
-			PhysicalState->RequestDummyThrowProfileRagdoll(
-				ValidatedThrowDirection,
-				ChargeAlpha,
-				InheritedVelocity,
-				HeldItemThrowSpeed,
-				true);
-		}
-		else
-		{
-			const FVector PlayerThrowVelocity = InheritedVelocity + ValidatedThrowDirection * (ThrowSpeed * 0.8f);
-			ThrownCharacter->LaunchCharacter(PlayerThrowVelocity, true, true);
-		}
+		const FVector PlayerThrowVelocity = InheritedVelocity + ValidatedThrowDirection * (ThrowSpeed * 0.8f);
+		ThrownCharacter->LaunchCharacter(PlayerThrowVelocity, true, true);
 		return;
 	}
 	if (ThrownPrimitive && ThrownPrimitive->IsSimulatingPhysics())
@@ -1750,10 +1768,10 @@ void UPPGrabberComponent::UpdateRemoteGrabPresentation(float DeltaTime)
 	USkeletalMeshComponent* IncomingOwnerMesh = IncomingOwnerCharacter ? IncomingOwnerCharacter->GetMesh() : nullptr;
 	if (IncomingSourceGrabber && IncomingOwnerMesh)
 	{
-		// PresentationGrabPoint is the server physics handle's chest target, so
-		// correct that same body on proxies. Correcting hips to a chest-space
-		// target offset the entire remote mascot and made carried players appear
-		// collapsed or mostly hidden for the joining client.
+		// PresentationGrabPoint is the server Physics Handle's selected body target.
+		// ResolvePlayerGrabBone deliberately selects the authoritative hips body for
+		// the compact Penguin asset, so the server handle and proxy correction move
+		// the same root without stretching the constrained chest or bodyless feet.
 		const FName PresentationBone = ResolvePlayerGrabBone(IncomingOwnerMesh);
 		FBodyInstance* PresentationBodyInstance = PresentationBone.IsNone()
 			? nullptr
@@ -1767,12 +1785,25 @@ void UPPGrabberComponent::UpdateRemoteGrabPresentation(float DeltaTime)
 				SetComponentTickEnabled(true);
 				return;
 			}
-			const FVector SmoothedBodyLocation = DeltaTime > 0.0f
-				? FMath::VInterpTo(CurrentBodyTransform.GetLocation(), DesiredBodyLocation, DeltaTime, 22.0f)
-				: DesiredBodyLocation;
-			PresentationBodyInstance->SetBodyTransform(
-				FTransform(CurrentBodyTransform.GetRotation(), SmoothedBodyLocation),
-				ETeleportType::TeleportPhysics);
+			const FVector BodyLocationError = DesiredBodyLocation - CurrentBodyTransform.GetLocation();
+			if (DeltaTime <= 0.0f
+				|| BodyLocationError.SizeSquared() > FMath::Square(PPGrabRemotePlayerSnapDistance))
+			{
+				PresentationBodyInstance->SetBodyTransform(
+					FTransform(CurrentBodyTransform.GetRotation(), DesiredBodyLocation),
+					ETeleportType::TeleportPhysics);
+			}
+			else
+			{
+				const FVector DesiredBodyVelocity =
+					(BodyLocationError * PPGrabRemotePlayerCorrectionSpeed)
+					.GetClampedToMaxSize(PPGrabRemotePlayerMaxCorrectionSpeed);
+				const FVector CurrentBodyVelocity = IncomingOwnerMesh->GetBoneLinearVelocity(PresentationBone);
+				IncomingOwnerMesh->SetPhysicsLinearVelocity(
+					FMath::VInterpTo(CurrentBodyVelocity, DesiredBodyVelocity, DeltaTime, 14.0f),
+					false,
+					PresentationBone);
+			}
 		}
 	}
 
@@ -1991,12 +2022,23 @@ void UPPGrabberComponent::ApplyIncomingGrabRagdoll(bool bEnableRagdoll)
 		OwnerMesh->SetAllMotorsAngularVelocityDrive(false, false, false);
 		OwnerMesh->SetAllMotorsAngularDriveParams(0.0f, 0.0f, 0.0f, false);
 		OwnerMesh->SetEnablePhysicsBlending(true);
-		OwnerMesh->bPauseAnims = true;
+		// Keep pose evaluation running so bodyless visible bones (feet, hands, head)
+		// inherit the simulated hips/chest transforms. Pausing animation or setting
+		// its rate to zero leaves those parts behind at the capsule during ragdoll.
+		OwnerMesh->bPauseAnims = false;
+		OwnerMesh->GlobalAnimRateScale = 1.0f;
 		// Simulate only the authored character body chain. The Penguin has an
 		// inversely-scaled Null/petArmat import chain above hips; including those
 		// import roots explosively launches the mesh out of world bounds.
 		const FName RagdollRootBone = ResolvePlayerRecoveryBone(OwnerMesh);
-		if (!RagdollRootBone.IsNone())
+		if (UsesPPGrabberStablePenguinRagdoll(OwnerMesh))
+		{
+			OwnerMesh->SetAllBodiesSimulatePhysics(false);
+			OwnerMesh->SetBodySimulatePhysics(FName(TEXT("hips")), true);
+			OwnerMesh->SetBodySimulatePhysics(FName(TEXT("chest")), true);
+			OwnerMesh->SetAllBodiesPhysicsBlendWeight(1.0f, false);
+		}
+		else if (!RagdollRootBone.IsNone())
 		{
 			OwnerMesh->SetAllBodiesBelowSimulatePhysics(RagdollRootBone, true, true);
 			OwnerMesh->SetAllBodiesBelowPhysicsBlendWeight(RagdollRootBone, 1.0f, false, true);
@@ -2039,6 +2081,7 @@ void UPPGrabberComponent::ApplyIncomingGrabRagdoll(bool bEnableRagdoll)
 	OwnerMesh->SetAllUseCCD(false);
 	OwnerMesh->SetEnablePhysicsBlending(false);
 	OwnerMesh->bPauseAnims = false;
+	OwnerMesh->GlobalAnimRateScale = 1.0f;
 	OwnerMesh->SetCollisionProfileName(TEXT("CharacterMesh"));
 	OwnerMesh->SetRelativeTransform(IncomingGrabInitialMeshRelativeTransform);
 	OwnerCharacter->SetActorLocation(RecoveryLocation, false, nullptr, ETeleportType::TeleportPhysics);
@@ -2166,6 +2209,10 @@ FName UPPGrabberComponent::ResolvePlayerGrabBone(const USkeletalMeshComponent* T
 	if (!TargetMesh)
 	{
 		return NAME_None;
+	}
+	if (UsesPPGrabberStablePenguinRagdoll(TargetMesh))
+	{
+		return FName(TEXT("hips"));
 	}
 
 	for (const FName CandidateBone : {
