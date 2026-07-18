@@ -128,8 +128,13 @@ void UPPGrabberComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	if (!GetOwner() || !GetOwner()->HasAuthority())
+	if (!GetOwner())
 	{
+		return;
+	}
+	if (!GetOwner()->HasAuthority())
+	{
+		UpdateRemoteGrabPresentation(DeltaTime);
 		return;
 	}
 	if (ImmuneGrabber.IsValid() && GetWorld() && GetWorld()->GetTimeSeconds() >= ImmunityEndTimeSeconds)
@@ -252,6 +257,13 @@ void UPPGrabberComponent::ReleaseGrab_Implementation()
 		{
 			LocomotionComponent->SetGrabMovementMultiplier(1.0f);
 		}
+		if (GrabState == EPPGrabState::HoldingItem
+			|| GrabState == EPPGrabState::GrabbingPlayer
+			|| GrabState == EPPGrabState::MutualGrab)
+		{
+			bPredictedReleasePresentationPending = true;
+			OnGrabReleasedPresentation.Broadcast(GrabState == EPPGrabState::HoldingItem, false);
+		}
 		OnGrabStateChanged.Broadcast(EPPGrabState::None, nullptr);
 		return;
 	}
@@ -279,6 +291,8 @@ void UPPGrabberComponent::RequestHeldItemThrow(const FVector& ThrowDirection)
 
 	if (!OwnerActor->HasAuthority())
 	{
+		bPredictedThrowPresentationPending = true;
+		OnGrabThrowPresentation.Broadcast(false);
 		ServerThrowHeldItem(SafeThrowDirection);
 		return;
 	}
@@ -302,6 +316,8 @@ void UPPGrabberComponent::RequestChargedThrow(const FVector& ThrowDirection, flo
 	const float ClampedChargeAlpha = FMath::Clamp(ChargeAlpha, 0.0f, 1.0f);
 	if (!OwnerActor->HasAuthority())
 	{
+		bPredictedThrowPresentationPending = true;
+		OnGrabThrowPresentation.Broadcast(ClampedChargeAlpha >= 0.45f);
 		ServerThrowHeldItemCharged(SafeThrowDirection, ClampedChargeAlpha);
 		return;
 	}
@@ -380,7 +396,7 @@ void UPPGrabberComponent::ServerRequestLedgeClimb_Implementation()
 	PerformLedgeClimb();
 }
 
-void UPPGrabberComponent::ClientGrabRejected_Implementation()
+void UPPGrabberComponent::MulticastGrabRejected_Implementation()
 {
 	if (AActor* OwnerActor = GetOwner())
 	{
@@ -396,16 +412,35 @@ void UPPGrabberComponent::ClientGrabRejected_Implementation()
 
 void UPPGrabberComponent::MulticastGrabReleasedPresentation_Implementation(bool bDroppedItem, bool bLedgeClimb)
 {
+	if (GetOwner() && GetOwner()->GetLocalRole() == ROLE_AutonomousProxy && bPredictedReleasePresentationPending)
+	{
+		bPredictedReleasePresentationPending = false;
+		return;
+	}
 	OnGrabReleasedPresentation.Broadcast(bDroppedItem, bLedgeClimb);
 }
 
 void UPPGrabberComponent::MulticastGrabThrowPresentation_Implementation(bool bChargedThrow)
 {
+	if (GetOwner() && GetOwner()->GetLocalRole() == ROLE_AutonomousProxy && bPredictedThrowPresentationPending)
+	{
+		bPredictedThrowPresentationPending = false;
+		return;
+	}
 	OnGrabThrowPresentation.Broadcast(bChargedThrow);
+}
+
+void UPPGrabberComponent::MulticastPlayGrabbedPlayerGetUp_Implementation(ACharacter* RecoveringCharacter)
+{
+	PlayGetUpFrontAnimation(RecoveringCharacter);
 }
 
 void UPPGrabberComponent::OnRep_GrabPresentation()
 {
+	if (GetOwner() && !GetOwner()->HasAuthority())
+	{
+		UpdateRemoteGrabPresentation(0.0f);
+	}
 	ApplyIncomingGrabRagdoll(IncomingGrabber != nullptr);
 	ApplyMovementPresentation();
 	OnGrabStateChanged.Broadcast(GrabState, GrabTarget);
@@ -915,7 +950,7 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 	if (!GetOwner() || !GetOwner()->HasAuthority() || !TargetData.IsValid())
 	{
 		SetGrabPresentation(EPPGrabState::None, nullptr);
-		ClientGrabRejected();
+		MulticastGrabRejected();
 		return;
 	}
 
@@ -983,7 +1018,7 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 		if (!PhysicsHandle)
 		{
 			SetGrabPresentation(EPPGrabState::None, nullptr);
-			ClientGrabRejected();
+			MulticastGrabRejected();
 			return;
 		}
 		PhysicsHandle->SetLinearStiffness(ActiveProfile.LinearStiffness);
@@ -1024,7 +1059,7 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 		{
 			GrabbedPrimitive = nullptr;
 			SetGrabPresentation(EPPGrabState::None, nullptr);
-			ClientGrabRejected();
+			MulticastGrabRejected();
 			return;
 		}
 		PhysicsHandle->SetTargetLocation(
@@ -1039,7 +1074,7 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 		{
 			GrabbedPrimitive = nullptr;
 			SetGrabPresentation(EPPGrabState::None, nullptr);
-			ClientGrabRejected();
+			MulticastGrabRejected();
 			return;
 		}
 
@@ -1062,7 +1097,7 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 				TargetGrabber->EndIncomingPlayerGrab(GetOwner(), false);
 				GrabbedPrimitive = nullptr;
 				SetGrabPresentation(EPPGrabState::None, nullptr);
-				ClientGrabRejected();
+				MulticastGrabRejected();
 				return;
 			}
 			const FVector PlayerGrabLocation = ActivePlayerGrabBone.IsNone()
@@ -1084,7 +1119,7 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 				TargetGrabber->EndIncomingPlayerGrab(GetOwner(), false);
 				GrabbedPrimitive = nullptr;
 				SetGrabPresentation(EPPGrabState::None, nullptr);
-				ClientGrabRejected();
+				MulticastGrabRejected();
 				return;
 			}
 			PhysicsHandle->SetTargetLocation(GetPlayerCarryLocation());
@@ -1151,7 +1186,7 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 	case EPPGrabTargetType::None:
 	default:
 		SetGrabPresentation(EPPGrabState::None, nullptr);
-		ClientGrabRejected();
+		MulticastGrabRejected();
 		return;
 	}
 	SetComponentTickEnabled(true);
@@ -1210,7 +1245,7 @@ void UPPGrabberComponent::ReleaseGrabAuthoritative(bool bPlayRecoveryAnimation, 
 			TargetGrabber->EndIncomingPlayerGrab(GetOwner(), true);
 			if (bPlayRecoveryAnimation)
 			{
-				PlayGetUpFrontAnimation(Cast<ACharacter>(PreviousGrabTarget));
+				MulticastPlayGrabbedPlayerGetUp(Cast<ACharacter>(PreviousGrabTarget));
 			}
 			if (PreviousGrabState == EPPGrabState::MutualGrab && !bWasPairedRelease
 				&& TargetGrabber->GrabState == EPPGrabState::MutualGrab && TargetGrabber->GrabTarget == GetOwner())
@@ -1297,16 +1332,20 @@ void UPPGrabberComponent::PerformHeldItemThrow(const FVector& ThrowDirection, fl
 	{
 		if (UPPPhysicalStateComponent* PhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(ThrownCharacter))
 		{
-			IPPPhysicalStateInterface::Execute_RequestRagdoll(PhysicalState, 0.0f);
-		}
-		const FVector PlayerThrowVelocity = InheritedVelocity + ValidatedThrowDirection * (ThrowSpeed * 0.8f);
-		if (ThrownCharacterMesh && ThrownCharacterMesh->IsAnySimulatingPhysics())
-		{
-			ThrownCharacterMesh->SetAllPhysicsLinearVelocity(PlayerThrowVelocity, false);
-			ThrownCharacterMesh->WakeAllRigidBodies();
+			// Real players and the dedicated dummy must enter the same root-body
+			// launch path. Applying velocity to every constrained body made remote
+			// proxies diverge and spin, while the first replicated snapshot still
+			// described the pre-throw pose.
+			PhysicalState->RequestDummyThrowProfileRagdoll(
+				ValidatedThrowDirection,
+				ChargeAlpha,
+				InheritedVelocity,
+				HeldItemThrowSpeed,
+				true);
 		}
 		else
 		{
+			const FVector PlayerThrowVelocity = InheritedVelocity + ValidatedThrowDirection * (ThrowSpeed * 0.8f);
 			ThrownCharacter->LaunchCharacter(PlayerThrowVelocity, true, true);
 		}
 		return;
@@ -1432,7 +1471,7 @@ void UPPGrabberComponent::CancelReciprocalGrab(UPPGrabberComponent* OtherGrabber
 	SustainedGrabSeconds = 0.0f;
 	SetComponentTickEnabled(false);
 	SetGrabPresentation(EPPGrabState::None, nullptr);
-	ClientGrabRejected();
+	MulticastGrabRejected();
 }
 
 void UPPGrabberComponent::UpdateHeldItem(float DeltaTime)
@@ -1593,24 +1632,10 @@ void UPPGrabberComponent::BeginGrabDummyCarry(ACharacter* TargetCharacter)
 	}
 	CarriedGrabDummy = TargetCharacter;
 	LockedGrabDummyCarryRotation = TargetCharacter->GetActorRotation();
-	if (UCharacterMovementComponent* DummyMovement = TargetCharacter->GetCharacterMovement())
-	{
-		DummyMovement->StopMovementImmediately();
-		DummyMovement->DisableMovement();
-	}
-	if (UCapsuleComponent* DummyCapsule = TargetCharacter->GetCapsuleComponent())
-	{
-		DummyCapsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	}
-	if (USkeletalMeshComponent* DummyMesh = TargetCharacter->GetMesh())
-	{
-		DummyMesh->SetAllBodiesSimulatePhysics(false);
-		DummyMesh->SetEnableGravity(false);
-		DummyMesh->bPauseAnims = true;
-	}
-	TargetCharacter->AttachToComponent(OwnerCharacter->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+	ApplyGrabDummyCarryPresentation(TargetCharacter, true);
 	TargetCharacter->SetActorLocationAndRotation(
 		GetGrabDummyCarryLocation(), LockedGrabDummyCarryRotation, false, nullptr, ETeleportType::TeleportPhysics);
+	TargetCharacter->ForceNetUpdate();
 }
 
 void UPPGrabberComponent::EndGrabDummyCarry()
@@ -1622,21 +1647,137 @@ void UPPGrabberComponent::EndGrabDummyCarry()
 	{
 		return;
 	}
-	DummyCharacter->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
-	if (USkeletalMeshComponent* DummyMesh = DummyCharacter->GetMesh())
+	ApplyGrabDummyCarryPresentation(DummyCharacter, false);
+	DummyCharacter->ForceNetUpdate();
+}
+
+void UPPGrabberComponent::ApplyGrabDummyCarryPresentation(ACharacter* TargetCharacter, bool bIsCarried)
+{
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	if (!OwnerCharacter || !TargetCharacter)
+	{
+		return;
+	}
+
+	if (bIsCarried)
+	{
+		PresentedGrabDummy = TargetCharacter;
+		if (UCharacterMovementComponent* DummyMovement = TargetCharacter->GetCharacterMovement())
+		{
+			DummyMovement->StopMovementImmediately();
+			DummyMovement->DisableMovement();
+		}
+		if (UCapsuleComponent* DummyCapsule = TargetCharacter->GetCapsuleComponent())
+		{
+			DummyCapsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		}
+		if (USkeletalMeshComponent* DummyMesh = TargetCharacter->GetMesh())
+		{
+			DummyMesh->SetAllBodiesSimulatePhysics(false);
+			DummyMesh->SetEnableGravity(false);
+			DummyMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			DummyMesh->bPauseAnims = true;
+		}
+		if (TargetCharacter->GetAttachParentActor() != OwnerCharacter)
+		{
+			TargetCharacter->AttachToComponent(
+				OwnerCharacter->GetRootComponent(),
+				FAttachmentTransformRules::KeepWorldTransform);
+		}
+		return;
+	}
+
+	if (TargetCharacter->GetAttachParentActor() == OwnerCharacter)
+	{
+		TargetCharacter->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	}
+	if (USkeletalMeshComponent* DummyMesh = TargetCharacter->GetMesh())
 	{
 		DummyMesh->bPauseAnims = false;
 		DummyMesh->SetEnableGravity(true);
 		DummyMesh->SetCollisionProfileName(TEXT("CharacterMesh"));
 	}
-	if (UCapsuleComponent* DummyCapsule = DummyCharacter->GetCapsuleComponent())
+	if (UCapsuleComponent* DummyCapsule = TargetCharacter->GetCapsuleComponent())
 	{
 		DummyCapsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	}
-	if (UCharacterMovementComponent* DummyMovement = DummyCharacter->GetCharacterMovement())
+	if (UCharacterMovementComponent* DummyMovement = TargetCharacter->GetCharacterMovement())
 	{
 		DummyMovement->SetMovementMode(MOVE_Falling);
 	}
+	if (PresentedGrabDummy.Get() == TargetCharacter)
+	{
+		PresentedGrabDummy.Reset();
+	}
+}
+
+void UPPGrabberComponent::UpdateRemoteGrabPresentation(float DeltaTime)
+{
+	ACharacter* ReplicatedDummy = GrabState == EPPGrabState::GrabbingPlayer
+		? Cast<ACharacter>(GrabTarget)
+		: nullptr;
+	if (ReplicatedDummy && !IsGrabDummyPenguin(ReplicatedDummy))
+	{
+		ReplicatedDummy = nullptr;
+	}
+
+	if (PresentedGrabDummy.IsValid() && PresentedGrabDummy.Get() != ReplicatedDummy)
+	{
+		ApplyGrabDummyCarryPresentation(PresentedGrabDummy.Get(), false);
+	}
+	if (ReplicatedDummy && PresentedGrabDummy.Get() != ReplicatedDummy)
+	{
+		ApplyGrabDummyCarryPresentation(ReplicatedDummy, true);
+		SetComponentTickEnabled(true);
+	}
+	if (ReplicatedDummy)
+	{
+		const FVector DesiredLocation = GetGrabDummyCarryLocation();
+		const FVector SmoothedLocation = DeltaTime > 0.0f
+			? FMath::VInterpTo(ReplicatedDummy->GetActorLocation(), DesiredLocation, DeltaTime, 24.0f)
+			: DesiredLocation;
+		ReplicatedDummy->SetActorLocation(
+			SmoothedLocation,
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics);
+	}
+
+	ACharacter* IncomingOwnerCharacter = IncomingGrabber ? Cast<ACharacter>(GetOwner()) : nullptr;
+	UPPGrabberComponent* IncomingSourceGrabber = IncomingGrabber
+		? IncomingGrabber->FindComponentByClass<UPPGrabberComponent>()
+		: nullptr;
+	USkeletalMeshComponent* IncomingOwnerMesh = IncomingOwnerCharacter ? IncomingOwnerCharacter->GetMesh() : nullptr;
+	if (IncomingSourceGrabber && IncomingOwnerMesh)
+	{
+		// PresentationGrabPoint is the server physics handle's chest target, so
+		// correct that same body on proxies. Correcting hips to a chest-space
+		// target offset the entire remote mascot and made carried players appear
+		// collapsed or mostly hidden for the joining client.
+		const FName PresentationBone = ResolvePlayerGrabBone(IncomingOwnerMesh);
+		FBodyInstance* PresentationBodyInstance = PresentationBone.IsNone()
+			? nullptr
+			: IncomingOwnerMesh->GetBodyInstance(PresentationBone);
+		if (PresentationBodyInstance && PresentationBodyInstance->IsValidBodyInstance())
+		{
+			const FTransform CurrentBodyTransform = PresentationBodyInstance->GetUnrealWorldTransform();
+			const FVector DesiredBodyLocation = IncomingSourceGrabber->GetPresentationGrabPoint();
+			if (DesiredBodyLocation.IsNearlyZero())
+			{
+				SetComponentTickEnabled(true);
+				return;
+			}
+			const FVector SmoothedBodyLocation = DeltaTime > 0.0f
+				? FMath::VInterpTo(CurrentBodyTransform.GetLocation(), DesiredBodyLocation, DeltaTime, 22.0f)
+				: DesiredBodyLocation;
+			PresentationBodyInstance->SetBodyTransform(
+				FTransform(CurrentBodyTransform.GetRotation(), SmoothedBodyLocation),
+				ETeleportType::TeleportPhysics);
+		}
+	}
+
+	const bool bNeedsPresentationTick = ReplicatedDummy != nullptr || IncomingGrabber != nullptr;
+	SetComponentTickEnabled(bNeedsPresentationTick);
 }
 
 void UPPGrabberComponent::UpdatePushable(float /*DeltaTime*/)
@@ -1920,8 +2061,37 @@ void UPPGrabberComponent::PlayGetUpFrontAnimation(ACharacter* RecoveringCharacte
 	}
 
 	USkeletalMeshComponent* RecoveringMesh = RecoveringCharacter->GetMesh();
-	if (!RecoveringMesh || RecoveringMesh->IsAnySimulatingPhysics())
+	if (!RecoveringMesh)
 	{
+		return;
+	}
+	if (RecoveringMesh->IsAnySimulatingPhysics())
+	{
+		// The reliable multicast can arrive just before the replicated incoming-
+		// grab pointer clears. Defer until that OnRep restores animation, but never
+		// override a real physical-state ragdoll.
+		const UPPPhysicalStateComponent* PhysicalState =
+			UPPPhysicalStateComponent::FindPhysicalStateComponent(RecoveringCharacter);
+		const UPPGrabberComponent* RecoveringGrabber =
+			RecoveringCharacter->FindComponentByClass<UPPGrabberComponent>();
+		if ((!PhysicalState || !PhysicalState->IsRagdolled())
+			&& RecoveringGrabber && RecoveringGrabber->GetIncomingGrabber())
+		{
+			TWeakObjectPtr<UPPGrabberComponent> WeakGrabber(this);
+			TWeakObjectPtr<ACharacter> WeakRecoveringCharacter(RecoveringCharacter);
+			FTimerHandle DeferredGetUpTimerHandle;
+			GetWorld()->GetTimerManager().SetTimer(
+				DeferredGetUpTimerHandle,
+				[WeakGrabber, WeakRecoveringCharacter]()
+				{
+					if (UPPGrabberComponent* GrabberComponent = WeakGrabber.Get())
+					{
+						GrabberComponent->PlayGetUpFrontAnimation(WeakRecoveringCharacter.Get());
+					}
+				},
+				0.05f,
+				false);
+		}
 		return;
 	}
 
@@ -2246,5 +2416,9 @@ void UPPGrabberComponent::SetGrabPresentation(EPPGrabState NewGrabState, AActor*
 	if (bPresentationChanged)
 	{
 		OnRep_GrabPresentation();
+		if (GetOwner() && GetOwner()->HasAuthority())
+		{
+			GetOwner()->ForceNetUpdate();
+		}
 	}
 }

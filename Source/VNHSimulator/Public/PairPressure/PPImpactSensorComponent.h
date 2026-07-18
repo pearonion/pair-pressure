@@ -6,6 +6,15 @@
 
 class UPrimitiveComponent;
 
+struct FPPImpactSensorObstacleMotionSample
+{
+	FTransform LastTransform = FTransform::Identity;
+	FVector LinearVelocity = FVector::ZeroVector;
+	FVector AngularVelocityRadians = FVector::ZeroVector;
+	double LastSampleTimeSeconds = 0.0;
+	bool bInitialized = false;
+};
+
 UCLASS(ClassGroup = (PairPressure), BlueprintType, Blueprintable, meta = (BlueprintSpawnableComponent))
 class VNHSIMULATOR_API UPPImpactSensorComponent : public UActorComponent
 {
@@ -15,6 +24,7 @@ public:
 	UPPImpactSensorComponent();
 
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Pair Pressure|Impact")
@@ -42,6 +52,13 @@ private:
 		const FVector& ImpactPoint,
 		const FVector& ImpactDirection,
 		float CourseObstacleSpeed);
+	void RegisterCourseObstacleActor(AActor* CourseObstacleActor);
+	void HandleCourseObstacleSpawned(AActor* SpawnedActor);
+	void UpdateCourseObstacleMotionSamples();
+	bool IsCourseObstacleMovingIntoOwner(
+		UPrimitiveComponent* ObstacleComponent,
+		const FVector& ImpactPoint,
+		const FVector& FallbackImpactDirection) const;
 
 	bool CanReportImpact(AActor* OtherActor) const;
 	void RememberImpact(AActor* OtherActor);
@@ -58,9 +75,14 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Impact", meta = (ClampMin = "0.0"))
 	float SameActorCooldownSeconds = 0.25f;
 
+	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Impact", meta = (ClampMin = "0.0"))
+	float MinimumCourseObstacleClosingSpeed = 35.0f;
+
 	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Impact")
 	FName HeavyObstacleTag = TEXT("PP_HeavyObstacle");
 
 	TMap<TWeakObjectPtr<AActor>, double> LastImpactTimes;
 	TArray<TWeakObjectPtr<UPrimitiveComponent>> PusherContactComponents;
+	TMap<TWeakObjectPtr<UPrimitiveComponent>, FPPImpactSensorObstacleMotionSample> CourseObstacleMotionSamples;
+	FDelegateHandle CourseObstacleSpawnedDelegateHandle;
 };

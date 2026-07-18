@@ -27,6 +27,8 @@ constexpr float PPPhysicalMediumObstacleSpeed = 3.0f;
 constexpr float PPPhysicalFullObstacleSpeed = 5.0f;
 constexpr float PPPhysicalMaxRagdollAngularSpeedDegrees = 120.0f;
 constexpr float PPPhysicalRagdollRecoveryBlendSeconds = 0.28f;
+constexpr float PPPhysicalRagdollNetworkPublishIntervalSeconds = 0.05f;
+constexpr float PPPhysicalRagdollNetworkSnapDistance = 180.0f;
 
 float ResolvePPObstacleThrowChargeAlpha(float CourseObstacleSpeed)
 {
@@ -127,8 +129,16 @@ void UPPPhysicalStateComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 	UpdateRagdollRecoveryBlend(DeltaTime);
 
-	if (!GetOwner() || !GetOwner()->HasAuthority())
+	if (!GetOwner())
 	{
+		return;
+	}
+	if (!GetOwner()->HasAuthority())
+	{
+		if (IsRagdolled())
+		{
+			UpdateRemoteRagdollNetworkState(DeltaTime);
+		}
 		return;
 	}
 
@@ -161,6 +171,14 @@ void UPPPhysicalStateComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 					RagdollRootBone);
 			}
 		}
+
+		const double CurrentWorldTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+		if (CurrentWorldTimeSeconds - LastRagdollNetworkPublishTimeSeconds
+			>= PPPhysicalRagdollNetworkPublishIntervalSeconds)
+		{
+			PublishRagdollNetworkState(true);
+			LastRagdollNetworkPublishTimeSeconds = CurrentWorldTimeSeconds;
+		}
 	}
 
 	if ((PhysicalState == EPPPhysicalState::Grounded || PhysicalState == EPPPhysicalState::Reactive) && Daze > 0.0f)
@@ -179,6 +197,7 @@ void UPPPhysicalStateComponent::GetLifetimeReplicatedProps(TArray<FLifetimePrope
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UPPPhysicalStateComponent, PhysicalState);
 	DOREPLIFETIME(UPPPhysicalStateComponent, Daze);
+	DOREPLIFETIME(UPPPhysicalStateComponent, RagdollNetworkState);
 }
 
 float UPPPhysicalStateComponent::GetDazeNormalized_Implementation() const
@@ -316,7 +335,10 @@ void UPPPhysicalStateComponent::RequestDebugRecovery()
 	RecoverFromCurrentState();
 }
 
-void UPPPhysicalStateComponent::RequestThrownRagdoll(const FVector& InitialVelocity, const FVector& InitialAngularVelocity)
+void UPPPhysicalStateComponent::RequestThrownRagdoll(
+	const FVector& InitialVelocity,
+	const FVector& InitialAngularVelocity,
+	bool bClearExistingBodyVelocities)
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
@@ -335,6 +357,15 @@ void UPPPhysicalStateComponent::RequestThrownRagdoll(const FVector& InitialVeloc
 		return;
 	}
 
+	if (bClearExistingBodyVelocities)
+	{
+		// Timeline-driven hazards can inject collision energy into the chest before
+		// this callback starts the authored throw. Clear that residual energy so the
+		// hips receive the same isolated launch used by the carried penguin dummy.
+		CharacterMesh->SetAllPhysicsLinearVelocity(FVector::ZeroVector);
+		CharacterMesh->SetAllPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
+	}
+
 	const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
 	CharacterMesh->SetPhysicsLinearVelocity(InitialVelocity, false, RagdollRootBone);
 	CharacterMesh->SetPhysicsAngularVelocityInDegrees(
@@ -342,13 +373,16 @@ void UPPPhysicalStateComponent::RequestThrownRagdoll(const FVector& InitialVeloc
 		false,
 		RagdollRootBone);
 	CharacterMesh->WakeAllRigidBodies();
+	PublishRagdollNetworkState(true);
+	GetOwner()->ForceNetUpdate();
 }
 
 void UPPPhysicalStateComponent::RequestDummyThrowProfileRagdoll(
 	const FVector& ThrowDirection,
 	float ChargeAlpha,
 	const FVector& InheritedVelocity,
-	float BaseThrowSpeed)
+	float BaseThrowSpeed,
+	bool bClearExistingBodyVelocities)
 {
 	AActor* OwnerActor = GetOwner();
 	if (!OwnerActor || !OwnerActor->HasAuthority())
@@ -379,7 +413,10 @@ void UPPPhysicalStateComponent::RequestDummyThrowProfileRagdoll(
 	const FVector ThrowRollAxis = FVector::CrossProduct(ValidatedThrowDirection, FVector::UpVector).GetSafeNormal();
 	const float FacingThrowDot = FVector::DotProduct(RagdollForward, ValidatedThrowDirection.GetSafeNormal2D());
 	const FVector ProfileAngularVelocity = ThrowRollAxis * (FacingThrowDot >= 0.0f ? 75.0f : -75.0f);
-	RequestThrownRagdoll(ProfileThrowVelocity, ProfileAngularVelocity);
+	RequestThrownRagdoll(
+		ProfileThrowVelocity,
+		ProfileAngularVelocity,
+		bClearExistingBodyVelocities);
 }
 
 void UPPPhysicalStateComponent::RequestCourseObstacleRagdoll(
@@ -415,7 +452,8 @@ void UPPPhysicalStateComponent::RequestCourseObstacleRagdoll(
 		CourseThrowDirection,
 		ResolvePPObstacleThrowChargeAlpha(AuthoredObstacleSpeed),
 		FVector::ZeroVector,
-		ProfileBaseThrowSpeed);
+		ProfileBaseThrowSpeed,
+		true);
 }
 
 UPPPhysicalStateComponent* UPPPhysicalStateComponent::FindPhysicalStateComponent(const AActor* Actor)
@@ -459,6 +497,157 @@ void UPPPhysicalStateComponent::OnRep_PhysicalState()
 void UPPPhysicalStateComponent::OnRep_Daze()
 {
 	OnDazeChanged.Broadcast(GetDazeNormalized_Implementation());
+}
+
+void UPPPhysicalStateComponent::OnRep_RagdollNetworkState()
+{
+	LastRagdollNetworkReceiptTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	if (!GetOwner() || GetOwner()->HasAuthority())
+	{
+		return;
+	}
+	if (RagdollNetworkState.bActive && IsRagdolled())
+	{
+		const bool bNewSequence = !bHasAppliedRagdollNetworkSequence
+			|| LastAppliedRagdollNetworkSequence != RagdollNetworkState.Sequence;
+		ApplyRemoteRagdollNetworkState(bNewSequence);
+	}
+}
+
+void UPPPhysicalStateComponent::PublishRagdollNetworkState(bool bActive)
+{
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
+	if (!OwnerCharacter || !OwnerCharacter->HasAuthority())
+	{
+		return;
+	}
+
+	RagdollNetworkState.bActive = bActive;
+	if (!bActive || !CharacterMesh)
+	{
+		RagdollNetworkState.RootLocation = OwnerCharacter->GetActorLocation();
+		RagdollNetworkState.RootRotation = OwnerCharacter->GetActorRotation();
+		RagdollNetworkState.LinearVelocity = FVector::ZeroVector;
+		RagdollNetworkState.AngularVelocityDegrees = FVector::ZeroVector;
+		return;
+	}
+
+	const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
+	FBodyInstance* RootBodyInstance = RagdollRootBone.IsNone()
+		? nullptr
+		: CharacterMesh->GetBodyInstance(RagdollRootBone);
+	if (!RootBodyInstance || !RootBodyInstance->IsValidBodyInstance())
+	{
+		return;
+	}
+
+	const FTransform RootBodyTransform = RootBodyInstance->GetUnrealWorldTransform();
+	RagdollNetworkState.RootLocation = RootBodyTransform.GetLocation();
+	RagdollNetworkState.RootRotation = RootBodyTransform.Rotator();
+	RagdollNetworkState.LinearVelocity = CharacterMesh->GetBoneLinearVelocity(RagdollRootBone);
+	RagdollNetworkState.AngularVelocityDegrees =
+		CharacterMesh->GetPhysicsAngularVelocityInDegrees(RagdollRootBone);
+}
+
+void UPPPhysicalStateComponent::ApplyRemoteRagdollNetworkState(bool bSnapToAuthoritativeState)
+{
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
+	if (!OwnerCharacter || OwnerCharacter->HasAuthority() || !CharacterMesh
+		|| !RagdollNetworkState.bActive || !IsRagdolled())
+	{
+		return;
+	}
+
+	const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
+	FBodyInstance* RootBodyInstance = RagdollRootBone.IsNone()
+		? nullptr
+		: CharacterMesh->GetBodyInstance(RagdollRootBone);
+	if (!RootBodyInstance || !RootBodyInstance->IsValidBodyInstance())
+	{
+		return;
+	}
+
+	const FTransform CurrentBodyTransform = RootBodyInstance->GetUnrealWorldTransform();
+	const FVector AuthoritativeLocation = FVector(RagdollNetworkState.RootLocation);
+	const bool bLargeCorrection = FVector::DistSquared(
+		CurrentBodyTransform.GetLocation(),
+		AuthoritativeLocation) > FMath::Square(PPPhysicalRagdollNetworkSnapDistance);
+	if (bSnapToAuthoritativeState || bLargeCorrection)
+	{
+		RootBodyInstance->SetBodyTransform(
+			FTransform(RagdollNetworkState.RootRotation, AuthoritativeLocation),
+			ETeleportType::TeleportPhysics);
+	}
+	CharacterMesh->SetPhysicsLinearVelocity(
+		FVector(RagdollNetworkState.LinearVelocity),
+		false,
+		RagdollRootBone);
+	CharacterMesh->SetPhysicsAngularVelocityInDegrees(
+		FVector(RagdollNetworkState.AngularVelocityDegrees),
+		false,
+		RagdollRootBone);
+	CharacterMesh->WakeAllRigidBodies();
+	bHasAppliedRagdollNetworkSequence = true;
+	LastAppliedRagdollNetworkSequence = RagdollNetworkState.Sequence;
+}
+
+void UPPPhysicalStateComponent::UpdateRemoteRagdollNetworkState(float DeltaTime)
+{
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
+	if (!OwnerCharacter || OwnerCharacter->HasAuthority() || !CharacterMesh
+		|| !RagdollNetworkState.bActive || !IsRagdolled())
+	{
+		return;
+	}
+
+	const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
+	FBodyInstance* RootBodyInstance = RagdollRootBone.IsNone()
+		? nullptr
+		: CharacterMesh->GetBodyInstance(RagdollRootBone);
+	if (!RootBodyInstance || !RootBodyInstance->IsValidBodyInstance())
+	{
+		return;
+	}
+
+	const FTransform CurrentBodyTransform = RootBodyInstance->GetUnrealWorldTransform();
+	const float SnapshotAgeSeconds = GetWorld()
+		? FMath::Clamp(
+			static_cast<float>(GetWorld()->GetTimeSeconds() - LastRagdollNetworkReceiptTimeSeconds),
+			0.0f,
+			0.10f)
+		: 0.0f;
+	const FVector TargetLocation = FVector(RagdollNetworkState.RootLocation)
+		+ FVector(RagdollNetworkState.LinearVelocity) * SnapshotAgeSeconds;
+	const float LocationErrorSquared = FVector::DistSquared(CurrentBodyTransform.GetLocation(), TargetLocation);
+	if (LocationErrorSquared > FMath::Square(PPPhysicalRagdollNetworkSnapDistance))
+	{
+		ApplyRemoteRagdollNetworkState(true);
+		return;
+	}
+
+	const float CorrectionAlpha = 1.0f - FMath::Exp(-16.0f * FMath::Max(0.0f, DeltaTime));
+	const FVector SmoothedLocation = FMath::Lerp(
+		CurrentBodyTransform.GetLocation(),
+		TargetLocation,
+		CorrectionAlpha);
+	const FQuat SmoothedRotation = FQuat::Slerp(
+		CurrentBodyTransform.GetRotation(),
+		RagdollNetworkState.RootRotation.Quaternion(),
+		CorrectionAlpha).GetNormalized();
+	RootBodyInstance->SetBodyTransform(
+		FTransform(SmoothedRotation, SmoothedLocation),
+		ETeleportType::TeleportPhysics);
+
+	const FVector CurrentLinearVelocity = CharacterMesh->GetBoneLinearVelocity(RagdollRootBone);
+	const FVector SmoothedLinearVelocity = FMath::VInterpTo(
+		CurrentLinearVelocity,
+		FVector(RagdollNetworkState.LinearVelocity),
+		DeltaTime,
+		10.0f);
+	CharacterMesh->SetPhysicsLinearVelocity(SmoothedLinearVelocity, false, RagdollRootBone);
 }
 
 void UPPPhysicalStateComponent::ApplyImpactAuthoritative(const FPPImpactData& ImpactData)
@@ -509,6 +698,7 @@ void UPPPhysicalStateComponent::SetPhysicalStateAuthoritative(EPPPhysicalState N
 		return;
 	}
 
+	const bool bWasRagdolled = IsRagdolled();
 	const bool bTimedRagdollState = NewState == EPPPhysicalState::Ragdolled
 		|| NewState == EPPPhysicalState::Unconscious;
 	if (bTimedRagdollState)
@@ -522,8 +712,16 @@ void UPPPhysicalStateComponent::SetPhysicalStateAuthoritative(EPPPhysicalState N
 	}
 
 	PhysicalState = NewState;
+	if (bTimedRagdollState && !bWasRagdolled)
+	{
+		++RagdollNetworkState.Sequence;
+		bHasAppliedRagdollNetworkSequence = false;
+		LastRagdollNetworkPublishTimeSeconds = -100.0;
+	}
 	ReviveProgressSeconds = 0.0f;
 	OnRep_PhysicalState();
+	PublishRagdollNetworkState(bTimedRagdollState);
+	GetOwner()->ForceNetUpdate();
 
 	if (GetWorld())
 	{
@@ -555,7 +753,7 @@ void UPPPhysicalStateComponent::EnterRagdollVisualState()
 	}
 	bRagdollRecoveryBlendActive = false;
 	RagdollRecoveryBlendElapsedSeconds = 0.0f;
-	SetComponentTickInterval(0.1f);
+	SetComponentTickInterval(0.0f);
 	if (OwnerCharacter->HasAuthority())
 	{
 		if (UPPGrabberComponent* GrabberComponent = OwnerCharacter->FindComponentByClass<UPPGrabberComponent>();
@@ -612,6 +810,12 @@ void UPPPhysicalStateComponent::EnterRagdollVisualState()
 		}
 		ConfigurePPStablePenguinRagdoll(CharacterMesh);
 		CharacterMesh->WakeAllRigidBodies();
+	}
+	if (!OwnerCharacter->HasAuthority() && RagdollNetworkState.bActive)
+	{
+		const bool bNewSequence = !bHasAppliedRagdollNetworkSequence
+			|| LastAppliedRagdollNetworkSequence != RagdollNetworkState.Sequence;
+		ApplyRemoteRagdollNetworkState(bNewSequence);
 	}
 }
 
@@ -735,15 +939,11 @@ void UPPPhysicalStateComponent::UpdateRagdollRecoveryBlend(float DeltaTime)
 		BlendAlpha);
 	CharacterMesh->SetRelativeTransform(BlendedRelativeTransform);
 
-	const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
-	if (!RagdollRootBone.IsNone())
-	{
-		CharacterMesh->SetAllBodiesBelowPhysicsBlendWeight(
-			RagdollRootBone,
-			1.0f - BlendAlpha,
-			false,
-			true);
-	}
+	// Recovery intentionally disables the mesh's physics collision before this
+	// blend begins. The bone-scoped API rejects that invalid physics state and
+	// emits one PIE warning per frame; the all-body API safely updates the two
+	// authored core bodies without requiring a live collision state.
+	CharacterMesh->SetAllBodiesPhysicsBlendWeight(1.0f - BlendAlpha, false);
 	if (LinearAlpha < 1.0f)
 	{
 		return;

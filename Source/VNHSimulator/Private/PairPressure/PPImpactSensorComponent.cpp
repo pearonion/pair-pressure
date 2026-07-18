@@ -174,7 +174,7 @@ void UPPImpactSensorComponent::BeginPlay()
 	}
 
 	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
-	if (!OwnerCharacter)
+	if (!OwnerCharacter || !OwnerCharacter->HasAuthority())
 	{
 		return;
 	}
@@ -189,27 +189,151 @@ void UPPImpactSensorComponent::BeginPlay()
 	}
 	for (TActorIterator<AActor> ActorIterator(GetWorld()); ActorIterator; ++ActorIterator)
 	{
-		AActor* CourseActor = *ActorIterator;
-		if (!IsPPImpactCourseObstacle(CourseActor))
+		RegisterCourseObstacleActor(*ActorIterator);
+	}
+	CourseObstacleSpawnedDelegateHandle = GetWorld()->AddOnActorSpawnedHandler(
+		FOnActorSpawned::FDelegate::CreateUObject(this, &UPPImpactSensorComponent::HandleCourseObstacleSpawned));
+	SetComponentTickEnabled(!CourseObstacleMotionSamples.IsEmpty());
+}
+
+void UPPImpactSensorComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (CourseObstacleSpawnedDelegateHandle.IsValid() && GetWorld())
+	{
+		GetWorld()->RemoveOnActorSpawnedHandler(CourseObstacleSpawnedDelegateHandle);
+		CourseObstacleSpawnedDelegateHandle.Reset();
+	}
+	Super::EndPlay(EndPlayReason);
+}
+
+void UPPImpactSensorComponent::RegisterCourseObstacleActor(AActor* CourseObstacleActor)
+{
+	if (!CourseObstacleActor || !IsPPImpactCourseObstacle(CourseObstacleActor) || !GetWorld())
+	{
+		return;
+	}
+
+	const double CurrentTimeSeconds = GetWorld()->GetTimeSeconds();
+	TInlineComponentArray<UPrimitiveComponent*> PrimitiveComponents;
+	CourseObstacleActor->GetComponents(PrimitiveComponents);
+	for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+	{
+		if (!PrimitiveComponent)
 		{
 			continue;
 		}
 
-		TInlineComponentArray<UPrimitiveComponent*> PrimitiveComponents;
-		CourseActor->GetComponents(PrimitiveComponents);
-		for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+		PrimitiveComponent->SetNotifyRigidBodyCollision(true);
+		if (ResolvePPAuthoredCourseObstacleSpeed(CourseObstacleActor, PrimitiveComponent) >= 0.0f)
 		{
-			if (PrimitiveComponent)
+			const TWeakObjectPtr<UPrimitiveComponent> PrimitiveComponentKey(PrimitiveComponent);
+			FPPImpactSensorObstacleMotionSample& MotionSample = CourseObstacleMotionSamples.FindOrAdd(PrimitiveComponentKey);
+			if (!MotionSample.bInitialized)
 			{
-				PrimitiveComponent->SetNotifyRigidBodyCollision(true);
-				if (IsPPImpactSensorPusherContactComponent(CourseActor, PrimitiveComponent))
-				{
-					PusherContactComponents.Add(PrimitiveComponent);
-				}
+				MotionSample.LastTransform = PrimitiveComponent->GetComponentTransform();
+				MotionSample.LastSampleTimeSeconds = CurrentTimeSeconds;
+				MotionSample.bInitialized = true;
 			}
 		}
+		if (IsPPImpactSensorPusherContactComponent(CourseObstacleActor, PrimitiveComponent))
+		{
+			PusherContactComponents.AddUnique(PrimitiveComponent);
+		}
 	}
-	SetComponentTickEnabled(!PusherContactComponents.IsEmpty());
+
+	if (!CourseObstacleMotionSamples.IsEmpty())
+	{
+		SetComponentTickEnabled(true);
+	}
+}
+
+void UPPImpactSensorComponent::HandleCourseObstacleSpawned(AActor* SpawnedActor)
+{
+	RegisterCourseObstacleActor(SpawnedActor);
+}
+
+void UPPImpactSensorComponent::UpdateCourseObstacleMotionSamples()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const double CurrentTimeSeconds = World->GetTimeSeconds();
+	for (auto MotionIterator = CourseObstacleMotionSamples.CreateIterator(); MotionIterator; ++MotionIterator)
+	{
+		UPrimitiveComponent* ObstacleComponent = MotionIterator.Key().Get();
+		if (!ObstacleComponent)
+		{
+			MotionIterator.RemoveCurrent();
+			continue;
+		}
+
+		FPPImpactSensorObstacleMotionSample& MotionSample = MotionIterator.Value();
+		const FTransform CurrentTransform = ObstacleComponent->GetComponentTransform();
+		const double SampleIntervalSeconds = CurrentTimeSeconds - MotionSample.LastSampleTimeSeconds;
+		if (MotionSample.bInitialized && SampleIntervalSeconds > UE_KINDA_SMALL_NUMBER)
+		{
+			const float InverseSampleInterval = 1.0f / static_cast<float>(SampleIntervalSeconds);
+			MotionSample.LinearVelocity =
+				(CurrentTransform.GetLocation() - MotionSample.LastTransform.GetLocation()) * InverseSampleInterval;
+
+			FQuat DeltaRotation = CurrentTransform.GetRotation() * MotionSample.LastTransform.GetRotation().Inverse();
+			DeltaRotation.Normalize();
+			FVector RotationAxis = FVector::ZeroVector;
+			float RotationAngle = 0.0f;
+			DeltaRotation.ToAxisAndAngle(RotationAxis, RotationAngle);
+			RotationAngle = FMath::UnwindRadians(RotationAngle);
+			MotionSample.AngularVelocityRadians =
+				FMath::Abs(RotationAngle) > UE_KINDA_SMALL_NUMBER
+				? RotationAxis.GetSafeNormal() * (RotationAngle * InverseSampleInterval)
+				: FVector::ZeroVector;
+		}
+		else
+		{
+			MotionSample.LinearVelocity = FVector::ZeroVector;
+			MotionSample.AngularVelocityRadians = FVector::ZeroVector;
+			MotionSample.bInitialized = true;
+		}
+
+		MotionSample.LastTransform = CurrentTransform;
+		MotionSample.LastSampleTimeSeconds = CurrentTimeSeconds;
+	}
+}
+
+bool UPPImpactSensorComponent::IsCourseObstacleMovingIntoOwner(
+	UPrimitiveComponent* ObstacleComponent,
+	const FVector& ImpactPoint,
+	const FVector& FallbackImpactDirection) const
+{
+	const AActor* OwnerActor = GetOwner();
+	const FPPImpactSensorObstacleMotionSample* MotionSample = nullptr;
+	if (ObstacleComponent)
+	{
+		const TWeakObjectPtr<UPrimitiveComponent> ObstacleComponentKey(ObstacleComponent);
+		MotionSample = CourseObstacleMotionSamples.Find(ObstacleComponentKey);
+	}
+	if (!OwnerActor || !ObstacleComponent || !MotionSample || !MotionSample->bInitialized)
+	{
+		return false;
+	}
+
+	FVector AwayFromContact = (OwnerActor->GetActorLocation() - ImpactPoint).GetSafeNormal();
+	if (AwayFromContact.IsNearlyZero())
+	{
+		AwayFromContact = FallbackImpactDirection.GetSafeNormal();
+	}
+	if (AwayFromContact.IsNearlyZero())
+	{
+		return false;
+	}
+
+	const FVector ContactOffset = ImpactPoint - ObstacleComponent->GetComponentLocation();
+	const FVector ObstaclePointVelocity = MotionSample->LinearVelocity
+		+ FVector::CrossProduct(MotionSample->AngularVelocityRadians, ContactOffset);
+	const float ObstacleClosingSpeed = FVector::DotProduct(ObstaclePointVelocity, AwayFromContact);
+	return ObstacleClosingSpeed >= MinimumCourseObstacleClosingSpeed;
 }
 
 void UPPImpactSensorComponent::TickComponent(
@@ -218,6 +342,7 @@ void UPPImpactSensorComponent::TickComponent(
 	FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+	UpdateCourseObstacleMotionSamples();
 
 	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
 	UPPPhysicalStateComponent* PhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(OwnerCharacter);
@@ -253,6 +378,10 @@ void UPPImpactSensorComponent::TickComponent(
 		if (PusherImpactDirection.IsNearlyZero())
 		{
 			PusherImpactDirection = (OwnerLocation - PusherComponent->GetComponentLocation()).GetSafeNormal2D();
+		}
+		if (!IsCourseObstacleMovingIntoOwner(PusherComponent, PusherImpactPoint, PusherImpactDirection))
+		{
+			continue;
 		}
 		ReportResolvedImpact(
 			30.0f,
@@ -314,8 +443,16 @@ void UPPImpactSensorComponent::HandleComponentHit(
 	const float CourseObstacleSpeed = ResolvePPAuthoredCourseObstacleSpeed(OtherActor, OtherComponent);
 	if (CourseObstacleSpeed >= 0.0f)
 	{
+		RegisterCourseObstacleActor(OtherActor);
+		const FVector CourseImpactDirection = NormalImpulse.IsNearlyZero()
+			? -Hit.ImpactNormal
+			: NormalImpulse.GetSafeNormal();
+		if (!IsCourseObstacleMovingIntoOwner(OtherComponent, Hit.ImpactPoint, CourseImpactDirection))
+		{
+			return;
+		}
 		// Timeline movement often reports little or no rigid-body impulse. A valid
-		// authored course contact must still enter its bounded throw profile.
+		// moving course contact must still enter its bounded throw profile.
 		Severity = FMath::Max(Severity, 30.0f);
 	}
 	if (Severity < MinimumReportedSeverity)
@@ -352,14 +489,13 @@ void UPPImpactSensorComponent::ReportResolvedImpact(
 	}
 	if (CourseObstacleSpeed >= 0.0f)
 	{
-		FVector CourseImpactDirection = ImpactDirection.GetSafeNormal2D();
 		const FVector AwayFromContact = (OwnerActor->GetActorLocation() - ImpactPoint).GetSafeNormal2D();
-		if (!AwayFromContact.IsNearlyZero()
-			&& (CourseImpactDirection.IsNearlyZero()
-				|| FVector::DotProduct(CourseImpactDirection, AwayFromContact) < 0.0f))
-		{
-			CourseImpactDirection = AwayFromContact;
-		}
+		// A raw solver impulse can run tangentially along a rotating surface and
+		// make an otherwise bounded throw orbit the obstacle. Prefer the geometric
+		// separation direction so every course hit cleanly exits its contact.
+		const FVector CourseImpactDirection = !AwayFromContact.IsNearlyZero()
+			? AwayFromContact
+			: ImpactDirection.GetSafeNormal2D();
 		PhysicalState->RequestCourseObstacleRagdoll(
 			CourseImpactDirection,
 			CourseObstacleSpeed,

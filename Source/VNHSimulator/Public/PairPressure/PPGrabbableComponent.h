@@ -13,6 +13,7 @@ class VNHSIMULATOR_API UPPGrabbableComponent : public UActorComponent, public IP
 public:
 	UPPGrabbableComponent();
 
+	virtual void BeginPlay() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	virtual bool CanBeGrabbed_Implementation(AActor* RequestingGrabber) const override;

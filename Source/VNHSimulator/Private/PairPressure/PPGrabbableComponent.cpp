@@ -13,6 +13,26 @@ UPPGrabbableComponent::UPPGrabbableComponent()
 	PrimaryComponentTick.bCanEverTick = false;
 }
 
+void UPPGrabbableComponent::BeginPlay()
+{
+	Super::BeginPlay();
+
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor || !OwnerActor->HasAuthority())
+	{
+		return;
+	}
+
+	// Physics-handle motion is authored on the server. Ensure every actor that
+	// opts into this gameplay component actually publishes that movement; this
+	// also covers builder-spawned and level-authored push/pull objects.
+	OwnerActor->SetReplicates(true);
+	OwnerActor->SetReplicateMovement(true);
+	OwnerActor->SetNetUpdateFrequency(FMath::Max(OwnerActor->GetNetUpdateFrequency(), 30.0f));
+	OwnerActor->SetMinNetUpdateFrequency(FMath::Max(OwnerActor->GetMinNetUpdateFrequency(), 15.0f));
+	OwnerActor->ForceNetUpdate();
+}
+
 void UPPGrabbableComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
@@ -108,6 +128,7 @@ void UPPGrabbableComponent::OnGrabStarted_Implementation(AActor* NewGrabber)
 	if (GetOwner() && GetOwner()->HasAuthority())
 	{
 		CurrentGrabber = NewGrabber;
+		GetOwner()->ForceNetUpdate();
 	}
 }
 
@@ -116,5 +137,6 @@ void UPPGrabbableComponent::OnGrabEnded_Implementation(AActor* PreviousGrabber)
 	if (GetOwner() && GetOwner()->HasAuthority() && CurrentGrabber == PreviousGrabber)
 	{
 		CurrentGrabber = nullptr;
+		GetOwner()->ForceNetUpdate();
 	}
 }

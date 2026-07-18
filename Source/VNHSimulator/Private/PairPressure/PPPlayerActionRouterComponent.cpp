@@ -5,6 +5,7 @@
 #include "PairPressure/PPPhysicalStateComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/GameStateBase.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 
@@ -42,6 +43,8 @@ void UPPPlayerActionRouterComponent::GetLifetimeReplicatedProps(TArray<FLifetime
 	DOREPLIFETIME_CONDITION(UPPPlayerActionRouterComponent, bAirDiveArmed, COND_OwnerOnly);
 	DOREPLIFETIME(UPPPlayerActionRouterComponent, bAirDiveActive);
 	DOREPLIFETIME(UPPPlayerActionRouterComponent, bAirDiveRecoveryActive);
+	DOREPLIFETIME(UPPPlayerActionRouterComponent, DiveServerStartTimeSeconds);
+	DOREPLIFETIME(UPPPlayerActionRouterComponent, DiveRecoveryServerStartTimeSeconds);
 }
 
 void UPPPlayerActionRouterComponent::RequestDive()
@@ -55,7 +58,9 @@ void UPPPlayerActionRouterComponent::RequestDive()
 	{
 		bAirDiveArmed = false;
 		bAirDiveActive = true;
+		DiveStartTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 		OnRep_AirDiveActive();
+		ApplyDiveLaunch();
 		ServerRequestDive();
 		return;
 	}
@@ -97,9 +102,12 @@ void UPPPlayerActionRouterComponent::CancelAirDiveForLedgeGrab()
 	}
 	bAirDiveArmed = false;
 	bAirDiveRecoveryActive = false;
+	DiveRecoveryServerStartTimeSeconds = -1.0f;
 	OnRep_AirDiveRecoveryActive();
 	bAirDiveActive = false;
+	DiveServerStartTimeSeconds = -1.0f;
 	OnRep_AirDiveActive();
+	GetOwner()->ForceNetUpdate();
 }
 
 bool UPPPlayerActionRouterComponent::CanAirDive() const
@@ -117,6 +125,32 @@ bool UPPPlayerActionRouterComponent::CanAirDive() const
 	return (bAirDiveArmed || bIsJumpAscent) && !bAirDiveActive && OwnerMovement && OwnerMovement->IsFalling()
 		&& (!PhysicalState || (!PhysicalState->IsRagdolled() && !PhysicalState->IsUnconscious()))
 		&& (!GrabberComponent || GrabberComponent->CanJumpOrDive());
+}
+
+float UPPPlayerActionRouterComponent::GetDivePresentationElapsedSeconds() const
+{
+	if (!GetWorld() || DiveServerStartTimeSeconds < 0.0f)
+	{
+		return 0.0f;
+	}
+	const AGameStateBase* GameState = GetWorld()->GetGameState();
+	const float SynchronizedWorldTime = GameState
+		? GameState->GetServerWorldTimeSeconds()
+		: GetWorld()->GetTimeSeconds();
+	return FMath::Max(0.0f, SynchronizedWorldTime - DiveServerStartTimeSeconds);
+}
+
+float UPPPlayerActionRouterComponent::GetDiveRecoveryPresentationElapsedSeconds() const
+{
+	if (!GetWorld() || DiveRecoveryServerStartTimeSeconds < 0.0f)
+	{
+		return 0.0f;
+	}
+	const AGameStateBase* GameState = GetWorld()->GetGameState();
+	const float SynchronizedWorldTime = GameState
+		? GameState->GetServerWorldTimeSeconds()
+		: GetWorld()->GetTimeSeconds();
+	return FMath::Max(0.0f, SynchronizedWorldTime - DiveRecoveryServerStartTimeSeconds);
 }
 
 void UPPPlayerActionRouterComponent::ServerNotifyJumpStarted_Implementation()
@@ -142,8 +176,10 @@ void UPPPlayerActionRouterComponent::ServerRequestDive_Implementation()
 void UPPPlayerActionRouterComponent::ClientDiveRejected_Implementation()
 {
 	bAirDiveRecoveryActive = false;
+	DiveRecoveryServerStartTimeSeconds = -1.0f;
 	OnRep_AirDiveRecoveryActive();
 	bAirDiveActive = false;
+	DiveServerStartTimeSeconds = -1.0f;
 	OnRep_AirDiveActive();
 }
 
@@ -178,6 +214,24 @@ void UPPPlayerActionRouterComponent::ArmAirDive()
 	bAirDiveArmed = true;
 }
 
+void UPPPlayerActionRouterComponent::ApplyDiveLaunch()
+{
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	if (!OwnerCharacter)
+	{
+		return;
+	}
+
+	FVector DiveDirection = OwnerCharacter->GetActorForwardVector().GetSafeNormal2D();
+	if (DiveDirection.IsNearlyZero())
+	{
+		DiveDirection = FVector::ForwardVector;
+	}
+	const float ExistingHorizontalSpeed = OwnerCharacter->GetVelocity().Size2D();
+	const float AppliedHorizontalSpeed = FMath::Max(DiveHorizontalSpeed + 70.0f, ExistingHorizontalSpeed + 55.0f);
+	OwnerCharacter->LaunchCharacter(DiveDirection * AppliedHorizontalSpeed, true, false);
+}
+
 void UPPPlayerActionRouterComponent::PerformDiveAuthoritative()
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority() || !CanAirDive())
@@ -188,19 +242,15 @@ void UPPPlayerActionRouterComponent::PerformDiveAuthoritative()
 	bAirDiveArmed = false;
 	bAirDiveActive = true;
 	bAirDiveRecoveryActive = false;
+	const AGameStateBase* GameState = GetWorld() ? GetWorld()->GetGameState() : nullptr;
+	DiveServerStartTimeSeconds = GameState
+		? GameState->GetServerWorldTimeSeconds()
+		: (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
+	DiveRecoveryServerStartTimeSeconds = -1.0f;
 	DiveStartTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 	OnRep_AirDiveActive();
-	if (ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner()))
-	{
-		FVector DiveDirection = OwnerCharacter->GetActorForwardVector().GetSafeNormal2D();
-		if (DiveDirection.IsNearlyZero())
-		{
-			DiveDirection = FVector::ForwardVector;
-		}
-		const float ExistingHorizontalSpeed = OwnerCharacter->GetVelocity().Size2D();
-		const float AppliedHorizontalSpeed = FMath::Max(DiveHorizontalSpeed + 70.0f, ExistingHorizontalSpeed + 55.0f);
-		OwnerCharacter->LaunchCharacter(DiveDirection * AppliedHorizontalSpeed, true, false);
-	}
+	ApplyDiveLaunch();
+	GetOwner()->ForceNetUpdate();
 }
 
 void UPPPlayerActionRouterComponent::BeginDiveRecovery()
@@ -210,6 +260,13 @@ void UPPPlayerActionRouterComponent::BeginDiveRecovery()
 		return;
 	}
 
+	if (GetOwner()->HasAuthority())
+	{
+		const AGameStateBase* GameState = GetWorld() ? GetWorld()->GetGameState() : nullptr;
+		DiveRecoveryServerStartTimeSeconds = GameState
+			? GameState->GetServerWorldTimeSeconds()
+			: (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
+	}
 	bAirDiveRecoveryActive = true;
 	OnRep_AirDiveRecoveryActive();
 	if (ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner()))
@@ -225,6 +282,7 @@ void UPPPlayerActionRouterComponent::BeginDiveRecovery()
 	{
 		return;
 	}
+	GetOwner()->ForceNetUpdate();
 
 	GetWorld()->GetTimerManager().SetTimer(
 		DiveRecoveryTimerHandle,
@@ -242,8 +300,10 @@ void UPPPlayerActionRouterComponent::FinishDiveRecovery()
 	}
 
 	bAirDiveRecoveryActive = false;
+	DiveRecoveryServerStartTimeSeconds = -1.0f;
 	OnRep_AirDiveRecoveryActive();
 	bAirDiveActive = false;
+	DiveServerStartTimeSeconds = -1.0f;
 	OnRep_AirDiveActive();
 	if (ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner()))
 	{
@@ -252,6 +312,7 @@ void UPPPlayerActionRouterComponent::FinishDiveRecovery()
 			OwnerMovement->SetMovementMode(MOVE_Walking);
 		}
 	}
+	GetOwner()->ForceNetUpdate();
 }
 
 void UPPPlayerActionRouterComponent::CancelInterruptedDive()
@@ -266,7 +327,13 @@ void UPPPlayerActionRouterComponent::CancelInterruptedDive()
 	}
 	bAirDiveArmed = false;
 	bAirDiveActive = false;
+	DiveServerStartTimeSeconds = -1.0f;
+	DiveRecoveryServerStartTimeSeconds = -1.0f;
 	OnRep_AirDiveActive();
+	if (GetOwner()->HasAuthority())
+	{
+		GetOwner()->ForceNetUpdate();
+	}
 }
 
 void UPPPlayerActionRouterComponent::BeginAssist()

@@ -45,6 +45,8 @@
 
 namespace
 {
+TMap<TWeakObjectPtr<UVNHLobbyMenuWidget>, FString> VNHLobbyPlayerRowSignatures;
+
 const FLinearColor Accent(0.0f, 1.0f, 0.92f, 1.0f);
 const FLinearColor Panel(0.005f, 0.035f, 0.04f, 0.82f);
 const FLinearColor PanelStrong(0.005f, 0.025f, 0.03f, 0.94f);
@@ -354,6 +356,7 @@ void UVNHLobbyMenuWidget::NativeConstruct()
 
 void UVNHLobbyMenuWidget::NativeDestruct()
 {
+	VNHLobbyPlayerRowSignatures.Remove(this);
 	Super::NativeDestruct();
 }
 
@@ -934,11 +937,28 @@ void UVNHLobbyMenuWidget::RefreshPlayers()
 	{
 		return;
 	}
-	Rows->ClearChildren();
-
 	const AGameStateBase* LobbyState = GetWorld() ? GetWorld()->GetGameState() : nullptr;
 	const APlayerState* LocalPlayerState = GetOwningPlayer() ? GetOwningPlayer()->PlayerState : nullptr;
 	const int32 PlayerArrayCount = LobbyState ? LobbyState->PlayerArray.Num() : 0;
+	FString PlayerRowsSignature = FString::Printf(TEXT("%d|"), PlayerArrayCount);
+	for (int32 PlayerIndex = 0; PlayerIndex < PlayerArrayCount; ++PlayerIndex)
+	{
+		const APlayerState* CandidatePlayerState = LobbyState->PlayerArray[PlayerIndex];
+		const AVNHPlayerState* CandidateLobbyState = Cast<AVNHPlayerState>(CandidatePlayerState);
+		PlayerRowsSignature += FString::Printf(
+			TEXT("%s|%s|%d;"),
+			*GetPathNameSafe(CandidatePlayerState),
+			CandidatePlayerState ? *CandidatePlayerState->GetPlayerName() : TEXT("None"),
+			CandidateLobbyState ? CandidateLobbyState->GetLobbyTeamId() : INDEX_NONE);
+	}
+	FString& PreviousPlayerRowsSignature = VNHLobbyPlayerRowSignatures.FindOrAdd(this);
+	if (PlayerRowsSignature == PreviousPlayerRowsSignature)
+	{
+		return;
+	}
+	PreviousPlayerRowsSignature = MoveTemp(PlayerRowsSignature);
+	Rows->ClearChildren();
+
 	for (int32 PlayerIndex = 0; PlayerIndex < PlayerArrayCount; ++PlayerIndex)
 	{
 		const APlayerState* CandidatePlayerState = LobbyState->PlayerArray[PlayerIndex];

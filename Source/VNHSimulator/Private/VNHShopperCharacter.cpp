@@ -1586,6 +1586,13 @@ void AVNHShopperCharacter::HandlePairPressureAirDiveStateChanged(bool bIsDiving)
 	UAnimInstance* AnimInstance = CharacterMesh ? CharacterMesh->GetAnimInstance() : nullptr;
 	if (DiveAnimation && AnimInstance && !CharacterMesh->IsAnySimulatingPhysics())
 	{
+		const float DiveElapsedSeconds = PairPressureActionRouter
+			? PairPressureActionRouter->GetDivePresentationElapsedSeconds()
+			: 0.0f;
+		const float DiveStartPosition = FMath::Clamp(
+			0.06f + DiveElapsedSeconds * 1.12f,
+			0.0f,
+			FMath::Max(0.0f, DiveAnimation->GetPlayLength() - 0.02f));
 		GetWorldTimerManager().ClearTimer(PairPressurePresentationTimerHandle);
 		AnimInstance->StopSlotAnimation(0.0f, TEXT("DefaultSlot"));
 		AnimInstance->PlaySlotAnimationAsDynamicMontage(
@@ -1596,7 +1603,7 @@ void AVNHShopperCharacter::HandlePairPressureAirDiveStateChanged(bool bIsDiving)
 			1.12f,
 			9999,
 			-1.0f,
-			0.06f);
+			DiveStartPosition);
 	}
 }
 
@@ -1625,11 +1632,15 @@ void AVNHShopperCharacter::HandlePairPressureAirDiveRecoveryStateChanged(bool bI
 			-1.0f,
 			FMath::Max(0.0f, DiveAnimation->GetPlayLength() - 0.02f));
 	}
+	const float RecoveryElapsedSeconds = PairPressureActionRouter
+		? PairPressureActionRouter->GetDiveRecoveryPresentationElapsedSeconds()
+		: 0.0f;
+	const float RemainingGetUpDelaySeconds = FMath::Max(0.01f, 0.60f - RecoveryElapsedSeconds);
 	GetWorldTimerManager().SetTimer(
 		PairPressureDiveRecoveryPresentationTimerHandle,
 		this,
 		&AVNHShopperCharacter::PlayPairPressureDiveRecoveryAnimation,
-		0.60f,
+		RemainingGetUpDelaySeconds,
 		false);
 }
 

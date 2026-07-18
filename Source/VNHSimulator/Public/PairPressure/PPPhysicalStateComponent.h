@@ -8,6 +8,33 @@
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FPPPhysicalStateChanged, EPPPhysicalState, NewState, float, DazeNormalized);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FPPDazeChanged, float, DazeNormalized);
 
+// Compact server-authoritative root-body snapshot. The two-bone mascot ragdoll
+// remains locally simulated for visual smoothness while this state prevents
+// different machines from settling in different places or orientations.
+USTRUCT()
+struct FPPRagdollNetworkState
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	FVector_NetQuantize100 RootLocation = FVector::ZeroVector;
+
+	UPROPERTY()
+	FRotator RootRotation = FRotator::ZeroRotator;
+
+	UPROPERTY()
+	FVector_NetQuantize100 LinearVelocity = FVector::ZeroVector;
+
+	UPROPERTY()
+	FVector_NetQuantize10 AngularVelocityDegrees = FVector::ZeroVector;
+
+	UPROPERTY()
+	uint16 Sequence = 0;
+
+	UPROPERTY()
+	bool bActive = false;
+};
+
 UCLASS(ClassGroup = (PairPressure), BlueprintType, Blueprintable, meta = (BlueprintSpawnableComponent))
 class VNHSIMULATOR_API UPPPhysicalStateComponent : public UActorComponent,
 	public IPPPhysicalStateInterface,
@@ -55,7 +82,10 @@ public:
 
 	// Authority-only throw entry point used by the dedicated grab dummy. It
 	// starts the normal ragdoll/recovery path while preserving an authored launch.
-	void RequestThrownRagdoll(const FVector& InitialVelocity, const FVector& InitialAngularVelocity);
+	void RequestThrownRagdoll(
+		const FVector& InitialVelocity,
+		const FVector& InitialAngularVelocity,
+		bool bClearExistingBodyVelocities = false);
 
 	// Builds the exact charged dummy launch before entering the shared thrown
 	// ragdoll path. Course obstacles use zero inherited velocity so their authored
@@ -64,7 +94,8 @@ public:
 		const FVector& ThrowDirection,
 		float ChargeAlpha,
 		const FVector& InheritedVelocity,
-		float BaseThrowSpeed);
+		float BaseThrowSpeed,
+		bool bClearExistingBodyVelocities = false);
 
 	// Authority-only course-hazard entry point. Authored speed selects quick,
 	// medium, or full dummy-throw strength without changing FPPImpactData layout.
@@ -100,11 +131,17 @@ private:
 	UFUNCTION()
 	void OnRep_Daze();
 
+	UFUNCTION()
+	void OnRep_RagdollNetworkState();
+
 	void ApplyImpactAuthoritative(const FPPImpactData& ImpactData);
 	void SetPhysicalStateAuthoritative(EPPPhysicalState NewState, float StateDurationSeconds = 0.0f);
 	void EnterRagdollVisualState();
 	void ExitRagdollVisualState();
 	void UpdateRagdollRecoveryBlend(float DeltaTime);
+	void PublishRagdollNetworkState(bool bActive);
+	void ApplyRemoteRagdollNetworkState(bool bSnapToAuthoritativeState);
+	void UpdateRemoteRagdollNetworkState(float DeltaTime);
 	void BeginGroundedRecovery(float RequiredGroundedSeconds);
 	bool IsRagdollRestingOnGround() const;
 	void PlayGetUpAnimation();
@@ -116,6 +153,9 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_Daze, VisibleInstanceOnly, Category = "Pair Pressure|Physical State", meta = (ClampMin = "0.0", ClampMax = "100.0"))
 	float Daze = 0.0f;
+
+	UPROPERTY(ReplicatedUsing = OnRep_RagdollNetworkState)
+	FPPRagdollNetworkState RagdollNetworkState;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Physical State", meta = (ClampMin = "0.0"))
 	float MaxDaze = 100.0f;
@@ -140,5 +180,9 @@ private:
 	FTransform RagdollRecoveryBlendStartTransform;
 	float RagdollRecoveryBlendElapsedSeconds = 0.0f;
 	bool bRagdollRecoveryBlendActive = false;
+	bool bHasAppliedRagdollNetworkSequence = false;
+	uint16 LastAppliedRagdollNetworkSequence = 0;
+	double LastRagdollNetworkPublishTimeSeconds = -100.0;
+	double LastRagdollNetworkReceiptTimeSeconds = -100.0;
 	FTimerHandle RecoveryTimerHandle;
 };

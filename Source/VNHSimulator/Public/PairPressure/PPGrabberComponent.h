@@ -8,6 +8,7 @@
 class UPhysicsHandleComponent;
 class UPPGrabbableComponent;
 class USkeletalMeshComponent;
+class ACharacter;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FPPGrabStateChanged, EPPGrabState, NewGrabState, AActor*, NewTarget);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FPPGrabFailed);
@@ -156,14 +157,17 @@ private:
 	UFUNCTION(Server, Reliable)
 	void ServerRequestLedgeClimb();
 
-	UFUNCTION(Client, Reliable)
-	void ClientGrabRejected();
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastGrabRejected();
 
 	UFUNCTION(NetMulticast, Reliable)
 	void MulticastGrabReleasedPresentation(bool bDroppedItem, bool bLedgeClimb);
 
 	UFUNCTION(NetMulticast, Reliable)
 	void MulticastGrabThrowPresentation(bool bChargedThrow);
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastPlayGrabbedPlayerGetUp(ACharacter* RecoveringCharacter);
 
 	UFUNCTION()
 	void OnRep_GrabPresentation();
@@ -186,6 +190,8 @@ private:
 	bool IsGrabDummyPenguin(const ACharacter* TargetCharacter) const;
 	void BeginGrabDummyCarry(ACharacter* TargetCharacter);
 	void EndGrabDummyCarry();
+	void ApplyGrabDummyCarryPresentation(ACharacter* TargetCharacter, bool bIsCarried);
+	void UpdateRemoteGrabPresentation(float DeltaTime);
 	void BeginIncomingPlayerGrab(AActor* NewIncomingGrabber);
 	void EndIncomingPlayerGrab(AActor* PreviousIncomingGrabber, bool bApplyImmunity);
 	void ApplyIncomingGrabRagdoll(bool bEnableRagdoll);
@@ -236,6 +242,7 @@ private:
 	FRotator LockedGrabDummyCarryRotation = FRotator::ZeroRotator;
 	FTransform IncomingGrabInitialMeshRelativeTransform;
 	TWeakObjectPtr<ACharacter> CarriedGrabDummy;
+	TWeakObjectPtr<ACharacter> PresentedGrabDummy;
 	FName ActivePlayerGrabBone = NAME_None;
 	float ConstraintForceEstimate = 0.0f;
 	float SustainedGrabSeconds = 0.0f;
@@ -243,4 +250,6 @@ private:
 	double ImmunityEndTimeSeconds = 0.0;
 	bool bReleasingPairedGrab = false;
 	bool bIncomingGrabRagdollApplied = false;
+	bool bPredictedReleasePresentationPending = false;
+	bool bPredictedThrowPresentationPending = false;
 };

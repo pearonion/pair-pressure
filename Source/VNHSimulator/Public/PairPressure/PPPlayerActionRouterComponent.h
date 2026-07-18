@@ -38,6 +38,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Actions")
 	bool IsAirDiveRecovering() const { return bAirDiveRecoveryActive; }
 
+	// Server-synchronized offsets let simulated proxies join an in-progress
+	// action at the correct animation point instead of replaying from zero.
+	float GetDivePresentationElapsedSeconds() const;
+	float GetDiveRecoveryPresentationElapsedSeconds() const;
+
 	UPROPERTY(BlueprintAssignable, Category = "Pair Pressure|Actions")
 	FPPAirDiveStateChanged OnAirDiveStateChanged;
 
@@ -67,6 +72,7 @@ private:
 	void OnRep_AirDiveRecoveryActive();
 
 	void ArmAirDive();
+	void ApplyDiveLaunch();
 	void PerformDiveAuthoritative();
 	void BeginDiveRecovery();
 	void FinishDiveRecovery();
@@ -80,6 +86,12 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_AirDiveRecoveryActive)
 	bool bAirDiveRecoveryActive = false;
+
+	UPROPERTY(Replicated)
+	float DiveServerStartTimeSeconds = -1.0f;
+
+	UPROPERTY(Replicated)
+	float DiveRecoveryServerStartTimeSeconds = -1.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Pair Pressure|Actions|Dive", meta = (ClampMin = "0.0"))
 	float DiveHorizontalSpeed = 680.0f;
