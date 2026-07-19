@@ -158,7 +158,7 @@ float ResolvePPAuthoredCourseObstacleSpeed(
 		|| !ReadPPAuthoredObstacleSpeed(ObstacleActor, SpeedPropertyName, AuthoredObstacleSpeed))
 	{
 		// A recognized course obstacle must never fall back to measured collision
-		// force. Missing authored data therefore selects the bounded quick profile.
+		// force. Missing authored data still identifies the deterministic course path.
 		return SpeedPropertyName.IsNone() ? -1.0f : 0.0f;
 	}
 	return AuthoredObstacleSpeed;
@@ -304,10 +304,10 @@ void UPPImpactSensorComponent::UpdateCourseObstacleMotionSamples()
 	}
 }
 
-bool UPPImpactSensorComponent::IsCourseObstacleMovingIntoOwner(
+bool UPPImpactSensorComponent::IsCourseObstacleMovingAtContact(
 	UPrimitiveComponent* ObstacleComponent,
 	const FVector& ImpactPoint,
-	const FVector& FallbackImpactDirection) const
+	const FVector& RequiredClosingDirection) const
 {
 	const AActor* OwnerActor = GetOwner();
 	const FPPImpactSensorObstacleMotionSample* MotionSample = nullptr;
@@ -317,16 +317,6 @@ bool UPPImpactSensorComponent::IsCourseObstacleMovingIntoOwner(
 		MotionSample = CourseObstacleMotionSamples.Find(ObstacleComponentKey);
 	}
 	if (!OwnerActor || !ObstacleComponent || !MotionSample || !MotionSample->bInitialized)
-	{
-		return false;
-	}
-
-	FVector AwayFromContact = (OwnerActor->GetActorLocation() - ImpactPoint).GetSafeNormal();
-	if (AwayFromContact.IsNearlyZero())
-	{
-		AwayFromContact = FallbackImpactDirection.GetSafeNormal();
-	}
-	if (AwayFromContact.IsNearlyZero())
 	{
 		return false;
 	}
@@ -360,8 +350,18 @@ bool UPPImpactSensorComponent::IsCourseObstacleMovingIntoOwner(
 	const FVector ContactOffset = ImpactPoint - ObstacleComponent->GetComponentLocation();
 	const FVector ObstaclePointVelocity = SampledLinearVelocity
 		+ FVector::CrossProduct(SampledAngularVelocityRadians, ContactOffset);
-	const float ObstacleClosingSpeed = FVector::DotProduct(ObstaclePointVelocity, AwayFromContact);
-	return ObstacleClosingSpeed >= MinimumCourseObstacleClosingSpeed;
+	// The hit itself proves contact, so rotating/propeller contacts gate on sampled
+	// point speed without a facing-sensitive projection. Persistent pusher overlaps
+	// additionally require closing motion so a retracting panel cannot knock down a
+	// player. A stationary obstacle never qualifies in either path.
+	if (ObstaclePointVelocity.Size() < MinimumCourseObstacleClosingSpeed)
+	{
+		return false;
+	}
+	const FVector ClosingDirection = RequiredClosingDirection.GetSafeNormal();
+	return ClosingDirection.IsNearlyZero()
+		|| FVector::DotProduct(ObstaclePointVelocity, ClosingDirection)
+			>= MinimumCourseObstacleClosingSpeed;
 }
 
 void UPPImpactSensorComponent::TickComponent(
@@ -407,7 +407,7 @@ void UPPImpactSensorComponent::TickComponent(
 		{
 			PusherImpactDirection = (OwnerLocation - PusherComponent->GetComponentLocation()).GetSafeNormal2D();
 		}
-		if (!IsCourseObstacleMovingIntoOwner(PusherComponent, PusherImpactPoint, PusherImpactDirection))
+		if (!IsCourseObstacleMovingAtContact(PusherComponent, PusherImpactPoint, PusherImpactDirection))
 		{
 			continue;
 		}
@@ -477,12 +477,18 @@ void UPPImpactSensorComponent::HandleComponentHit(
 		const FVector CourseImpactDirection = NormalImpulse.IsNearlyZero()
 			? -Hit.ImpactNormal
 			: NormalImpulse.GetSafeNormal();
-		if (!IsCourseObstacleMovingIntoOwner(OtherComponent, Hit.ImpactPoint, CourseImpactDirection))
+		const FVector RequiredClosingDirection = bPusherImpact
+			? CourseImpactDirection
+			: FVector::ZeroVector;
+		if (!IsCourseObstacleMovingAtContact(
+			OtherComponent,
+			Hit.ImpactPoint,
+			RequiredClosingDirection))
 		{
 			return;
 		}
 		// Timeline movement often reports little or no rigid-body impulse. A valid
-		// moving course contact must still enter its bounded throw profile.
+		// moving course contact must still enter its deterministic knockdown path.
 		Severity = FMath::Max(Severity, 30.0f);
 	}
 	if (Severity < MinimumReportedSeverity)
@@ -522,9 +528,9 @@ void UPPImpactSensorComponent::ReportResolvedImpact(
 	if (CourseObstacleSpeed >= 0.0f)
 	{
 		const FVector AwayFromContact = (OwnerActor->GetActorLocation() - ImpactPoint).GetSafeNormal2D();
-		// A raw solver impulse can run tangentially along a rotating surface and
-		// make an otherwise bounded throw orbit the obstacle. Prefer the geometric
-		// separation direction so every course hit cleanly exits its contact.
+		// A raw solver impulse can run tangentially along a rotating surface. Prefer
+		// the geometric separation direction so the directional fall and the small
+		// capsule depenetration both point cleanly away from the contact.
 		const FVector CourseImpactDirection = !AwayFromContact.IsNearlyZero()
 			? AwayFromContact
 			: ImpactDirection.GetSafeNormal2D();

@@ -10,9 +10,9 @@ class UPrimitiveComponent;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FPPPhysicalStateChanged, EPPPhysicalState, NewState, float, DazeNormalized);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FPPDazeChanged, float, DazeNormalized);
 
-// Compact server-authoritative root-body snapshot. The two-bone mascot ragdoll
-// remains locally simulated for visual smoothness while this state prevents
-// different machines from settling in different places or orientations.
+// Compact server-authoritative physical-state presentation. Full throws use the
+// root-body snapshot, while course knockdowns use the same monotonic sequence to
+// replicate a deterministic fall direction and synchronized animation timing.
 USTRUCT()
 struct FPPRagdollNetworkState
 {
@@ -32,6 +32,15 @@ struct FPPRagdollNetworkState
 
 	UPROPERTY()
 	uint16 Sequence = 0;
+
+	UPROPERTY()
+	EPPObstacleFallDirection CourseFallDirection = EPPObstacleFallDirection::Backward;
+
+	UPROPERTY()
+	float CourseStartServerTimeSeconds = -1.0f;
+
+	UPROPERTY()
+	float CourseRecoveryStartServerTimeSeconds = -1.0f;
 
 	UPROPERTY()
 	bool bActive = false;
@@ -92,22 +101,20 @@ public:
 	void RequestThrownRagdoll(
 		const FVector& InitialVelocity,
 		const FVector& InitialAngularVelocity,
-		bool bClearExistingBodyVelocities = false,
-		bool bCourseLaunch = false);
+		bool bClearExistingBodyVelocities = false);
 
-	// Builds the exact charged dummy launch before entering the shared thrown
-	// ragdoll path. Course obstacles use zero inherited velocity so their authored
-	// speed tier cannot be amplified by runtime collision velocity.
+	// Builds the exact charged dummy/player launch before entering the shared
+	// physical ragdoll path. Course obstacles intentionally do not call this path.
 	void RequestDummyThrowProfileRagdoll(
 		const FVector& ThrowDirection,
 		float ChargeAlpha,
 		const FVector& InheritedVelocity,
 		float BaseThrowSpeed,
-		bool bClearExistingBodyVelocities = false,
-		bool bCourseLaunch = false);
+		bool bClearExistingBodyVelocities = false);
 
-	// Authority-only course-hazard entry point. Lobby hazards use a grounded,
-	// low-travel knockdown; non-Lobby courses retain authored speed tiers.
+	// Authority-only course-hazard entry point. Course hits use a synchronized
+	// directional fall animation while CharacterMovement keeps the capsule under
+	// gravity; physical throws continue through RequestThrownRagdoll.
 	void RequestCourseObstacleRagdoll(
 		const FVector& ImpactDirection,
 		float AuthoredObstacleSpeed,
@@ -153,6 +160,12 @@ private:
 		bool bCourseRagdoll = false);
 	void EnterRagdollVisualState();
 	void ExitRagdollVisualState();
+	void EnterCourseObstacleKnockdownVisualState();
+	void ExitCourseObstacleKnockdownVisualState();
+	void BeginCourseObstacleRecovery();
+	void CompleteCourseObstacleRecovery();
+	bool IsCourseObstacleKnockdown() const;
+	float GetSynchronizedServerTimeSeconds() const;
 	void UpdateRagdollRecoveryBlend(float DeltaTime);
 	void PublishRagdollNetworkState(bool bActive);
 	void ApplyRemoteRagdollNetworkState(bool bSnapToAuthoritativeState);
@@ -195,9 +208,13 @@ private:
 	FTransform RagdollRecoveryBlendStartTransform;
 	float RagdollRecoveryBlendElapsedSeconds = 0.0f;
 	bool bRagdollRecoveryBlendActive = false;
+	bool bCourseObstacleKnockdownVisualActive = false;
+	bool bCourseObstacleRecoveryActive = false;
 	bool bHasAppliedRagdollNetworkSequence = false;
 	uint16 LastAppliedRagdollNetworkSequence = 0;
 	double LastRagdollNetworkPublishTimeSeconds = -100.0;
 	double LastRagdollNetworkReceiptTimeSeconds = -100.0;
+	TWeakObjectPtr<UPrimitiveComponent> IgnoredCourseObstacleComponent;
 	FTimerHandle RecoveryTimerHandle;
+	FTimerHandle CourseRecoveryTimerHandle;
 };

@@ -92,6 +92,17 @@ public:
 	// recovery moves and rotates the character capsule underneath it.
 	void StabilizePairPressureRecoveryCamera(const FTransform& PreservedCameraBoomWorldTransform);
 
+	// Course hazards use deterministic montage presentation instead of Chaos.
+	// Elapsed times are derived from the server clock so host, owner, and proxies
+	// converge on the same pose even when the state arrives under packet lag.
+	void BeginPairPressureObstacleFallPresentation(
+		EPPObstacleFallDirection FallDirection,
+		float PresentationElapsedSeconds);
+	void BeginPairPressureObstacleFallRecoveryPresentation(
+		float RecoveryElapsedSeconds,
+		float RecoveryBlendSeconds);
+	void EndPairPressureObstacleFallPresentation();
+
 	UFUNCTION(BlueprintPure, Category = "VNH|Shopper")
 	bool IsPossessedByAlien() const { return bPossessedByAlien; }
 
@@ -205,6 +216,9 @@ private:
 	void PlayPairPressureMascotAnimation(UAnimSequence* Animation, bool bLooping);
 	void RestorePairPressureLocomotionAnimation();
 	UAnimSequence* ResolvePairPressureMascotAnimation(EPPGrabState GrabState) const;
+	UAnimSequence* ResolvePairPressureObstacleFallAnimation(EPPObstacleFallDirection FallDirection);
+	void PreloadPairPressureObstacleFallAnimations();
+	void HoldPairPressureObstacleFallPose();
 
 	UFUNCTION()
 	void HandlePairPressureGrabStateChanged(EPPGrabState NewGrabState, AActor* NewTarget);
@@ -360,11 +374,18 @@ private:
 	FTimerHandle UniversalActionMovementLockTimerHandle;
 	FTimerHandle PairPressurePresentationTimerHandle;
 	FTimerHandle PairPressureDiveRecoveryPresentationTimerHandle;
+	FTimerHandle PairPressureObstacleFallHoldTimerHandle;
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimSequence> PairPressureDiveAnimation;
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UAnimSequence>> PairPressureObstacleFallAnimations;
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimMontage> PairPressureObstacleFallMontage;
 	double PairPressureDivePresentationStartTimeSeconds = -1.0;
 	bool bPairPressureActionPresentationActive = false;
 	bool bPairPressureDiveRecoveryPresentationPlayed = false;
+	bool bPairPressureObstacleFallPresentationActive = false;
+	bool bPairPressureObstacleFallRecoveryActive = false;
 	bool bFirstPersonViewEnabled = false;
 	bool bStandingStillPenaltyApplied = false;
 	bool bWasWatchedByHunter = false;

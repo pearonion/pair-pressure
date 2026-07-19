@@ -51,6 +51,9 @@ const TCHAR* DefaultBodyMeshPath = TEXT("/Game/CuteChubbyPenguin/Penguin/Meshes/
 const TCHAR* DefaultMascotAnimBlueprintPath = TEXT("/Game/PairPressure/Characters/Penguin/ABP_Penguin.ABP_Penguin_C");
 const TCHAR* DefaultMascotIdleAnimPath = TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_idle1.AS_Penguin_UE_Anim_idle1");
 const TCHAR* PairPressureMascotPhysicsAssetPath = TEXT("/Game/CuteChubbyPenguin/Penguin/Meshes/PHYS_Penguin_UE_PhysicsAsset.PHYS_Penguin_UE_PhysicsAsset");
+constexpr float PPShopperObstacleFallPlayRate = 1.55f;
+constexpr float PPShopperObstacleFallPoseLeadSeconds = 0.03f;
+constexpr int32 PPShopperObstacleFallDirectionCount = 4;
 constexpr float CalmFartVolume = 1.4f;
 constexpr float PanicFartVolume = 2.6f;
 constexpr float CalmFartInnerRadius = 275.0f;
@@ -295,6 +298,7 @@ void AVNHShopperCharacter::BeginPlay()
 		PairPressureDiveAnimation = LoadObject<UAnimSequence>(
 			nullptr,
 			TEXT("/Game/CuteChubbyPenguin_V2/Content/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_falls_forward.AS_Penguin_UE_falls_forward"));
+		PreloadPairPressureObstacleFallAnimations();
 		// Camera anchoring must follow physics every frame while the capsule is
 		// disabled and the mascot body is being propelled or carried.
 		PrimaryActorTick.TickInterval = 0.0f;
@@ -1353,12 +1357,19 @@ bool AVNHShopperCharacter::CanJumpInternal_Implementation() const
 	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
 	return (!MovementComponent || !MovementComponent->IsFalling())
 		&& Super::CanJumpInternal_Implementation()
+		&& (!PairPressurePhysicalStateComponent || !PairPressurePhysicalStateComponent->IsRagdolled())
 		&& (!PairPressureGrabber || PairPressureGrabber->CanJumpOrDive())
 		&& (!PairPressureActionRouter || !PairPressureActionRouter->IsAirDiveActive());
 }
 
 void AVNHShopperCharacter::HandleJumpInputPressed()
 {
+	if (PairPressurePhysicalStateComponent && PairPressurePhysicalStateComponent->IsRagdolled())
+	{
+		bJumpInputHeld = false;
+		bLandingJumpRequested = false;
+		return;
+	}
 	bJumpInputHeld = true;
 	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
 	if (!MovementComponent)
@@ -1445,10 +1456,10 @@ void AVNHShopperCharacter::UpdatePairPressureAnimationPresentation()
 	}
 
 	const EPPGrabState CurrentGrabState = PairPressureGrabber->GetGrabState_Implementation();
-	// This compact rig's arm chains share the torso, so procedural grab IK rolls
-	// the mascot while it runs. Carry is conveyed by the held physics object and
-	// dedicated action clips instead; keep the locomotion body completely neutral.
-	const bool bEnableGrabIK = false;
+	// This compact rig's arm chains share the torso, so procedural carry IK rolls
+	// the mascot while it runs. A hanging penguin is stationary, however, and needs
+	// the final small correction so both hands land on the authored collision edge.
+	const bool bEnableGrabIK = CurrentGrabState == EPPGrabState::HangingFromLedge;
 	FVector WorldGrabPoint = PairPressureGrabber->GetPresentationGrabPoint();
 	if (WorldGrabPoint.IsNearlyZero())
 	{
@@ -1483,7 +1494,8 @@ void AVNHShopperCharacter::PlayPairPressureMascotAnimation(UAnimSequence* Animat
 {
 	USkeletalMeshComponent* CharacterMesh = GetMesh();
 	UAnimInstance* AnimInstance = CharacterMesh ? CharacterMesh->GetAnimInstance() : nullptr;
-	if (!Animation || !AnimInstance || CharacterMesh->IsAnySimulatingPhysics())
+	if (!Animation || !AnimInstance || CharacterMesh->IsAnySimulatingPhysics()
+		|| bPairPressureObstacleFallPresentationActive)
 	{
 		return;
 	}
@@ -1502,12 +1514,238 @@ void AVNHShopperCharacter::PlayPairPressureMascotAnimation(UAnimSequence* Animat
 
 void AVNHShopperCharacter::RestorePairPressureLocomotionAnimation()
 {
+	if (bPairPressureObstacleFallPresentationActive)
+	{
+		return;
+	}
 	if (USkeletalMeshComponent* CharacterMesh = GetMesh())
 	{
 		if (UAnimInstance* AnimInstance = CharacterMesh->GetAnimInstance())
 		{
 			AnimInstance->StopSlotAnimation(0.12f, TEXT("DefaultSlot"));
 		}
+	}
+}
+
+UAnimSequence* AVNHShopperCharacter::ResolvePairPressureObstacleFallAnimation(
+	EPPObstacleFallDirection FallDirection)
+{
+	const int32 DirectionIndex = static_cast<int32>(FallDirection);
+	if (PairPressureObstacleFallAnimations.IsValidIndex(DirectionIndex)
+		&& PairPressureObstacleFallAnimations[DirectionIndex])
+	{
+		return PairPressureObstacleFallAnimations[DirectionIndex];
+	}
+
+	if (PairPressureObstacleFallAnimations.Num() != PPShopperObstacleFallDirectionCount)
+	{
+		PairPressureObstacleFallAnimations.SetNum(PPShopperObstacleFallDirectionCount);
+	}
+	const UDataTable* LoadedMascotTable = MascotAnimationTable.IsNull()
+		? nullptr
+		: MascotAnimationTable.LoadSynchronous();
+	const FPPMascotAnimationRow* PenguinRow = LoadedMascotTable
+		? LoadedMascotTable->FindRow<FPPMascotAnimationRow>(
+			FName(TEXT("Penguin")),
+			TEXT("Obstacle fall presentation"),
+			false)
+		: nullptr;
+	const TSoftObjectPtr<UAnimSequence>* RequestedAnimation = nullptr;
+	if (PenguinRow)
+	{
+		switch (FallDirection)
+		{
+		case EPPObstacleFallDirection::Forward:
+			RequestedAnimation = &PenguinRow->ObstacleFallFront;
+			break;
+		case EPPObstacleFallDirection::Backward:
+			RequestedAnimation = &PenguinRow->ObstacleFallBack;
+			break;
+		case EPPObstacleFallDirection::Left:
+			RequestedAnimation = &PenguinRow->ObstacleFallLeft;
+			break;
+		case EPPObstacleFallDirection::Right:
+			RequestedAnimation = &PenguinRow->ObstacleFallRight;
+			break;
+		default:
+			break;
+		}
+	}
+
+	UAnimSequence* ResolvedAnimation = RequestedAnimation && !RequestedAnimation->IsNull()
+		? RequestedAnimation->LoadSynchronous()
+		: nullptr;
+	if (!ResolvedAnimation)
+	{
+		// falls2/falls3 are mirrored lateral clips (and pair with wakesup2/3).
+		// falls1 is the authored backward fall and remains the explicit forward
+		// fallback until a dedicated forward course-fall clip is authored.
+		const TCHAR* FallbackPath = TEXT(
+			"/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls1.AS_Penguin_UE_Anim_falls1");
+		if (FallDirection == EPPObstacleFallDirection::Left)
+		{
+			FallbackPath = TEXT(
+				"/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls2.AS_Penguin_UE_Anim_falls2");
+		}
+		else if (FallDirection == EPPObstacleFallDirection::Right)
+		{
+			FallbackPath = TEXT(
+				"/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls3.AS_Penguin_UE_Anim_falls3");
+		}
+		ResolvedAnimation = LoadObject<UAnimSequence>(nullptr, FallbackPath);
+	}
+	if (PairPressureObstacleFallAnimations.IsValidIndex(DirectionIndex))
+	{
+		PairPressureObstacleFallAnimations[DirectionIndex] = ResolvedAnimation;
+	}
+	return ResolvedAnimation;
+}
+
+void AVNHShopperCharacter::PreloadPairPressureObstacleFallAnimations()
+{
+	PairPressureObstacleFallAnimations.SetNum(PPShopperObstacleFallDirectionCount);
+	for (int32 DirectionIndex = 0;
+		DirectionIndex < PPShopperObstacleFallDirectionCount;
+		++DirectionIndex)
+	{
+		ResolvePairPressureObstacleFallAnimation(
+			static_cast<EPPObstacleFallDirection>(DirectionIndex));
+	}
+}
+
+void AVNHShopperCharacter::BeginPairPressureObstacleFallPresentation(
+	EPPObstacleFallDirection FallDirection,
+	float PresentationElapsedSeconds)
+{
+	USkeletalMeshComponent* CharacterMesh = GetMesh();
+	UAnimInstance* AnimInstance = CharacterMesh ? CharacterMesh->GetAnimInstance() : nullptr;
+	UAnimSequence* FallAnimation = ResolvePairPressureObstacleFallAnimation(FallDirection);
+	if (!CharacterMesh || !AnimInstance || !FallAnimation
+		|| CharacterMesh->IsAnySimulatingPhysics())
+	{
+		return;
+	}
+
+	GetWorldTimerManager().ClearTimer(PairPressurePresentationTimerHandle);
+	GetWorldTimerManager().ClearTimer(PairPressureDiveRecoveryPresentationTimerHandle);
+	GetWorldTimerManager().ClearTimer(PairPressureObstacleFallHoldTimerHandle);
+	bPairPressureActionPresentationActive = true;
+	bPairPressureObstacleFallPresentationActive = true;
+	bPairPressureObstacleFallRecoveryActive = false;
+
+	const float HoldPosition = FMath::Max(
+		0.0f,
+		FallAnimation->GetPlayLength() - PPShopperObstacleFallPoseLeadSeconds);
+	const float StartPosition = FMath::Clamp(
+		FMath::Max(0.0f, PresentationElapsedSeconds) * PPShopperObstacleFallPlayRate,
+		0.0f,
+		HoldPosition);
+	AnimInstance->StopSlotAnimation(0.03f, TEXT("DefaultSlot"));
+	PairPressureObstacleFallMontage = AnimInstance->PlaySlotAnimationAsDynamicMontage(
+		FallAnimation,
+		TEXT("DefaultSlot"),
+		0.04f,
+		0.0f,
+		PPShopperObstacleFallPlayRate,
+		1,
+		0.0f,
+		StartPosition);
+	if (!PairPressureObstacleFallMontage)
+	{
+		bPairPressureObstacleFallPresentationActive = false;
+		bPairPressureObstacleFallRecoveryActive = false;
+		bPairPressureActionPresentationActive = false;
+		RestorePairPressureLocomotionAnimation();
+		return;
+	}
+
+	const float SecondsUntilHold = (HoldPosition - StartPosition)
+		/ PPShopperObstacleFallPlayRate;
+	if (SecondsUntilHold <= KINDA_SMALL_NUMBER)
+	{
+		HoldPairPressureObstacleFallPose();
+	}
+	else
+	{
+		GetWorldTimerManager().SetTimer(
+			PairPressureObstacleFallHoldTimerHandle,
+			this,
+			&AVNHShopperCharacter::HoldPairPressureObstacleFallPose,
+			SecondsUntilHold,
+			false);
+	}
+}
+
+void AVNHShopperCharacter::HoldPairPressureObstacleFallPose()
+{
+	if (!bPairPressureObstacleFallPresentationActive
+		|| bPairPressureObstacleFallRecoveryActive
+		|| !PairPressureObstacleFallMontage)
+	{
+		return;
+	}
+	if (USkeletalMeshComponent* CharacterMesh = GetMesh())
+	{
+		if (UAnimInstance* AnimInstance = CharacterMesh->GetAnimInstance())
+		{
+			AnimInstance->Montage_Pause(PairPressureObstacleFallMontage);
+		}
+	}
+}
+
+void AVNHShopperCharacter::BeginPairPressureObstacleFallRecoveryPresentation(
+	float RecoveryElapsedSeconds,
+	float RecoveryBlendSeconds)
+{
+	if (!bPairPressureObstacleFallPresentationActive
+		|| bPairPressureObstacleFallRecoveryActive)
+	{
+		return;
+	}
+	bPairPressureObstacleFallRecoveryActive = true;
+	GetWorldTimerManager().ClearTimer(PairPressureObstacleFallHoldTimerHandle);
+
+	USkeletalMeshComponent* CharacterMesh = GetMesh();
+	UAnimInstance* AnimInstance = CharacterMesh ? CharacterMesh->GetAnimInstance() : nullptr;
+	if (!AnimInstance || !PairPressureObstacleFallMontage)
+	{
+		return;
+	}
+	const float RemainingBlendSeconds = FMath::Max(
+		0.03f,
+		FMath::Max(0.0f, RecoveryBlendSeconds)
+			- FMath::Max(0.0f, RecoveryElapsedSeconds));
+	AnimInstance->Montage_Resume(PairPressureObstacleFallMontage);
+	AnimInstance->Montage_Stop(RemainingBlendSeconds, PairPressureObstacleFallMontage);
+}
+
+void AVNHShopperCharacter::EndPairPressureObstacleFallPresentation()
+{
+	GetWorldTimerManager().ClearTimer(PairPressureObstacleFallHoldTimerHandle);
+	const bool bHadSynchronizedRecovery = bPairPressureObstacleFallRecoveryActive;
+	bPairPressureObstacleFallPresentationActive = false;
+	bPairPressureObstacleFallRecoveryActive = false;
+	bPairPressureActionPresentationActive = false;
+	bool bStoppedObstacleFallMontage = false;
+	if (USkeletalMeshComponent* CharacterMesh = GetMesh())
+	{
+		if (UAnimInstance* AnimInstance = CharacterMesh->GetAnimInstance();
+			AnimInstance && PairPressureObstacleFallMontage)
+		{
+			// Replicated properties may coalesce under packet loss and skip the
+			// intermediate recovery timestamp. Keep a production-safe final blend so
+			// even that case returns to locomotion without a one-frame pose pop.
+			AnimInstance->Montage_Resume(PairPressureObstacleFallMontage);
+			AnimInstance->Montage_Stop(
+				bHadSynchronizedRecovery ? 0.05f : 0.15f,
+				PairPressureObstacleFallMontage);
+			bStoppedObstacleFallMontage = true;
+		}
+	}
+	PairPressureObstacleFallMontage = nullptr;
+	if (!bStoppedObstacleFallMontage)
+	{
+		RestorePairPressureLocomotionAnimation();
 	}
 }
 

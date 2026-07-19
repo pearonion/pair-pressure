@@ -3,7 +3,6 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/TextRenderComponent.h"
 #include "GameFramework/RotatingMovementComponent.h"
-#include "PairPressure/PPGameplayInterfaces.h"
 #include "PairPressure/PPPhysicalStateComponent.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -12,6 +11,7 @@ APPRotatingHammer::APPRotatingHammer()
 	PrimaryActorTick.bCanEverTick = false;
 	bReplicates = true;
 	SetReplicateMovement(true);
+	Tags.AddUnique(TEXT("PP_SpinnerObstacle"));
 
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
@@ -93,15 +93,28 @@ void APPRotatingHammer::HandleHammerHit(UPrimitiveComponent* HitComponent, AActo
 	{
 		return;
 	}
+	if (!RotatingMovement || !RotatingMovement->IsActive()
+		|| FMath::IsNearlyZero(RotatingMovement->RotationRate.Yaw))
+	{
+		// Contact alone is not a knockdown. This mirrors the shared impact sensor's
+		// motion gate so walking into a stopped hammer remains harmless.
+		return;
+	}
 
 	if (UPPPhysicalStateComponent* PhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(OtherActor))
 	{
-		FPPImpactData ImpactData;
-		ImpactData.Severity = 75.0f;
-		ImpactData.ImpactPoint = Hit.ImpactPoint;
-		ImpactData.ImpactDirection = (OtherActor->GetActorLocation() - GetActorLocation()).GetSafeNormal();
-		ImpactData.InstigatorActor = this;
-		ImpactData.bHeavyObstacle = true;
-		PhysicalState->ReceiveImpactData_Implementation(ImpactData);
+		FVector ImpactDirection =
+			(OtherActor->GetActorLocation() - Hit.ImpactPoint).GetSafeNormal2D();
+		if (ImpactDirection.IsNearlyZero())
+		{
+			ImpactDirection =
+				(OtherActor->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
+		}
+		PhysicalState->RequestCourseObstacleRagdoll(
+			ImpactDirection,
+			FMath::Abs(DegreesPerSecond),
+			this,
+			HitComponent,
+			Hit.ImpactPoint);
 	}
 }

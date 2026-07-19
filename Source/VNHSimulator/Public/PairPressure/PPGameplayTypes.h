@@ -111,6 +111,25 @@ struct FPPMascotAnimationRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Reactions")
 	TSoftObjectPtr<UAnimSequence> HitRight;
 
+	// Deterministic course-hazard falls. These are animation-driven so the
+	// character capsule remains authoritative and network-predicted; they are
+	// deliberately separate from short hit reactions and physical throws.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Obstacle Falls")
+	TSoftObjectPtr<UAnimSequence> ObstacleFallFront = TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(
+		TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls1.AS_Penguin_UE_Anim_falls1")));
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Obstacle Falls")
+	TSoftObjectPtr<UAnimSequence> ObstacleFallBack = TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(
+		TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls1.AS_Penguin_UE_Anim_falls1")));
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Obstacle Falls")
+	TSoftObjectPtr<UAnimSequence> ObstacleFallLeft = TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(
+		TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls2.AS_Penguin_UE_Anim_falls2")));
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Obstacle Falls")
+	TSoftObjectPtr<UAnimSequence> ObstacleFallRight = TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(
+		TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls3.AS_Penguin_UE_Anim_falls3")));
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Recovery")
 	TSoftObjectPtr<UAnimSequence> GetUpFront;
 
@@ -122,6 +141,15 @@ struct FPPMascotAnimationRow : public FTableRowBase
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Actions")
 	TSoftObjectPtr<UAnimSequence> Punch;
+};
+
+UENUM(BlueprintType)
+enum class EPPObstacleFallDirection : uint8
+{
+	Forward,
+	Backward,
+	Left,
+	Right
 };
 
 UENUM(BlueprintType)

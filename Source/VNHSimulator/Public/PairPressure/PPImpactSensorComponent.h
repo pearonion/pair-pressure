@@ -56,10 +56,10 @@ private:
 	void RegisterCourseObstacleActor(AActor* CourseObstacleActor);
 	void HandleCourseObstacleSpawned(AActor* SpawnedActor);
 	void UpdateCourseObstacleMotionSamples();
-	bool IsCourseObstacleMovingIntoOwner(
+	bool IsCourseObstacleMovingAtContact(
 		UPrimitiveComponent* ObstacleComponent,
 		const FVector& ImpactPoint,
-		const FVector& FallbackImpactDirection) const;
+		const FVector& RequiredClosingDirection = FVector::ZeroVector) const;
 
 	bool CanReportImpact(AActor* OtherActor) const;
 	void RememberImpact(AActor* OtherActor);
@@ -77,7 +77,7 @@ private:
 	float SameActorCooldownSeconds = 0.25f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Impact", meta = (ClampMin = "0.0"))
-	float MinimumCourseObstacleClosingSpeed = 35.0f;
+	float MinimumCourseObstacleClosingSpeed = 5.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Impact")
 	FName HeavyObstacleTag = TEXT("PP_HeavyObstacle");

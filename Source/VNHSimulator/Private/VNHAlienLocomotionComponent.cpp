@@ -192,7 +192,10 @@ bool UVNHAlienLocomotionComponent::ShouldDriveLocomotion() const
 	const UPPPlayerActionRouterComponent* ActionRouter = GetOwner()
 		? GetOwner()->FindComponentByClass<UPPPlayerActionRouterComponent>()
 		: nullptr;
+	const UPPPhysicalStateComponent* PhysicalState =
+		UPPPhysicalStateComponent::FindPhysicalStateComponent(GetOwner());
 	return Controller && Controller->IsPlayerController() && OwnerCharacter->IsLocallyControlled()
+		&& (!PhysicalState || !PhysicalState->IsRagdolled())
 		&& (!ActionRouter || !ActionRouter->IsAirDiveRecovering());
 }
 

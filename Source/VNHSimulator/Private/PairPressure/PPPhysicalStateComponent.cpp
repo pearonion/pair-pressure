@@ -10,6 +10,7 @@
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/GameStateBase.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "PairPressure/PPGameplayTypes.h"
@@ -25,11 +26,7 @@ const FName PPStablePenguinRagdollBones[] = {
 	FName(TEXT("hips")), FName(TEXT("chest"))
 };
 
-constexpr float PPPhysicalDefaultHeldItemThrowSpeed = 1050.0f;
-constexpr float PPPhysicalMediumObstacleSpeed = 3.0f;
-constexpr float PPPhysicalFullObstacleSpeed = 5.0f;
-constexpr float PPPhysicalLobbyKnockdownSpeed = 135.0f;
-constexpr float PPPhysicalLobbyKnockdownAngularSpeedDegrees = 60.0f;
+constexpr float PPPhysicalCourseKnockdownDurationSeconds = 0.75f;
 constexpr float PPPhysicalMaxRagdollAngularSpeedDegrees = 120.0f;
 constexpr float PPPhysicalRagdollRecoveryBlendSeconds = 0.28f;
 constexpr float PPPhysicalRagdollGroundedStabilitySeconds = 0.20f;
@@ -42,7 +39,6 @@ constexpr float PPPhysicalRagdollNetworkSnapDistance = 250.0f;
 constexpr float PPPhysicalRagdollNetworkPositionCorrectionSpeed = 7.0f;
 constexpr float PPPhysicalRagdollNetworkRotationCorrectionSpeed = 5.0f;
 constexpr float PPPhysicalRagdollNetworkMaxCorrectionSpeed = 450.0f;
-constexpr float PPPhysicalCourseCollisionGraceSeconds = 0.09f;
 
 bool IsPPPhysicalCourseRagdollSequence(uint16 Sequence)
 {
@@ -57,15 +53,6 @@ uint16 AdvancePPPhysicalRagdollSequence(uint16 CurrentSequence, bool bCourseRagd
 		NextSequence = 2u;
 	}
 	return static_cast<uint16>((NextSequence & 0xFFFEu) | (bCourseRagdoll ? 1u : 0u));
-}
-
-float ResolvePPObstacleThrowChargeAlpha(float CourseObstacleSpeed)
-{
-	if (CourseObstacleSpeed >= PPPhysicalFullObstacleSpeed)
-	{
-		return 1.0f;
-	}
-	return CourseObstacleSpeed >= PPPhysicalMediumObstacleSpeed ? 0.5f : 0.0f;
 }
 
 FName ResolvePPPhysicalRagdollRootBone(const USkeletalMeshComponent* CharacterMesh)
@@ -207,6 +194,26 @@ void UPPPhysicalStateComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	if (IsRagdolled())
 	{
 		ACharacter* OwnerCharacter = Cast<ACharacter>(OwnerActor);
+		if (IsCourseObstacleKnockdown())
+		{
+			// Course knockdowns never hand movement to Chaos. Keep the capsule in
+			// CharacterMovement so gravity, floor detection, prediction, and root
+			// replication remain identical on host and client. While the fall is
+			// locked, discard any residual obstacle/input travel and all upward lift.
+			if (UCharacterMovementComponent* MovementComponent = OwnerCharacter
+				? OwnerCharacter->GetCharacterMovement()
+				: nullptr)
+			{
+				FVector ConstrainedVelocity = MovementComponent->Velocity;
+				ConstrainedVelocity.X = 0.0f;
+				ConstrainedVelocity.Y = 0.0f;
+				ConstrainedVelocity.Z = FMath::Min(ConstrainedVelocity.Z, 0.0f);
+				MovementComponent->Velocity = ConstrainedVelocity;
+				MovementComponent->ClearAccumulatedForces();
+			}
+			return;
+		}
+
 		USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
 		const FName RagdollRootBone = ResolvePPPhysicalRagdollRootBone(CharacterMesh);
 		if (!OwnerActor->HasAuthority())
@@ -331,7 +338,8 @@ void UPPPhysicalStateComponent::ReceiveImpactData_Implementation(const FPPImpact
 
 bool UPPPhysicalStateComponent::CanCarry_Implementation(AActor* RequestedCarrier) const
 {
-	return RequestedCarrier && RequestedCarrier != GetOwner() && IsRagdolled();
+	return RequestedCarrier && RequestedCarrier != GetOwner() && IsRagdolled()
+		&& !IsCourseObstacleKnockdown();
 }
 
 void UPPPhysicalStateComponent::OnCarryStarted_Implementation(AActor* NewCarrier)
@@ -347,6 +355,25 @@ void UPPPhysicalStateComponent::OnCarryEnded_Implementation(AActor* PreviousCarr
 bool UPPPhysicalStateComponent::IsRagdolled() const
 {
 	return PhysicalState == EPPPhysicalState::Ragdolled || PhysicalState == EPPPhysicalState::Unconscious;
+}
+
+bool UPPPhysicalStateComponent::IsCourseObstacleKnockdown() const
+{
+	return IsRagdolled() && IsPPPhysicalCourseRagdollSequence(RagdollNetworkState.Sequence);
+}
+
+float UPPPhysicalStateComponent::GetSynchronizedServerTimeSeconds() const
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return 0.0f;
+	}
+	if (const AGameStateBase* GameState = World->GetGameState())
+	{
+		return GameState->GetServerWorldTimeSeconds();
+	}
+	return World->GetTimeSeconds();
 }
 
 float UPPPhysicalStateComponent::GetRagdollRecoveryBlendAlpha() const
@@ -409,8 +436,7 @@ void UPPPhysicalStateComponent::RequestDebugRecovery()
 void UPPPhysicalStateComponent::RequestThrownRagdoll(
 	const FVector& InitialVelocity,
 	const FVector& InitialAngularVelocity,
-	bool bClearExistingBodyVelocities,
-	bool bCourseLaunch)
+	bool bClearExistingBodyVelocities)
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
@@ -424,8 +450,7 @@ void UPPPhysicalStateComponent::RequestThrownRagdoll(
 	SetPhysicalStateAuthoritative(
 		EPPPhysicalState::Ragdolled,
 		ThrowRagdollSeconds,
-		true,
-		bCourseLaunch);
+		true);
 	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
 	USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
 	if (!CharacterMesh || !CharacterMesh->IsAnySimulatingPhysics())
@@ -466,8 +491,7 @@ void UPPPhysicalStateComponent::RequestDummyThrowProfileRagdoll(
 	float ChargeAlpha,
 	const FVector& InheritedVelocity,
 	float BaseThrowSpeed,
-	bool bClearExistingBodyVelocities,
-	bool bCourseLaunch)
+	bool bClearExistingBodyVelocities)
 {
 	AActor* OwnerActor = GetOwner();
 	if (!OwnerActor || !OwnerActor->HasAuthority())
@@ -501,13 +525,12 @@ void UPPPhysicalStateComponent::RequestDummyThrowProfileRagdoll(
 	RequestThrownRagdoll(
 		ProfileThrowVelocity,
 		ProfileAngularVelocity,
-		bClearExistingBodyVelocities,
-		bCourseLaunch);
+		bClearExistingBodyVelocities);
 }
 
 void UPPPhysicalStateComponent::RequestCourseObstacleRagdoll(
 	const FVector& ImpactDirection,
-	float AuthoredObstacleSpeed,
+	float /*AuthoredObstacleSpeed*/,
 	const AActor* ObstacleActor,
 	UPrimitiveComponent* ObstacleComponent,
 	const FVector& ImpactPoint)
@@ -529,37 +552,65 @@ void UPPPhysicalStateComponent::RequestCourseObstacleRagdoll(
 		CourseThrowDirection = OwnerActor->GetActorForwardVector().GetSafeNormal2D();
 	}
 
+	const FVector OwnerForward = OwnerActor->GetActorForwardVector().GetSafeNormal2D();
+	const FVector OwnerRight = OwnerActor->GetActorRightVector().GetSafeNormal2D();
+	const float ForwardAmount = FVector::DotProduct(OwnerForward, CourseThrowDirection);
+	const float RightAmount = FVector::DotProduct(OwnerRight, CourseThrowDirection);
+	if (FMath::Abs(ForwardAmount) >= FMath::Abs(RightAmount))
+	{
+		RagdollNetworkState.CourseFallDirection = ForwardAmount >= 0.0f
+			? EPPObstacleFallDirection::Forward
+			: EPPObstacleFallDirection::Backward;
+	}
+	else
+	{
+		RagdollNetworkState.CourseFallDirection = RightAmount >= 0.0f
+			? EPPObstacleFallDirection::Right
+			: EPPObstacleFallDirection::Left;
+	}
+	RagdollNetworkState.CourseStartServerTimeSeconds = GetSynchronizedServerTimeSeconds();
+	RagdollNetworkState.CourseRecoveryStartServerTimeSeconds = -1.0f;
+
 	// Timeline obstacles commonly move without a swept transform. Move the intact
-	// capsule out of the exact source component before enabling Chaos so the first
-	// physics frame cannot inherit a deep contact impulse and turn the bounded
-	// dummy-profile throw into an orbit around the obstacle.
+	// capsule out of the exact source component before starting presentation, then
+	// ignore that component until recovery so it cannot keep driving the capsule.
 	if (ACharacter* OwnerCharacter = Cast<ACharacter>(OwnerActor))
 	{
 		if (UCapsuleComponent* OwnerCapsule = OwnerCharacter->GetCapsuleComponent();
 			OwnerCapsule && ObstacleComponent)
 		{
+			IgnoredCourseObstacleComponent = ObstacleComponent;
+			OwnerCapsule->IgnoreComponentWhenMoving(ObstacleComponent, true);
+			ObstacleComponent->IgnoreActorWhenMoving(OwnerCharacter, true);
 			FMTDResult MinimumTranslation;
 			const bool bHasPenetration = ObstacleComponent->ComputePenetration(
 				MinimumTranslation,
 				OwnerCapsule->GetCollisionShape(),
 				OwnerCapsule->GetComponentLocation(),
 				OwnerCapsule->GetComponentQuat());
-			FVector SeparationDelta = bHasPenetration
-				? MinimumTranslation.Direction.GetSafeNormal() * (MinimumTranslation.Distance + 4.0f)
-				: CourseThrowDirection * 12.0f;
+			FVector SeparationDirection = bHasPenetration
+				? MinimumTranslation.Direction.GetSafeNormal2D()
+				: CourseThrowDirection;
 			if (!ImpactPoint.IsNearlyZero())
 			{
 				const FVector AwayFromImpact =
 					(OwnerCharacter->GetActorLocation() - ImpactPoint).GetSafeNormal2D();
 				if (!AwayFromImpact.IsNearlyZero() && !bHasPenetration)
 				{
-					SeparationDelta = AwayFromImpact * 12.0f;
+					SeparationDirection = AwayFromImpact;
 				}
 			}
-			SeparationDelta = SeparationDelta.GetClampedToMaxSize(40.0f);
+			if (SeparationDirection.IsNearlyZero())
+			{
+				SeparationDirection = CourseThrowDirection;
+			}
+			const float SeparationDistance = bHasPenetration
+				? FMath::Clamp(MinimumTranslation.Distance + 4.0f, 8.0f, 18.0f)
+				: 12.0f;
+			const FVector SeparationDelta =
+				SeparationDirection.GetSafeNormal2D() * SeparationDistance;
 			if (!SeparationDelta.IsNearlyZero())
 			{
-				OwnerCapsule->IgnoreComponentWhenMoving(ObstacleComponent, true);
 				FHitResult SeparationHit;
 				if (UCharacterMovementComponent* MovementComponent = OwnerCharacter->GetCharacterMovement())
 				{
@@ -577,46 +628,17 @@ void UPPPhysicalStateComponent::RequestCourseObstacleRagdoll(
 						&SeparationHit,
 						ETeleportType::None);
 				}
-				OwnerCapsule->IgnoreComponentWhenMoving(ObstacleComponent, false);
 			}
 		}
 	}
 	LastKnockdownTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
-	// The impact sensor has already proven that the obstacle itself is moving into
-	// the player. In Lobby, authored speed is therefore an eligibility/direction
-	// signal only. A small planar impulse tips the penguin over without launching
-	// it upward or far away, while the normal grounded recovery stays authoritative.
-	const bool bUseLobbyGroundedKnockdown = GetWorld()
-		&& GetWorld()->GetMapName().Contains(TEXT("Lobby"), ESearchCase::IgnoreCase);
-	if (bUseLobbyGroundedKnockdown)
-	{
-		const FVector KnockdownVelocity = CourseThrowDirection * PPPhysicalLobbyKnockdownSpeed;
-		const FVector KnockdownRollAxis = FVector::CrossProduct(
-			CourseThrowDirection,
-			FVector::UpVector).GetSafeNormal();
-		const FVector KnockdownAngularVelocity =
-			KnockdownRollAxis * PPPhysicalLobbyKnockdownAngularSpeedDegrees;
-		RequestThrownRagdoll(
-			KnockdownVelocity,
-			KnockdownAngularVelocity,
-			true,
-			true);
-		return;
-	}
-
-	CourseThrowDirection = (CourseThrowDirection + FVector::UpVector * 0.18f).GetSafeNormal();
-	float ProfileBaseThrowSpeed = PPPhysicalDefaultHeldItemThrowSpeed;
-	if (const UPPGrabberComponent* OwnerGrabber = OwnerActor->FindComponentByClass<UPPGrabberComponent>())
-	{
-		ProfileBaseThrowSpeed = OwnerGrabber->HeldItemThrowSpeed;
-	}
-	const float CourseThrowChargeAlpha = ResolvePPObstacleThrowChargeAlpha(AuthoredObstacleSpeed);
-	RequestDummyThrowProfileRagdoll(
-		CourseThrowDirection,
-		CourseThrowChargeAlpha,
-		FVector::ZeroVector,
-		ProfileBaseThrowSpeed,
-		true,
+	// Obstacle speed is now eligibility-only. The capsule remains the sole
+	// authoritative body and gravity brings an airborne hit down normally; the
+	// odd sequence marks this as animation-driven rather than a physical throw.
+	SetPhysicalStateAuthoritative(
+		EPPPhysicalState::Ragdolled,
+		PPPhysicalCourseKnockdownDurationSeconds,
+		false,
 		true);
 }
 
@@ -679,9 +701,12 @@ void UPPPhysicalStateComponent::OnRep_RagdollNetworkState()
 	if (RagdollNetworkState.bActive && IsRagdolled())
 	{
 		EnterRagdollVisualState();
-		const bool bNewSequence = !bHasAppliedRagdollNetworkSequence
-			|| LastAppliedRagdollNetworkSequence != RagdollNetworkState.Sequence;
-		ApplyRemoteRagdollNetworkState(bNewSequence);
+		if (!IsCourseObstacleKnockdown())
+		{
+			const bool bNewSequence = !bHasAppliedRagdollNetworkSequence
+				|| LastAppliedRagdollNetworkSequence != RagdollNetworkState.Sequence;
+			ApplyRemoteRagdollNetworkState(bNewSequence);
+		}
 	}
 }
 
@@ -697,6 +722,16 @@ void UPPPhysicalStateComponent::PublishRagdollNetworkState(bool bActive)
 	RagdollNetworkState.bActive = bActive;
 	if (!bActive || !CharacterMesh)
 	{
+		RagdollNetworkState.RootLocation = OwnerCharacter->GetActorLocation();
+		RagdollNetworkState.RootRotation = OwnerCharacter->GetActorRotation();
+		RagdollNetworkState.LinearVelocity = FVector::ZeroVector;
+		RagdollNetworkState.AngularVelocityDegrees = FVector::ZeroVector;
+		return;
+	}
+	if (IsCourseObstacleKnockdown())
+	{
+		// Course presentation follows ordinary replicated CharacterMovement. Do
+		// not sample or publish a skeletal body that is intentionally not simulating.
 		RagdollNetworkState.RootLocation = OwnerCharacter->GetActorLocation();
 		RagdollNetworkState.RootRotation = OwnerCharacter->GetActorRotation();
 		RagdollNetworkState.LinearVelocity = FVector::ZeroVector;
@@ -733,7 +768,8 @@ void UPPPhysicalStateComponent::ApplyRemoteRagdollNetworkState(bool bSnapToAutho
 	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
 	USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
 	if (!OwnerCharacter || OwnerCharacter->HasAuthority() || !CharacterMesh
-		|| !RagdollNetworkState.bActive || !IsRagdolled())
+		|| !RagdollNetworkState.bActive || !IsRagdolled()
+		|| IsCourseObstacleKnockdown())
 	{
 		return;
 	}
@@ -847,7 +883,8 @@ void UPPPhysicalStateComponent::UpdateRemoteRagdollNetworkState(float DeltaTime)
 	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
 	USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
 	if (!OwnerCharacter || OwnerCharacter->HasAuthority() || !CharacterMesh
-		|| !RagdollNetworkState.bActive || !IsRagdolled())
+		|| !RagdollNetworkState.bActive || !IsRagdolled()
+		|| IsCourseObstacleKnockdown())
 	{
 		return;
 	}
@@ -1000,6 +1037,21 @@ void UPPPhysicalStateComponent::SetPhysicalStateAuthoritative(
 		RagdollNetworkState.Sequence = AdvancePPPhysicalRagdollSequence(
 			RagdollNetworkState.Sequence,
 			bCourseRagdoll);
+		if (bCourseRagdoll)
+		{
+			if (RagdollNetworkState.CourseStartServerTimeSeconds < 0.0f)
+			{
+				RagdollNetworkState.CourseStartServerTimeSeconds =
+					GetSynchronizedServerTimeSeconds();
+			}
+			RagdollNetworkState.CourseRecoveryStartServerTimeSeconds = -1.0f;
+			bCourseObstacleRecoveryActive = false;
+		}
+		else
+		{
+			RagdollNetworkState.CourseStartServerTimeSeconds = -1.0f;
+			RagdollNetworkState.CourseRecoveryStartServerTimeSeconds = -1.0f;
+		}
 		bHasAppliedRagdollNetworkSequence = false;
 		LastRagdollNetworkPublishTimeSeconds = -100.0;
 	}
@@ -1021,6 +1073,7 @@ void UPPPhysicalStateComponent::SetPhysicalStateAuthoritative(
 	if (GetWorld())
 	{
 		GetWorld()->GetTimerManager().ClearTimer(RecoveryTimerHandle);
+		GetWorld()->GetTimerManager().ClearTimer(CourseRecoveryTimerHandle);
 		if (StateDurationSeconds > 0.0f)
 		{
 			// Begin checking for continuous ground stability early enough that both
@@ -1049,6 +1102,11 @@ void UPPPhysicalStateComponent::EnterRagdollVisualState()
 	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
 	if (!OwnerCharacter)
 	{
+		return;
+	}
+	if (IsCourseObstacleKnockdown())
+	{
+		EnterCourseObstacleKnockdownVisualState();
 		return;
 	}
 	// While ragdolled, the replicated hips snapshot is the single authoritative
@@ -1133,32 +1191,6 @@ void UPPPhysicalStateComponent::EnterRagdollVisualState()
 			CharacterMesh->SetAllBodiesBelowPhysicsBlendWeight(RagdollRootBone, 1.0f, false, true);
 		}
 		ConfigurePPStablePenguinRagdoll(CharacterMesh);
-		if (IsPPPhysicalCourseRagdollSequence(RagdollNetworkState.Sequence) && GetWorld())
-		{
-			// Keep simulation/gravity alive, but suppress the first contact response
-			// after depenetration. Changing QueryAndPhysics to QueryOnly recreates body
-			// state in Chaos, so response masking is the stable short grace path.
-			CharacterMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
-			TWeakObjectPtr<UPPPhysicalStateComponent> WeakPhysicalState(this);
-			TWeakObjectPtr<USkeletalMeshComponent> WeakCharacterMesh(CharacterMesh);
-			FTimerHandle CollisionGraceTimerHandle;
-			GetWorld()->GetTimerManager().SetTimer(
-				CollisionGraceTimerHandle,
-				[WeakPhysicalState, WeakCharacterMesh]()
-				{
-					UPPPhysicalStateComponent* PhysicalStateComponent = WeakPhysicalState.Get();
-					USkeletalMeshComponent* RagdollMesh = WeakCharacterMesh.Get();
-					if (!PhysicalStateComponent || !RagdollMesh || !PhysicalStateComponent->IsRagdolled())
-					{
-						return;
-					}
-					RagdollMesh->SetCollisionResponseToAllChannels(ECR_Block);
-					RagdollMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
-					RagdollMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
-				},
-				PPPhysicalCourseCollisionGraceSeconds,
-				false);
-		}
 		CharacterMesh->WakeAllRigidBodies();
 	}
 	if (!OwnerCharacter->HasAuthority() && RagdollNetworkState.bActive)
@@ -1169,11 +1201,113 @@ void UPPPhysicalStateComponent::EnterRagdollVisualState()
 	}
 }
 
+void UPPPhysicalStateComponent::EnterCourseObstacleKnockdownVisualState()
+{
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	if (!OwnerCharacter || !IsCourseObstacleKnockdown())
+	{
+		return;
+	}
+
+	const bool bNewCourseSequence = !bHasAppliedRagdollNetworkSequence
+		|| LastAppliedRagdollNetworkSequence != RagdollNetworkState.Sequence;
+	if (bNewCourseSequence)
+	{
+		bHasAppliedRagdollNetworkSequence = true;
+		LastAppliedRagdollNetworkSequence = RagdollNetworkState.Sequence;
+		bCourseObstacleRecoveryActive = false;
+		bCourseObstacleKnockdownVisualActive = true;
+		bRagdollRecoveryBlendActive = false;
+		RagdollRecoveryBlendElapsedSeconds = 0.0f;
+		SetComponentTickInterval(0.0f);
+		SetComponentTickEnabled(true);
+		OwnerCharacter->SetReplicateMovement(true);
+
+		UPPGrabberComponent* GrabberComponent =
+			OwnerCharacter->FindComponentByClass<UPPGrabberComponent>();
+		if (GrabberComponent)
+		{
+			GrabberComponent->PrepareIncomingCarryForRagdoll();
+			if (OwnerCharacter->HasAuthority()
+				&& GrabberComponent->GetGrabState_Implementation() != EPPGrabState::None)
+			{
+				GrabberComponent->ReleaseGrab_Implementation();
+			}
+		}
+
+		if (USkeletalMeshComponent* CharacterMesh = OwnerCharacter->GetMesh())
+		{
+			// A course fall must never inherit a half-finished Chaos state. The mesh
+			// stays on its AnimBP and the capsule remains the only collision body.
+			CharacterMesh->SetAllBodiesSimulatePhysics(false);
+			CharacterMesh->SetEnablePhysicsBlending(false);
+			CharacterMesh->SetEnableGravity(true);
+			CharacterMesh->SetAllUseCCD(false);
+			CharacterMesh->SetCollisionProfileName(TEXT("CharacterMesh"));
+			CharacterMesh->SetRelativeTransform(InitialMeshRelativeTransform);
+			CharacterMesh->bPauseAnims = false;
+			CharacterMesh->GlobalAnimRateScale = 1.0f;
+		}
+		if (UCapsuleComponent* Capsule = OwnerCharacter->GetCapsuleComponent())
+		{
+			Capsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		}
+		if (UCharacterMovementComponent* MovementComponent = OwnerCharacter->GetCharacterMovement())
+		{
+			const bool bWasGrounded = MovementComponent->IsMovingOnGround();
+			const float PreviousVerticalVelocity = MovementComponent->Velocity.Z;
+			MovementComponent->StopMovementImmediately();
+			MovementComponent->ClearAccumulatedForces();
+			// A dive recovery, ledge hold, or carried state may have left movement in
+			// MOVE_None. Always restore a gravity-capable mode here; otherwise an
+			// interrupted course hit can remain suspended forever. An uncertain floor
+			// state deliberately falls for one frame and lets CharacterMovement perform
+			// its normal authoritative landing test.
+			MovementComponent->SetMovementMode(bWasGrounded ? MOVE_Walking : MOVE_Falling);
+			MovementComponent->Velocity.Z = bWasGrounded
+				? 0.0f
+				: FMath::Min(PreviousVerticalVelocity, 0.0f);
+		}
+
+		if (AVNHShopperCharacter* ShopperCharacter = Cast<AVNHShopperCharacter>(OwnerCharacter))
+		{
+			const float PresentationElapsedSeconds = FMath::Max(
+				0.0f,
+				GetSynchronizedServerTimeSeconds()
+					- RagdollNetworkState.CourseStartServerTimeSeconds);
+			ShopperCharacter->BeginPairPressureObstacleFallPresentation(
+				RagdollNetworkState.CourseFallDirection,
+				PresentationElapsedSeconds);
+		}
+	}
+
+	if (!bCourseObstacleRecoveryActive
+		&& RagdollNetworkState.CourseRecoveryStartServerTimeSeconds >= 0.0f)
+	{
+		bCourseObstacleRecoveryActive = true;
+		if (AVNHShopperCharacter* ShopperCharacter = Cast<AVNHShopperCharacter>(OwnerCharacter))
+		{
+			const float RecoveryElapsedSeconds = FMath::Max(
+				0.0f,
+				GetSynchronizedServerTimeSeconds()
+					- RagdollNetworkState.CourseRecoveryStartServerTimeSeconds);
+			ShopperCharacter->BeginPairPressureObstacleFallRecoveryPresentation(
+				RecoveryElapsedSeconds,
+				PPPhysicalRagdollRecoveryBlendSeconds);
+		}
+	}
+}
+
 void UPPPhysicalStateComponent::ExitRagdollVisualState()
 {
 	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
 	if (!OwnerCharacter)
 	{
+		return;
+	}
+	if (bCourseObstacleKnockdownVisualActive)
+	{
+		ExitCourseObstacleKnockdownVisualState();
 		return;
 	}
 
@@ -1280,6 +1414,95 @@ void UPPPhysicalStateComponent::ExitRagdollVisualState()
 	}
 }
 
+void UPPPhysicalStateComponent::ExitCourseObstacleKnockdownVisualState()
+{
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	if (!OwnerCharacter)
+	{
+		return;
+	}
+
+	if (AVNHShopperCharacter* ShopperCharacter = Cast<AVNHShopperCharacter>(OwnerCharacter))
+	{
+		ShopperCharacter->EndPairPressureObstacleFallPresentation();
+	}
+	if (UCapsuleComponent* Capsule = OwnerCharacter->GetCapsuleComponent())
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		if (UPrimitiveComponent* ObstacleComponent = IgnoredCourseObstacleComponent.Get())
+		{
+			Capsule->IgnoreComponentWhenMoving(ObstacleComponent, false);
+			ObstacleComponent->IgnoreActorWhenMoving(OwnerCharacter, false);
+		}
+	}
+	IgnoredCourseObstacleComponent.Reset();
+	if (USkeletalMeshComponent* CharacterMesh = OwnerCharacter->GetMesh())
+	{
+		CharacterMesh->SetAllBodiesSimulatePhysics(false);
+		CharacterMesh->SetEnablePhysicsBlending(false);
+		CharacterMesh->SetEnableGravity(true);
+		CharacterMesh->SetAllUseCCD(false);
+		CharacterMesh->SetCollisionProfileName(TEXT("CharacterMesh"));
+		CharacterMesh->SetRelativeTransform(InitialMeshRelativeTransform);
+		CharacterMesh->bPauseAnims = false;
+		CharacterMesh->GlobalAnimRateScale = 1.0f;
+	}
+	if (UCharacterMovementComponent* MovementComponent = OwnerCharacter->GetCharacterMovement())
+	{
+		MovementComponent->ClearAccumulatedForces();
+		if (MovementComponent->MovementMode == MOVE_None)
+		{
+			MovementComponent->SetMovementMode(MOVE_Walking);
+		}
+	}
+	OwnerCharacter->SetReplicateMovement(true);
+	if (OwnerCharacter->HasAuthority())
+	{
+		OwnerCharacter->ForceNetUpdate();
+	}
+	bCourseObstacleKnockdownVisualActive = false;
+	bCourseObstacleRecoveryActive = false;
+	SetComponentTickInterval(0.1f);
+}
+
+void UPPPhysicalStateComponent::BeginCourseObstacleRecovery()
+{
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	if (!OwnerCharacter || !OwnerCharacter->HasAuthority() || !GetWorld()
+		|| !IsCourseObstacleKnockdown() || bCourseObstacleRecoveryActive)
+	{
+		return;
+	}
+
+	bCourseObstacleRecoveryActive = true;
+	RagdollNetworkState.CourseRecoveryStartServerTimeSeconds =
+		GetSynchronizedServerTimeSeconds();
+	if (AVNHShopperCharacter* ShopperCharacter = Cast<AVNHShopperCharacter>(OwnerCharacter))
+	{
+		ShopperCharacter->BeginPairPressureObstacleFallRecoveryPresentation(
+			0.0f,
+			PPPhysicalRagdollRecoveryBlendSeconds);
+	}
+	PublishRagdollNetworkState(true);
+	OwnerCharacter->ForceNetUpdate();
+	GetWorld()->GetTimerManager().ClearTimer(RecoveryTimerHandle);
+	GetWorld()->GetTimerManager().SetTimer(
+		CourseRecoveryTimerHandle,
+		this,
+		&UPPPhysicalStateComponent::CompleteCourseObstacleRecovery,
+		PPPhysicalRagdollRecoveryBlendSeconds,
+		false);
+}
+
+void UPPPhysicalStateComponent::CompleteCourseObstacleRecovery()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority() || !IsCourseObstacleKnockdown())
+	{
+		return;
+	}
+	SetPhysicalStateAuthoritative(EPPPhysicalState::Grounded);
+}
+
 void UPPPhysicalStateComponent::UpdateRagdollRecoveryBlend(float DeltaTime)
 {
 	if (!bRagdollRecoveryBlendActive)
@@ -1369,6 +1592,11 @@ void UPPPhysicalStateComponent::BeginGroundedRecovery(float RequiredGroundedSeco
 			*GroundedSeconds += PPPhysicalRagdollGroundedSampleIntervalSeconds;
 			if (*GroundedSeconds >= RequiredGroundedSeconds)
 			{
+				if (PhysicalStateComponent->IsCourseObstacleKnockdown())
+				{
+					PhysicalStateComponent->BeginCourseObstacleRecovery();
+					return;
+				}
 				if (PhysicalStateComponent->PhysicalState == EPPPhysicalState::Unconscious)
 				{
 					PhysicalStateComponent->Daze = FMath::Min(
@@ -1395,6 +1623,15 @@ void UPPPhysicalStateComponent::BeginGroundedRecovery(float RequiredGroundedSeco
 bool UPPPhysicalStateComponent::IsRagdollRestingOnGround() const
 {
 	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	if (IsCourseObstacleKnockdown())
+	{
+		const UCharacterMovementComponent* MovementComponent = OwnerCharacter
+			? OwnerCharacter->GetCharacterMovement()
+			: nullptr;
+		return MovementComponent && MovementComponent->IsMovingOnGround()
+			&& MovementComponent->Velocity.SizeSquared2D() <= FMath::Square(5.0f)
+			&& MovementComponent->Velocity.Z <= 1.0f;
+	}
 	USkeletalMeshComponent* CharacterMesh = OwnerCharacter ? OwnerCharacter->GetMesh() : nullptr;
 	UWorld* World = GetWorld();
 	if (!CharacterMesh || !World)

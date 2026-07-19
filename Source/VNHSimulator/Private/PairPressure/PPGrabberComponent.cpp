@@ -35,6 +35,10 @@ constexpr float PPGrabAlignmentScoreWeight = 1000.0f;
 constexpr float PPGrabPriorityScoreWeight = 100.0f;
 constexpr float PPGrabDistanceScoreWeight = 125.0f;
 constexpr float PPGrabLineOfSightScore = 50.0f;
+constexpr float PPGrabFullChargeKnockdownThreshold = 0.98f;
+constexpr float PPGrabFullChargeKnockdownMinimumSpeed = 650.0f;
+constexpr float PPGrabFullChargeKnockdownSweepSeconds = 1.5f;
+constexpr float PPGrabFullChargeKnockdownSweepIntervalSeconds = 0.02f;
 
 FVector GetPPBridgePerimeterPoint(const FBox& BridgeBounds, const FVector& QueryLocation)
 {
@@ -71,6 +75,41 @@ FVector GetPPBridgePerimeterPoint(const FBox& BridgeBounds, const FVector& Query
 	return PerimeterPoint;
 }
 
+FVector GetPPBridgeCollisionEdgePoint(
+	UPrimitiveComponent* BridgeComponent,
+	const FVector& QueryLocation)
+{
+	if (!BridgeComponent)
+	{
+		return QueryLocation;
+	}
+
+	const FBox BridgeBounds = BridgeComponent->Bounds.GetBox();
+	const FVector ApproximateEdgePoint = GetPPBridgePerimeterPoint(BridgeBounds, QueryLocation);
+	FVector OutwardDirection = (ApproximateEdgePoint - BridgeBounds.GetCenter()).GetSafeNormal2D();
+	if (OutwardDirection.IsNearlyZero())
+	{
+		OutwardDirection = (QueryLocation - BridgeBounds.GetCenter()).GetSafeNormal2D();
+	}
+	if (OutwardDirection.IsNearlyZero())
+	{
+		OutwardDirection = FVector::ForwardVector;
+	}
+
+	// Probe from above and just outside the selected side. Closest-point collision
+	// queries resolve the real cooked collision edge (including bevels/rotation),
+	// whereas the old world AABB point could float several units in front of it.
+	FVector CollisionProbe = ApproximateEdgePoint + OutwardDirection * 24.0f;
+	CollisionProbe.Z = BridgeBounds.Max.Z + 32.0f;
+	FVector CollisionEdgePoint = ApproximateEdgePoint;
+	const float CollisionDistance = BridgeComponent->GetClosestPointOnCollision(
+		CollisionProbe,
+		CollisionEdgePoint);
+	return CollisionDistance >= 0.0f && !CollisionEdgePoint.ContainsNaN()
+		? CollisionEdgePoint
+		: ApproximateEdgePoint;
+}
+
 bool IsPPBridgeLedge(const AActor* CandidateActor)
 {
 	return CandidateActor && CandidateActor->GetName().Contains(TEXT("Bridge_V1"), ESearchCase::IgnoreCase);
@@ -83,6 +122,134 @@ bool UsesPPGrabberStablePenguinRagdoll(const USkeletalMeshComponent* CharacterMe
 		&& PhysicsAsset->SkeletalBodySetups.Num() == 2
 		&& PhysicsAsset->FindBodyIndex(FName(TEXT("hips"))) != INDEX_NONE
 		&& PhysicsAsset->FindBodyIndex(FName(TEXT("chest"))) != INDEX_NONE;
+}
+
+bool IsPPGrabberFullChargeKnockdownSphere(const AActor* ItemActor)
+{
+	return ItemActor
+		&& ItemActor->GetClass()->GetPathName().Contains(
+			TEXT("BP_PP_GrabTestItem"),
+			ESearchCase::IgnoreCase);
+}
+
+void StartPPGrabberFullChargeSphereImpactSweep(
+	UPrimitiveComponent* ThrownPrimitive,
+	AActor* ThrowingActor,
+	const FVector& AuthoredThrowDirection)
+{
+	UWorld* World = ThrowingActor ? ThrowingActor->GetWorld() : nullptr;
+	AActor* ThrownActor = ThrownPrimitive ? ThrownPrimitive->GetOwner() : nullptr;
+	if (!World || !ThrownPrimitive || !ThrownActor || !ThrowingActor->HasAuthority()
+		|| !IsPPGrabberFullChargeKnockdownSphere(ThrownActor))
+	{
+		return;
+	}
+
+	const double ImpactWindowEndTime = World->GetTimeSeconds()
+		+ PPGrabFullChargeKnockdownSweepSeconds;
+	const float SweepRadius = FMath::Clamp(
+		ThrownPrimitive->Bounds.SphereRadius * 0.70f,
+		14.0f,
+		42.0f);
+	const TSharedRef<FVector> PreviousSphereLocation = MakeShared<FVector>(
+		ThrownPrimitive->GetComponentLocation());
+	const TSharedRef<FTimerHandle> ImpactSweepTimerHandle = MakeShared<FTimerHandle>();
+	const TWeakObjectPtr<UWorld> WeakWorld(World);
+	const TWeakObjectPtr<UPrimitiveComponent> WeakThrownPrimitive(ThrownPrimitive);
+	const TWeakObjectPtr<AActor> WeakThrownActor(ThrownActor);
+	const TWeakObjectPtr<AActor> WeakThrowingActor(ThrowingActor);
+	const FVector FallbackImpactDirection = AuthoredThrowDirection.GetSafeNormal2D();
+
+	FTimerDelegate ImpactSweepDelegate;
+	ImpactSweepDelegate.BindLambda(
+		[WeakWorld,
+			WeakThrownPrimitive,
+			WeakThrownActor,
+			WeakThrowingActor,
+			PreviousSphereLocation,
+			ImpactSweepTimerHandle,
+			ImpactWindowEndTime,
+			SweepRadius,
+			FallbackImpactDirection]()
+		{
+			UWorld* SweepWorld = WeakWorld.Get();
+			UPrimitiveComponent* ItemPrimitive = WeakThrownPrimitive.Get();
+			AActor* ItemActor = WeakThrownActor.Get();
+			AActor* ThrowerActor = WeakThrowingActor.Get();
+			if (!SweepWorld || !ItemPrimitive || !ItemActor || !ThrowerActor
+				|| SweepWorld->GetTimeSeconds() > ImpactWindowEndTime
+				|| !ItemPrimitive->IsSimulatingPhysics())
+			{
+				if (SweepWorld)
+				{
+					SweepWorld->GetTimerManager().ClearTimer(*ImpactSweepTimerHandle);
+				}
+				return;
+			}
+
+			const FVector CurrentSphereLocation = ItemPrimitive->GetComponentLocation();
+			const FVector CurrentSphereVelocity = ItemPrimitive->GetPhysicsLinearVelocity();
+			if (CurrentSphereVelocity.SizeSquared()
+				< FMath::Square(PPGrabFullChargeKnockdownMinimumSpeed))
+			{
+				SweepWorld->GetTimerManager().ClearTimer(*ImpactSweepTimerHandle);
+				return;
+			}
+
+			FCollisionObjectQueryParams ObjectQueryParams;
+			ObjectQueryParams.AddObjectTypesToQuery(ECC_Pawn);
+			FCollisionQueryParams QueryParams(
+				SCENE_QUERY_STAT(PPFullChargeSpherePlayerImpact),
+				false,
+				ItemActor);
+			QueryParams.AddIgnoredActor(ThrowerActor);
+			TArray<FHitResult> PlayerHits;
+			SweepWorld->SweepMultiByObjectType(
+				PlayerHits,
+				*PreviousSphereLocation,
+				CurrentSphereLocation,
+				FQuat::Identity,
+				ObjectQueryParams,
+				FCollisionShape::MakeSphere(SweepRadius),
+				QueryParams);
+			*PreviousSphereLocation = CurrentSphereLocation;
+
+			for (const FHitResult& PlayerHit : PlayerHits)
+			{
+				ACharacter* HitCharacter = Cast<ACharacter>(PlayerHit.GetActor());
+				UPPPhysicalStateComponent* HitPhysicalState =
+					UPPPhysicalStateComponent::FindPhysicalStateComponent(HitCharacter);
+				if (!HitCharacter || HitCharacter == ThrowerActor || !HitPhysicalState
+					|| HitPhysicalState->IsRagdolled())
+				{
+					continue;
+				}
+
+				FVector ImpactDirection = CurrentSphereVelocity.GetSafeNormal2D();
+				if (ImpactDirection.IsNearlyZero())
+				{
+					ImpactDirection = FallbackImpactDirection.IsNearlyZero()
+						? ThrowerActor->GetActorForwardVector().GetSafeNormal2D()
+						: FallbackImpactDirection;
+				}
+				const FVector KnockdownVelocity = ImpactDirection * 95.0f
+					+ FVector::DownVector * 180.0f;
+				const FVector KnockdownRollAxis = FVector::CrossProduct(
+					ImpactDirection,
+					FVector::UpVector).GetSafeNormal();
+				HitPhysicalState->RequestThrownRagdoll(
+					KnockdownVelocity,
+					KnockdownRollAxis * 50.0f,
+					true);
+				SweepWorld->GetTimerManager().ClearTimer(*ImpactSweepTimerHandle);
+				return;
+			}
+		});
+	World->GetTimerManager().SetTimer(
+		*ImpactSweepTimerHandle,
+		ImpactSweepDelegate,
+		PPGrabFullChargeKnockdownSweepIntervalSeconds,
+		true);
 }
 }
 
@@ -841,7 +1008,9 @@ bool UPPGrabberComponent::BuildTargetData(
 			{
 				continue;
 			}
-			const FVector NearestEdgePoint = GetPPBridgePerimeterPoint(PrimitiveComponent->Bounds.GetBox(), TraceStart);
+			const FVector NearestEdgePoint = GetPPBridgeCollisionEdgePoint(
+				PrimitiveComponent,
+				TraceStart);
 			const float EdgeDistanceSquared = FVector::DistSquared(TraceStart, NearestEdgePoint);
 			if (EdgeDistanceSquared < NearestBridgeEdgeDistanceSquared)
 			{
@@ -892,8 +1061,7 @@ bool UPPGrabberComponent::BuildTargetData(
 	}
 	if (bBridgeLedge)
 	{
-		const FBox BridgeBounds = CandidatePrimitive->Bounds.GetBox();
-		CandidateGrabPoint = GetPPBridgePerimeterPoint(BridgeBounds, TraceStart);
+		CandidateGrabPoint = GetPPBridgeCollisionEdgePoint(CandidatePrimitive, TraceStart);
 	}
 	const FVector ToCandidate = CandidateGrabPoint - TraceStart;
 	const float CandidateDistance = ToCandidate.Size();
@@ -1023,6 +1191,15 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 	FixedWorldGrabPoint = TargetData.GrabPoint;
 	LockedOwnerRotation = GetOwner()->GetActorRotation();
 	LockedPushAxis = GetOwner()->GetActorForwardVector().GetSafeNormal2D();
+	if (ActiveProfile.TargetType == EPPGrabTargetType::LedgeOrHandle)
+	{
+		const FVector TowardLedge = (FixedWorldGrabPoint - GetOwner()->GetActorLocation()).GetSafeNormal2D();
+		if (!TowardLedge.IsNearlyZero())
+		{
+			LockedPushAxis = TowardLedge;
+			LockedOwnerRotation = TowardLedge.Rotation();
+		}
+	}
 	LockedGrabbedRotation = GrabbedPrimitive ? GrabbedPrimitive->GetComponentRotation() : FRotator::ZeroRotator;
 	SustainedGrabSeconds = 0.0f;
 	ActivePlayerGrabBoneActorHeightOffset = 0.0f;
@@ -1186,7 +1363,7 @@ void UPPGrabberComponent::StartGrabAuthoritative(const FPPGrabTargetData& Target
 				OwnerMovement->SetMovementMode(MOVE_Flying);
 			}
 			OwnerCharacter->SetActorLocationAndRotation(
-				FixedWorldGrabPoint - FVector(0.0f, 0.0f, 70.0f),
+				GetLedgeAlignedActorLocation(OwnerCharacter),
 				LockedOwnerRotation,
 				true,
 				nullptr,
@@ -1398,8 +1575,16 @@ void UPPGrabberComponent::PerformHeldItemThrow(const FVector& ThrowDirection, fl
 	}
 	if (ThrownPrimitive && ThrownPrimitive->IsSimulatingPhysics())
 	{
-		ThrownPrimitive->SetPhysicsLinearVelocity(InheritedVelocity + ValidatedThrowDirection * ThrowSpeed);
+		const FVector ItemThrowVelocity = InheritedVelocity + ValidatedThrowDirection * ThrowSpeed;
+		ThrownPrimitive->SetPhysicsLinearVelocity(ItemThrowVelocity);
 		ThrownPrimitive->WakeAllRigidBodies();
+		if (ChargeAlpha >= PPGrabFullChargeKnockdownThreshold)
+		{
+			StartPPGrabberFullChargeSphereImpactSweep(
+				ThrownPrimitive,
+				OwnerActor,
+				ValidatedThrowDirection);
+		}
 	}
 }
 
@@ -1780,7 +1965,7 @@ void UPPGrabberComponent::UpdateLedgeGrab(float /*DeltaTime*/)
 		return;
 	}
 
-	const FVector DesiredActorLocation = FixedWorldGrabPoint - FVector(0.0f, 0.0f, 70.0f);
+	const FVector DesiredActorLocation = GetLedgeAlignedActorLocation(OwnerCharacter);
 	const FVector ConstraintError = DesiredActorLocation - OwnerCharacter->GetActorLocation();
 	ConstraintForceEstimate = ConstraintError.Size() * ActiveProfile.LinearStiffness;
 	if (ConstraintError.Size() > ActiveProfile.MaximumRange * 1.5f || ConstraintForceEstimate > ActiveProfile.BreakForce)
@@ -2446,6 +2631,62 @@ FVector UPPGrabberComponent::GetPlayerCarryLocation() const
 	return OwnerActor->GetActorLocation()
 		+ Forward * PlayerHoldDistance
 		+ FVector::UpVector * PlayerHoldHeight;
+}
+
+FVector UPPGrabberComponent::GetLedgeAlignedActorLocation(const ACharacter* OwnerCharacter) const
+{
+	if (!OwnerCharacter)
+	{
+		return FixedWorldGrabPoint;
+	}
+
+	const UCapsuleComponent* OwnerCapsule = OwnerCharacter->GetCapsuleComponent();
+	const float MinimumHorizontalClearance = OwnerCapsule
+		? OwnerCapsule->GetScaledCapsuleRadius() + 4.0f
+		: 46.0f;
+	float HorizontalHandReach = MinimumHorizontalClearance;
+	float VerticalHandReach = 70.0f;
+	const USkeletalMeshComponent* OwnerMesh = OwnerCharacter->GetMesh();
+	if (OwnerMesh)
+	{
+		FName LeftHandBone = NAME_None;
+		FName RightHandBone = NAME_None;
+		for (const FName Candidate : {FName(TEXT("hand_L")), FName(TEXT("hand_l")), FName(TEXT("Hand_L"))})
+		{
+			if (OwnerMesh->GetBoneIndex(Candidate) != INDEX_NONE)
+			{
+				LeftHandBone = Candidate;
+				break;
+			}
+		}
+		for (const FName Candidate : {FName(TEXT("hand_R")), FName(TEXT("hand_r")), FName(TEXT("Hand_R"))})
+		{
+			if (OwnerMesh->GetBoneIndex(Candidate) != INDEX_NONE)
+			{
+				RightHandBone = Candidate;
+				break;
+			}
+		}
+		if (!LeftHandBone.IsNone() && !RightHandBone.IsNone())
+		{
+			const FVector HandMidpoint = (
+				OwnerMesh->GetBoneLocation(LeftHandBone)
+				+ OwnerMesh->GetBoneLocation(RightHandBone)) * 0.5f;
+			const FVector HandOffset = HandMidpoint - OwnerCharacter->GetActorLocation();
+			HorizontalHandReach = FMath::Clamp(
+				FVector::DotProduct(HandOffset, LockedPushAxis),
+				MinimumHorizontalClearance,
+				95.0f);
+			VerticalHandReach = FMath::Clamp(HandOffset.Z, 55.0f, 105.0f);
+		}
+	}
+
+	const FVector TowardLedge = LockedPushAxis.IsNearlyZero()
+		? OwnerCharacter->GetActorForwardVector().GetSafeNormal2D()
+		: LockedPushAxis;
+	return FixedWorldGrabPoint
+		- TowardLedge * HorizontalHandReach
+		- FVector::UpVector * VerticalHandReach;
 }
 
 FVector UPPGrabberComponent::GetGrabDummyCarryLocation() const

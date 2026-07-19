@@ -225,6 +225,7 @@ private:
 	FVector GetGrabOrigin() const;
 	FVector GetHandCarryLocation(float ForwardDistance) const;
 	FVector GetPlayerCarryLocation() const;
+	FVector GetLedgeAlignedActorLocation(const ACharacter* OwnerCharacter) const;
 	FVector GetGrabDummyCarryLocation() const;
 	void SetGrabPresentation(EPPGrabState NewGrabState, AActor* NewGrabTarget);
 
