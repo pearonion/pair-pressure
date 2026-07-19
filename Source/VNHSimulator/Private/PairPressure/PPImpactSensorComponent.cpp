@@ -19,6 +19,8 @@ UPPImpactSensorComponent::UPPImpactSensorComponent()
 
 namespace
 {
+constexpr double PPImpactMaximumMotionSampleAgeSeconds = 0.12;
+
 bool IsPPImpactCourseObstacle(const AActor* ObstacleActor)
 {
 	if (!ObstacleActor)
@@ -329,9 +331,35 @@ bool UPPImpactSensorComponent::IsCourseObstacleMovingIntoOwner(
 		return false;
 	}
 
+	const double CurrentTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	const double SampleAgeSeconds = CurrentTimeSeconds - MotionSample->LastSampleTimeSeconds;
+	if (SampleAgeSeconds < 0.0 || SampleAgeSeconds > PPImpactMaximumMotionSampleAgeSeconds)
+	{
+		return false;
+	}
+
+	FVector SampledLinearVelocity = MotionSample->LinearVelocity;
+	FVector SampledAngularVelocityRadians = MotionSample->AngularVelocityRadians;
+	if (SampleAgeSeconds > UE_KINDA_SMALL_NUMBER)
+	{
+		const FTransform CurrentTransform = ObstacleComponent->GetComponentTransform();
+		const float InverseSampleAge = 1.0f / static_cast<float>(SampleAgeSeconds);
+		SampledLinearVelocity =
+			(CurrentTransform.GetLocation() - MotionSample->LastTransform.GetLocation()) * InverseSampleAge;
+		FQuat DeltaRotation = CurrentTransform.GetRotation() * MotionSample->LastTransform.GetRotation().Inverse();
+		DeltaRotation.Normalize();
+		FVector RotationAxis = FVector::ZeroVector;
+		float RotationAngle = 0.0f;
+		DeltaRotation.ToAxisAndAngle(RotationAxis, RotationAngle);
+		RotationAngle = FMath::UnwindRadians(RotationAngle);
+		SampledAngularVelocityRadians = FMath::Abs(RotationAngle) > UE_KINDA_SMALL_NUMBER
+			? RotationAxis.GetSafeNormal() * (RotationAngle * InverseSampleAge)
+			: FVector::ZeroVector;
+	}
+
 	const FVector ContactOffset = ImpactPoint - ObstacleComponent->GetComponentLocation();
-	const FVector ObstaclePointVelocity = MotionSample->LinearVelocity
-		+ FVector::CrossProduct(MotionSample->AngularVelocityRadians, ContactOffset);
+	const FVector ObstaclePointVelocity = SampledLinearVelocity
+		+ FVector::CrossProduct(SampledAngularVelocityRadians, ContactOffset);
 	const float ObstacleClosingSpeed = FVector::DotProduct(ObstaclePointVelocity, AwayFromContact);
 	return ObstacleClosingSpeed >= MinimumCourseObstacleClosingSpeed;
 }
@@ -390,6 +418,7 @@ void UPPImpactSensorComponent::TickComponent(
 			true,
 			PusherImpactPoint,
 			PusherImpactDirection,
+			PusherComponent,
 			ResolvePPAuthoredCourseObstacleSpeed(PusherActor, PusherComponent));
 		RememberImpact(PusherActor);
 		break;
@@ -410,6 +439,7 @@ void UPPImpactSensorComponent::ReportImpact(
 		bHeavyObstacle,
 		OwnerActor ? OwnerActor->GetActorLocation() : FVector::ZeroVector,
 		FVector::UpVector,
+		nullptr,
 		-1.0f);
 }
 
@@ -468,6 +498,7 @@ void UPPImpactSensorComponent::HandleComponentHit(
 			|| (OtherActor && OtherActor->ActorHasTag(HeavyObstacleTag)),
 		Hit.ImpactPoint,
 		NormalImpulse.IsNearlyZero() ? -Hit.ImpactNormal : NormalImpulse.GetSafeNormal(),
+		OtherComponent,
 		CourseObstacleSpeed);
 	RememberImpact(OtherActor);
 }
@@ -479,6 +510,7 @@ void UPPImpactSensorComponent::ReportResolvedImpact(
 	bool bHeavyObstacle,
 	const FVector& ImpactPoint,
 	const FVector& ImpactDirection,
+	UPrimitiveComponent* ImpactSourceComponent,
 	float CourseObstacleSpeed)
 {
 	AActor* OwnerActor = GetOwner();
@@ -499,7 +531,9 @@ void UPPImpactSensorComponent::ReportResolvedImpact(
 		PhysicalState->RequestCourseObstacleRagdoll(
 			CourseImpactDirection,
 			CourseObstacleSpeed,
-			InstigatorActor);
+			InstigatorActor,
+			ImpactSourceComponent,
+			ImpactPoint);
 		return;
 	}
 

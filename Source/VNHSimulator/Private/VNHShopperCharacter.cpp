@@ -405,6 +405,27 @@ void AVNHShopperCharacter::SetFirstPersonViewEnabled(bool bEnabled)
 		FirstPersonCamera && FirstPersonCamera->IsActive() ? TEXT("true") : TEXT("false"));
 }
 
+void AVNHShopperCharacter::StabilizePairPressureRecoveryCamera(
+	const FTransform& PreservedCameraBoomWorldTransform)
+{
+	if (!IsLocallyControlled() || !FollowCameraBoom
+		|| PreservedCameraBoomWorldTransform.ContainsNaN())
+	{
+		return;
+	}
+
+	// Authority recovery may run from a late-frame timer after the spring arm has
+	// already updated. Preserve rotation as well as position so the capsule's new
+	// standing yaw cannot leak into one rendered host frame before the next boom
+	// tick. Collision stays off for the short authored blend below.
+	FollowCameraBoom->bDoCollisionTest = false;
+	FollowCameraBoom->SetWorldTransform(
+		PreservedCameraBoomWorldTransform,
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics);
+}
+
 void AVNHShopperCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
@@ -525,6 +546,17 @@ void AVNHShopperCharacter::UpdateAdaptiveFollowCamera(float DeltaSeconds)
 	}
 	if (!bLocallyControlledCharacter || !FollowCameraBoom || !FollowCamera || !FollowCamera->IsActive())
 	{
+		return;
+	}
+	const bool bRagdollRecoveryCameraHandoffActive = PairPressurePhysicalStateComponent
+		&& PairPressurePhysicalStateComponent->IsRagdollRecoveryBlendActive();
+	if (bRagdollRecoveryCameraHandoffActive)
+	{
+		// Do not let a transient compression sample alter arm length, socket height,
+		// or control pitch while the capsule is moving underneath the preserved
+		// world-space camera frame. Normal adaptive behavior resumes next tick after
+		// the physical-state blend completes.
+		FollowCameraBoom->bDoCollisionTest = false;
 		return;
 	}
 	FollowCameraBoom->bDoCollisionTest = !bInsideCourseCameraVolume;
@@ -1264,8 +1296,14 @@ void AVNHShopperCharacter::UpdateRagdollCameraAnchor(float DeltaSeconds)
 	}
 
 	const USkeletalMeshComponent* CharacterMesh = GetMesh();
-	const bool bFollowPhysicsBody = CharacterMesh && CharacterMesh->IsAnySimulatingPhysics();
-	FVector DesiredRelativeLocation = FVector::ZeroVector;
+	const bool bRagdollStateActive = PairPressurePhysicalStateComponent
+		&& PairPressurePhysicalStateComponent->IsRagdolled();
+	const bool bRecoveryBlendActive = PairPressurePhysicalStateComponent
+		&& PairPressurePhysicalStateComponent->IsRagdollRecoveryBlendActive();
+	const bool bFollowPhysicsBody = CharacterMesh
+		&& CharacterMesh->IsAnySimulatingPhysics()
+		&& (!PairPressurePhysicalStateComponent || bRagdollStateActive);
+	FVector DesiredWorldLocation = RootComponent->GetComponentLocation();
 	if (bFollowPhysicsBody)
 	{
 		FVector PhysicsAnchor = CharacterMesh->GetComponentLocation();
@@ -1282,16 +1320,32 @@ void AVNHShopperCharacter::UpdateRagdollCameraAnchor(float DeltaSeconds)
 		}
 		if (!PhysicsAnchor.ContainsNaN())
 		{
-			DesiredRelativeLocation = RootComponent->GetComponentTransform().InverseTransformPositionNoScale(PhysicsAnchor);
+			DesiredWorldLocation = PhysicsAnchor;
 		}
 	}
+	else if (bRecoveryBlendActive)
+	{
+		// Once recovery starts, stop following rotating physics bones. The capsule
+		// is already placed at its grounded standing target, so the old hips focus
+		// is exactly one capsule half-height below it. Ease only that vertical
+		// difference using the same blend alpha as the visible mesh recovery.
+		const UCapsuleComponent* Capsule = GetCapsuleComponent();
+		const float CapsuleHalfHeight = Capsule ? Capsule->GetScaledCapsuleHalfHeight() : 0.0f;
+		const FVector RecoveryStartWorldLocation = RootComponent->GetComponentLocation()
+			- FVector::UpVector * CapsuleHalfHeight;
+		DesiredWorldLocation = FMath::Lerp(
+			RecoveryStartWorldLocation,
+			RootComponent->GetComponentLocation(),
+			PairPressurePhysicalStateComponent->GetRagdollRecoveryBlendAlpha());
+	}
 
-	const float FollowSpeed = bFollowPhysicsBody ? 15.0f : 9.0f;
-	FollowCameraBoom->SetRelativeLocation(FMath::VInterpTo(
-		FollowCameraBoom->GetRelativeLocation(),
-		DesiredRelativeLocation,
+	const float FollowSpeed = bFollowPhysicsBody ? 15.0f : (bRecoveryBlendActive ? 10.0f : 9.0f);
+	const FVector NewWorldLocation = FMath::VInterpTo(
+		FollowCameraBoom->GetComponentLocation(),
+		DesiredWorldLocation,
 		DeltaSeconds,
-		FollowSpeed));
+		FollowSpeed);
+	FollowCameraBoom->SetWorldLocation(NewWorldLocation, false, nullptr, ETeleportType::TeleportPhysics);
 }
 
 bool AVNHShopperCharacter::CanJumpInternal_Implementation() const
@@ -1640,7 +1694,10 @@ void AVNHShopperCharacter::HandlePairPressureAirDiveRecoveryStateChanged(bool bI
 	const float RecoveryElapsedSeconds = PairPressureActionRouter
 		? PairPressureActionRouter->GetDiveRecoveryPresentationElapsedSeconds()
 		: 0.0f;
-	const float RemainingGetUpDelaySeconds = FMath::Max(0.01f, 0.60f - RecoveryElapsedSeconds);
+	const float GetUpDelaySeconds = PairPressureActionRouter
+		? PairPressureActionRouter->GetDiveLandingGetUpDelaySeconds()
+		: 0.30f;
+	const float RemainingGetUpDelaySeconds = FMath::Max(0.01f, GetUpDelaySeconds - RecoveryElapsedSeconds);
 	GetWorldTimerManager().SetTimer(
 		PairPressureDiveRecoveryPresentationTimerHandle,
 		this,
@@ -1663,6 +1720,18 @@ void AVNHShopperCharacter::PlayPairPressureDiveRecoveryAnimation()
 
 void AVNHShopperCharacter::HandlePairPressureGrabReleasedPresentation(bool bDroppedItem, bool bLedgeClimb)
 {
+	if (!bLedgeClimb)
+	{
+		// Ordinary player/dummy/item release must hand straight back to the
+		// locomotion graph. In particular, the autonomous proxy predicts this
+		// callback and suppresses the matching multicast, so playing the authored
+		// full-body release clip here would mask its run cycle for the full clip.
+		GetWorldTimerManager().ClearTimer(PairPressurePresentationTimerHandle);
+		bPairPressureActionPresentationActive = false;
+		RestorePairPressureLocomotionAnimation();
+		return;
+	}
+
 	const UDataTable* LoadedMascotTable = MascotAnimationTable.IsNull() ? nullptr : MascotAnimationTable.LoadSynchronous();
 	const FPPMascotAnimationRow* PenguinRow = LoadedMascotTable
 		? LoadedMascotTable->FindRow<FPPMascotAnimationRow>(FName(TEXT("Penguin")), TEXT("Grab release presentation"), false)

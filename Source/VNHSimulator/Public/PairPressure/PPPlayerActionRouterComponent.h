@@ -42,6 +42,7 @@ public:
 	// action at the correct animation point instead of replaying from zero.
 	float GetDivePresentationElapsedSeconds() const;
 	float GetDiveRecoveryPresentationElapsedSeconds() const;
+	float GetDiveLandingGetUpDelaySeconds() const { return DiveLandingGetUpDelaySeconds; }
 
 	UPROPERTY(BlueprintAssignable, Category = "Pair Pressure|Actions")
 	FPPAirDiveStateChanged OnAirDiveStateChanged;
@@ -103,10 +104,10 @@ private:
 	float MinimumDivePresentationSeconds = 0.56f;
 
 	UPROPERTY(EditAnywhere, Category = "Pair Pressure|Actions|Dive", meta = (ClampMin = "0.0"))
-	float DiveLandingRecoverySeconds = 0.42f;
+	float DiveLandingRecoverySeconds = 0.35f;
 
 	UPROPERTY(EditAnywhere, Category = "Pair Pressure|Actions|Dive", meta = (ClampMin = "0.0"))
-	float DiveLandingGetUpDelaySeconds = 0.60f;
+	float DiveLandingGetUpDelaySeconds = 0.30f;
 
 	double DiveStartTimeSeconds = -1.0;
 	FTimerHandle DiveRecoveryTimerHandle;

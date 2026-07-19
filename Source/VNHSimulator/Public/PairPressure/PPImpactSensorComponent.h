@@ -51,6 +51,7 @@ private:
 		bool bHeavyObstacle,
 		const FVector& ImpactPoint,
 		const FVector& ImpactDirection,
+		UPrimitiveComponent* ImpactSourceComponent,
 		float CourseObstacleSpeed);
 	void RegisterCourseObstacleActor(AActor* CourseObstacleActor);
 	void HandleCourseObstacleSpawned(AActor* SpawnedActor);

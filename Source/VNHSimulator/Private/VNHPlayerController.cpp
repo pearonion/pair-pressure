@@ -2752,9 +2752,19 @@ void AVNHPlayerController::HandleThrowChargePressed()
 		UPPGrabberComponent* GrabberComponent = ControlledPawn
 			? ControlledPawn->FindComponentByClass<UPPGrabberComponent>()
 			: nullptr;
+		const EPPGrabState LocalGrabState = GrabberComponent
+			? IPPGrabber::Execute_GetGrabState(GrabberComponent)
+			: EPPGrabState::None;
+		const bool bCanChargeNativeGrab = LocalGrabState == EPPGrabState::HoldingItem
+			|| LocalGrabState == EPPGrabState::GrabbingPlayer
+			// Client grab prediction broadcasts Reaching without writing the replicated
+			// GrabState, so the local state can still be None while ServerBeginGrab is
+			// in flight. LMB being held is the authoritative local intent signal for
+			// preserving an immediately-following Q charge in that latency window.
+			|| (bPairPressureGrabInputDown
+				&& (LocalGrabState == EPPGrabState::None || LocalGrabState == EPPGrabState::Reaching));
 		if (GrabberComponent
-			&& (IPPGrabber::Execute_GetGrabState(GrabberComponent) == EPPGrabState::HoldingItem
-				|| IPPGrabber::Execute_GetGrabState(GrabberComponent) == EPPGrabState::GrabbingPlayer))
+			&& bCanChargeNativeGrab)
 		{
 			bThrowChargeActive = true;
 			ThrowChargeStartedAtSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
@@ -2796,9 +2806,15 @@ void AVNHPlayerController::HandleThrowChargeReleased()
 	UPPGrabberComponent* GrabberComponent = ControlledPawn
 		? ControlledPawn->FindComponentByClass<UPPGrabberComponent>()
 		: nullptr;
+	const EPPGrabState LocalGrabState = GrabberComponent
+		? IPPGrabber::Execute_GetGrabState(GrabberComponent)
+		: EPPGrabState::None;
+	const bool bCanThrowNativeGrab = LocalGrabState == EPPGrabState::HoldingItem
+		|| LocalGrabState == EPPGrabState::GrabbingPlayer
+		|| (bPairPressureGrabInputDown
+			&& (LocalGrabState == EPPGrabState::None || LocalGrabState == EPPGrabState::Reaching));
 	if (GrabberComponent
-		&& (IPPGrabber::Execute_GetGrabState(GrabberComponent) == EPPGrabState::HoldingItem
-			|| IPPGrabber::Execute_GetGrabState(GrabberComponent) == EPPGrabState::GrabbingPlayer))
+		&& bCanThrowNativeGrab)
 	{
 		const FVector NativeThrowDirection = (ControlledPawn->GetActorForwardVector() + FVector::UpVector * 0.18f).GetSafeNormal();
 		// The grab component owns the special dummy carry state.  Route the charge

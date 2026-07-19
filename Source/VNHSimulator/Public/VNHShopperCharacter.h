@@ -88,6 +88,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Shopper|Camera")
 	void SetFirstPersonViewEnabled(bool bEnabled);
 
+	// Keeps the complete local spring-arm frame in world space while ragdoll
+	// recovery moves and rotates the character capsule underneath it.
+	void StabilizePairPressureRecoveryCamera(const FTransform& PreservedCameraBoomWorldTransform);
+
 	UFUNCTION(BlueprintPure, Category = "VNH|Shopper")
 	bool IsPossessedByAlien() const { return bPossessedByAlien; }
 

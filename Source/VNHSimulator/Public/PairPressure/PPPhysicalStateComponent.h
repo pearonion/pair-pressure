@@ -5,6 +5,8 @@
 #include "PairPressure/PPGameplayInterfaces.h"
 #include "PPPhysicalStateComponent.generated.h"
 
+class UPrimitiveComponent;
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FPPPhysicalStateChanged, EPPPhysicalState, NewState, float, DazeNormalized);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FPPDazeChanged, float, DazeNormalized);
 
@@ -68,6 +70,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Physical State")
 	bool IsRagdolled() const;
 
+	// Camera presentation uses the authored recovery blend rather than tracking
+	// individual physics bones after the standing handoff has begun.
+	bool IsRagdollRecoveryBlendActive() const { return bRagdollRecoveryBlendActive; }
+	float GetRagdollRecoveryBlendAlpha() const;
+
 	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Physical State")
 	bool IsUnconscious() const { return PhysicalState == EPPPhysicalState::Unconscious; }
 
@@ -85,7 +92,8 @@ public:
 	void RequestThrownRagdoll(
 		const FVector& InitialVelocity,
 		const FVector& InitialAngularVelocity,
-		bool bClearExistingBodyVelocities = false);
+		bool bClearExistingBodyVelocities = false,
+		bool bCourseLaunch = false);
 
 	// Builds the exact charged dummy launch before entering the shared thrown
 	// ragdoll path. Course obstacles use zero inherited velocity so their authored
@@ -95,14 +103,17 @@ public:
 		float ChargeAlpha,
 		const FVector& InheritedVelocity,
 		float BaseThrowSpeed,
-		bool bClearExistingBodyVelocities = false);
+		bool bClearExistingBodyVelocities = false,
+		bool bCourseLaunch = false);
 
-	// Authority-only course-hazard entry point. Authored speed selects quick,
-	// medium, or full dummy-throw strength without changing FPPImpactData layout.
+	// Authority-only course-hazard entry point. Lobby hazards use a grounded,
+	// low-travel knockdown; non-Lobby courses retain authored speed tiers.
 	void RequestCourseObstacleRagdoll(
 		const FVector& ImpactDirection,
 		float AuthoredObstacleSpeed,
-		const AActor* ObstacleActor);
+		const AActor* ObstacleActor,
+		UPrimitiveComponent* ObstacleComponent,
+		const FVector& ImpactPoint);
 
 	UPROPERTY(BlueprintAssignable, Category = "Pair Pressure|Physical State")
 	FPPPhysicalStateChanged OnPhysicalStateChanged;
@@ -135,7 +146,11 @@ private:
 	void OnRep_RagdollNetworkState();
 
 	void ApplyImpactAuthoritative(const FPPImpactData& ImpactData);
-	void SetPhysicalStateAuthoritative(EPPPhysicalState NewState, float StateDurationSeconds = 0.0f);
+	void SetPhysicalStateAuthoritative(
+		EPPPhysicalState NewState,
+		float StateDurationSeconds = 0.0f,
+		bool bDeferInitialNetworkPublish = false,
+		bool bCourseRagdoll = false);
 	void EnterRagdollVisualState();
 	void ExitRagdollVisualState();
 	void UpdateRagdollRecoveryBlend(float DeltaTime);

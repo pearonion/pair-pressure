@@ -66,6 +66,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Pair Pressure|Grab|Ledge")
 	void RequestLedgeClimb();
 
+	// C++-only ownership handoff used by the physical-state component. Held
+	// characters are kinematic; this detaches that presentation without restoring
+	// walking/collision before a replicated ragdoll takes ownership.
+	void PrepareIncomingCarryForRagdoll();
+	void FinishIncomingCarryRagdoll();
+
 	UPROPERTY(BlueprintAssignable, Category = "Pair Pressure|Grab")
 	FPPGrabStateChanged OnGrabStateChanged;
 
@@ -181,7 +187,10 @@ private:
 	bool BuildTargetData(AActor* CandidateActor, const FVector& TraceStart, const FVector& CameraForward, FPPGrabTargetData& OutTargetData) const;
 	bool HasClearLineOfSight(const FVector& TraceStart, const FPPGrabTargetData& TargetData) const;
 	void StartGrabAuthoritative(const FPPGrabTargetData& TargetData);
-	void ReleaseGrabAuthoritative(bool bPlayRecoveryAnimation = true, bool bPlayLedgeClimbAnimation = false);
+	void ReleaseGrabAuthoritative(
+		bool bPlayRecoveryAnimation = true,
+		bool bPlayLedgeClimbAnimation = false,
+		bool bTransitionToRagdoll = false);
 	void UpdateReachSearch(float DeltaTime);
 	void UpdateHeldItem(float DeltaTime);
 	void UpdatePlayerGrab(float DeltaTime);
@@ -192,11 +201,16 @@ private:
 	void EndGrabDummyCarry();
 	void ApplyGrabDummyCarryPresentation(ACharacter* TargetCharacter, bool bIsCarried);
 	void UpdateRemoteGrabPresentation(float DeltaTime);
+	void UpdateIncomingCarryPresentation();
 	void BeginIncomingPlayerGrab(AActor* NewIncomingGrabber);
-	void EndIncomingPlayerGrab(AActor* PreviousIncomingGrabber, bool bApplyImmunity);
+	void EndIncomingPlayerGrab(
+		AActor* PreviousIncomingGrabber,
+		bool bApplyImmunity,
+		bool bTransitionToRagdoll = false);
 	void ApplyIncomingGrabRagdoll(bool bEnableRagdoll);
 	FName ResolvePlayerGrabBone(const USkeletalMeshComponent* TargetMesh) const;
 	FName ResolvePlayerRecoveryBone(const USkeletalMeshComponent* TargetMesh) const;
+	void PerformHeldItemThrowWithReachGrace(const FVector& ThrowDirection, float ChargeAlpha);
 	void PerformHeldItemThrow(const FVector& ThrowDirection, float ChargeAlpha);
 	void PlayGetUpFrontAnimation(ACharacter* RecoveringCharacter);
 	void PerformDirectionalEscape(const FVector& EscapeDirection);
@@ -244,6 +258,8 @@ private:
 	TWeakObjectPtr<ACharacter> CarriedGrabDummy;
 	TWeakObjectPtr<ACharacter> PresentedGrabDummy;
 	FName ActivePlayerGrabBone = NAME_None;
+	float ActivePlayerGrabBoneActorHeightOffset = 0.0f;
+	bool bMatchGrabDummyCarryHeight = false;
 	float ConstraintForceEstimate = 0.0f;
 	float SustainedGrabSeconds = 0.0f;
 	TWeakObjectPtr<AActor> ImmuneGrabber;
