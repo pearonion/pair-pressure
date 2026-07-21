@@ -103,8 +103,19 @@ void APPRotatingHammer::HandleHammerHit(UPrimitiveComponent* HitComponent, AActo
 
 	if (UPPPhysicalStateComponent* PhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(OtherActor))
 	{
+		const FVector ContactRadius = RotatingRoot
+			? (Hit.ImpactPoint - RotatingRoot->GetComponentLocation()).GetSafeNormal2D()
+			: FVector::ZeroVector;
+		const FVector RotationAxis = RotatingRoot
+			? RotatingRoot->GetUpVector() * FMath::Sign(RotatingMovement->RotationRate.Yaw)
+			: FVector::UpVector;
 		FVector ImpactDirection =
-			(OtherActor->GetActorLocation() - Hit.ImpactPoint).GetSafeNormal2D();
+			FVector::CrossProduct(RotationAxis, ContactRadius).GetSafeNormal2D();
+		if (ImpactDirection.IsNearlyZero())
+		{
+			ImpactDirection =
+				(OtherActor->GetActorLocation() - Hit.ImpactPoint).GetSafeNormal2D();
+		}
 		if (ImpactDirection.IsNearlyZero())
 		{
 			ImpactDirection =

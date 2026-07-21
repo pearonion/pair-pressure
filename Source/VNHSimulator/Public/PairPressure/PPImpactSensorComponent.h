@@ -56,6 +56,10 @@ private:
 	void RegisterCourseObstacleActor(AActor* CourseObstacleActor);
 	void HandleCourseObstacleSpawned(AActor* SpawnedActor);
 	void UpdateCourseObstacleMotionSamples();
+	bool TryGetCourseObstaclePointVelocity(
+		UPrimitiveComponent* ObstacleComponent,
+		const FVector& ImpactPoint,
+		FVector& OutPointVelocity) const;
 	bool IsCourseObstacleMovingAtContact(
 		UPrimitiveComponent* ObstacleComponent,
 		const FVector& ImpactPoint,

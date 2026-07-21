@@ -30,13 +30,12 @@ bool IsPPImpactCourseObstacle(const AActor* ObstacleActor)
 
 	const FString ObstacleName = ObstacleActor->GetName();
 	return ObstacleActor->ActorHasTag(TEXT("PP_SpinnerObstacle"))
-		|| ObstacleName.Contains(TEXT("Spinner_V2"), ESearchCase::IgnoreCase)
+		|| ObstacleName.Contains(TEXT("Spinner"), ESearchCase::IgnoreCase)
 		|| ObstacleName.Contains(TEXT("SwingBall"), ESearchCase::IgnoreCase)
 		|| ObstacleName.Contains(TEXT("SwingHammer"), ESearchCase::IgnoreCase)
 		|| ObstacleName.Contains(TEXT("Turntable"), ESearchCase::IgnoreCase)
 		|| ObstacleName.Contains(TEXT("Drop_V1"), ESearchCase::IgnoreCase)
-		|| ObstacleName.Contains(TEXT("Pusher_V1"), ESearchCase::IgnoreCase)
-		|| ObstacleName.Contains(TEXT("Pusher_V2"), ESearchCase::IgnoreCase);
+		|| ObstacleName.Contains(TEXT("Pusher"), ESearchCase::IgnoreCase);
 }
 
 bool IsPPImpactSensorSpinnerStyleCourseObstacle(const AActor* ObstacleActor)
@@ -48,7 +47,7 @@ bool IsPPImpactSensorSpinnerStyleCourseObstacle(const AActor* ObstacleActor)
 
 	const FString ObstacleName = ObstacleActor->GetName();
 	return ObstacleActor->ActorHasTag(TEXT("PP_SpinnerObstacle"))
-		|| ObstacleName.Contains(TEXT("Spinner_V2"), ESearchCase::IgnoreCase)
+		|| ObstacleName.Contains(TEXT("Spinner"), ESearchCase::IgnoreCase)
 		|| ObstacleName.Contains(TEXT("SwingBall"), ESearchCase::IgnoreCase)
 		|| ObstacleName.Contains(TEXT("SwingHammer"), ESearchCase::IgnoreCase)
 		|| ObstacleName.Contains(TEXT("Turntable"), ESearchCase::IgnoreCase);
@@ -57,8 +56,7 @@ bool IsPPImpactSensorSpinnerStyleCourseObstacle(const AActor* ObstacleActor)
 bool IsPPImpactSensorPusherObstacle(const AActor* ObstacleActor)
 {
 	const FString ObstacleName = ObstacleActor ? ObstacleActor->GetName() : FString();
-	return ObstacleName.Contains(TEXT("Pusher_V1"), ESearchCase::IgnoreCase)
-		|| ObstacleName.Contains(TEXT("Pusher_V2"), ESearchCase::IgnoreCase);
+	return ObstacleName.Contains(TEXT("Pusher"), ESearchCase::IgnoreCase);
 }
 
 bool IsPPImpactSensorPusherContactComponent(const AActor* ObstacleActor, const UPrimitiveComponent* ObstacleComponent)
@@ -304,19 +302,19 @@ void UPPImpactSensorComponent::UpdateCourseObstacleMotionSamples()
 	}
 }
 
-bool UPPImpactSensorComponent::IsCourseObstacleMovingAtContact(
+bool UPPImpactSensorComponent::TryGetCourseObstaclePointVelocity(
 	UPrimitiveComponent* ObstacleComponent,
 	const FVector& ImpactPoint,
-	const FVector& RequiredClosingDirection) const
+	FVector& OutPointVelocity) const
 {
-	const AActor* OwnerActor = GetOwner();
+	OutPointVelocity = FVector::ZeroVector;
 	const FPPImpactSensorObstacleMotionSample* MotionSample = nullptr;
 	if (ObstacleComponent)
 	{
 		const TWeakObjectPtr<UPrimitiveComponent> ObstacleComponentKey(ObstacleComponent);
 		MotionSample = CourseObstacleMotionSamples.Find(ObstacleComponentKey);
 	}
-	if (!OwnerActor || !ObstacleComponent || !MotionSample || !MotionSample->bInitialized)
+	if (!ObstacleComponent || !MotionSample || !MotionSample->bInitialized)
 	{
 		return false;
 	}
@@ -348,8 +346,25 @@ bool UPPImpactSensorComponent::IsCourseObstacleMovingAtContact(
 	}
 
 	const FVector ContactOffset = ImpactPoint - ObstacleComponent->GetComponentLocation();
-	const FVector ObstaclePointVelocity = SampledLinearVelocity
+	OutPointVelocity = SampledLinearVelocity
 		+ FVector::CrossProduct(SampledAngularVelocityRadians, ContactOffset);
+	return !OutPointVelocity.ContainsNaN();
+}
+
+bool UPPImpactSensorComponent::IsCourseObstacleMovingAtContact(
+	UPrimitiveComponent* ObstacleComponent,
+	const FVector& ImpactPoint,
+	const FVector& RequiredClosingDirection) const
+{
+	FVector ObstaclePointVelocity = FVector::ZeroVector;
+	if (!TryGetCourseObstaclePointVelocity(
+		ObstacleComponent,
+		ImpactPoint,
+		ObstaclePointVelocity))
+	{
+		return false;
+	}
+
 	// The hit itself proves contact, so rotating/propeller contacts gate on sampled
 	// point speed without a facing-sensitive projection. Persistent pusher overlaps
 	// additionally require closing motion so a retracting panel cannot knock down a
@@ -528,12 +543,27 @@ void UPPImpactSensorComponent::ReportResolvedImpact(
 	if (CourseObstacleSpeed >= 0.0f)
 	{
 		const FVector AwayFromContact = (OwnerActor->GetActorLocation() - ImpactPoint).GetSafeNormal2D();
-		// A raw solver impulse can run tangentially along a rotating surface. Prefer
-		// the geometric separation direction so the directional fall and the small
-		// capsule depenetration both point cleanly away from the contact.
-		const FVector CourseImpactDirection = !AwayFromContact.IsNearlyZero()
-			? AwayFromContact
-			: ImpactDirection.GetSafeNormal2D();
+		FVector CourseImpactDirection = FVector::ZeroVector;
+		if (IsPPImpactSensorSpinnerStyleCourseObstacle(InstigatorActor))
+		{
+			FVector SpinnerPointVelocity = FVector::ZeroVector;
+			if (TryGetCourseObstaclePointVelocity(
+				ImpactSourceComponent,
+				ImpactPoint,
+				SpinnerPointVelocity))
+			{
+				CourseImpactDirection = SpinnerPointVelocity.GetSafeNormal2D();
+			}
+		}
+		// Spinner-style obstacles push along their sampled tangential motion. Other
+		// course obstacles keep the geometric separation direction because raw solver
+		// impulses from timeline-driven meshes are not reliable.
+		if (CourseImpactDirection.IsNearlyZero())
+		{
+			CourseImpactDirection = !AwayFromContact.IsNearlyZero()
+				? AwayFromContact
+				: ImpactDirection.GetSafeNormal2D();
+		}
 		PhysicalState->RequestCourseObstacleRagdoll(
 			CourseImpactDirection,
 			CourseObstacleSpeed,

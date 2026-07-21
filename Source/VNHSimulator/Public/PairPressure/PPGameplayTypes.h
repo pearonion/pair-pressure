@@ -116,7 +116,7 @@ struct FPPMascotAnimationRow : public FTableRowBase
 	// deliberately separate from short hit reactions and physical throws.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Obstacle Falls")
 	TSoftObjectPtr<UAnimSequence> ObstacleFallFront = TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(
-		TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls1.AS_Penguin_UE_Anim_falls1")));
+		TEXT("/Game/CuteChubbyPenguin_V2/Content/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls_forward.AS_Penguin_UE_Anim_falls_forward")));
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Obstacle Falls")
 	TSoftObjectPtr<UAnimSequence> ObstacleFallBack = TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(
@@ -124,11 +124,11 @@ struct FPPMascotAnimationRow : public FTableRowBase
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Obstacle Falls")
 	TSoftObjectPtr<UAnimSequence> ObstacleFallLeft = TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(
-		TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls2.AS_Penguin_UE_Anim_falls2")));
+		TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls3.AS_Penguin_UE_Anim_falls3")));
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Obstacle Falls")
 	TSoftObjectPtr<UAnimSequence> ObstacleFallRight = TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(
-		TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls3.AS_Penguin_UE_Anim_falls3")));
+		TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls2.AS_Penguin_UE_Anim_falls2")));
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Recovery")
 	TSoftObjectPtr<UAnimSequence> GetUpFront;

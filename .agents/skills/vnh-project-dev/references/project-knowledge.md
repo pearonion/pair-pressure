@@ -32,6 +32,8 @@ Course obstacle follow-up: runtime matching recognizes `Spinner_V2`, `SwingBall`
 
 ## Pair Pressure Development Track
 
+- Mascot expansion now includes Dog, Cat, Fox, Panda, and Pig rows in `/Game/PairPressure/Data/DT_MascotAnimations`. Their source projects were initially copied under nested `_V2/Content/...` paths, which left embedded `/Game/CuteChubby...` references unresolved; editor-managed copies of each 41-asset character folder now live at the intended clean roots `/Game/CuteChubbyDog`, `/Game/CuteChubbyCat`, `/Game/CuteChubbyFox`, `/Game/CuteChubbyPanda`, and `/Game/CuteChubbyPig`. Each mascot has a species-targeted `ABP_*` and `BS_*_Locomotion` under `/Game/PairPressure/Characters/<Species>`, shares the compact Penguin physics asset, and maps the Penguin gameplay animation fields to its species-equivalent clips. The imported `idle1` clips had been loaded while their skeleton paths were unresolved, so these five working locomotion/table mappings deliberately use skeleton-valid `idle2` for idle. The same import-path issue also left each copied material's two texture-sample object references and each mesh's material slot empty; the clean assets now explicitly bind the species color texture to Base Color, the `_Normal` texture to Normal, and the repaired material to skeletal-mesh slot 0.
+
 - GDD priority is a networked physics-party prototype for pairs. First mode is **Bring Your Idiot Home**; **Attached at the Hip** follows. Recommended match size is four players / two teams.
 - Pair Pressure content is isolated under `/Game/PairPressure` to avoid collisions with legacy TNG/VNH assets and to make Blueprint/UMG work merge-friendly.
 - Prototype map: `/Game/PairPressure/Maps/PP_FriendshipPhysics`.

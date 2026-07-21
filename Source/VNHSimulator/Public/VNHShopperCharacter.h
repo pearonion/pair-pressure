@@ -101,7 +101,7 @@ public:
 	void BeginPairPressureObstacleFallRecoveryPresentation(
 		float RecoveryElapsedSeconds,
 		float RecoveryBlendSeconds);
-	void EndPairPressureObstacleFallPresentation();
+	void EndPairPressureObstacleFallPresentation(float RecoveryBlendSeconds);
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Shopper")
 	bool IsPossessedByAlien() const { return bPossessedByAlien; }

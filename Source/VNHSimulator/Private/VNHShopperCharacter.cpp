@@ -51,8 +51,11 @@ const TCHAR* DefaultBodyMeshPath = TEXT("/Game/CuteChubbyPenguin/Penguin/Meshes/
 const TCHAR* DefaultMascotAnimBlueprintPath = TEXT("/Game/PairPressure/Characters/Penguin/ABP_Penguin.ABP_Penguin_C");
 const TCHAR* DefaultMascotIdleAnimPath = TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_idle1.AS_Penguin_UE_Anim_idle1");
 const TCHAR* PairPressureMascotPhysicsAssetPath = TEXT("/Game/CuteChubbyPenguin/Penguin/Meshes/PHYS_Penguin_UE_PhysicsAsset.PHYS_Penguin_UE_PhysicsAsset");
-constexpr float PPShopperObstacleFallPlayRate = 1.55f;
-constexpr float PPShopperObstacleFallPoseLeadSeconds = 0.03f;
+constexpr float PPShopperObstacleFallPlayRate = 1.15f;
+// Leave several rendered frames before the sequence boundary. A 0.03-second
+// lead can expire inside one 30 Hz frame at the authored 1.15 play rate, which
+// lets the dynamic montage naturally end before its hold timer can freeze it.
+constexpr float PPShopperObstacleFallPoseLeadSeconds = 0.12f;
 constexpr int32 PPShopperObstacleFallDirectionCount = 4;
 constexpr float CalmFartVolume = 1.4f;
 constexpr float PanicFartVolume = 2.6f;
@@ -1578,19 +1581,24 @@ UAnimSequence* AVNHShopperCharacter::ResolvePairPressureObstacleFallAnimation(
 	if (!ResolvedAnimation)
 	{
 		// falls2/falls3 are mirrored lateral clips (and pair with wakesup2/3).
-		// falls1 is the authored backward fall and remains the explicit forward
-		// fallback until a dedicated forward course-fall clip is authored.
+		// falls1 is the authored backward fall; the V2 set supplies the dedicated
+		// forward clip used when the obstacle pushes along the facing direction.
 		const TCHAR* FallbackPath = TEXT(
 			"/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls1.AS_Penguin_UE_Anim_falls1");
-		if (FallDirection == EPPObstacleFallDirection::Left)
+		if (FallDirection == EPPObstacleFallDirection::Forward)
 		{
 			FallbackPath = TEXT(
-				"/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls2.AS_Penguin_UE_Anim_falls2");
+				"/Game/CuteChubbyPenguin_V2/Content/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls_forward.AS_Penguin_UE_Anim_falls_forward");
+		}
+		else if (FallDirection == EPPObstacleFallDirection::Left)
+		{
+			FallbackPath = TEXT(
+				"/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls3.AS_Penguin_UE_Anim_falls3");
 		}
 		else if (FallDirection == EPPObstacleFallDirection::Right)
 		{
 			FallbackPath = TEXT(
-				"/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls3.AS_Penguin_UE_Anim_falls3");
+				"/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls2.AS_Penguin_UE_Anim_falls2");
 		}
 		ResolvedAnimation = LoadObject<UAnimSequence>(nullptr, FallbackPath);
 	}
@@ -1688,7 +1696,15 @@ void AVNHShopperCharacter::HoldPairPressureObstacleFallPose()
 	{
 		if (UAnimInstance* AnimInstance = CharacterMesh->GetAnimInstance())
 		{
-			AnimInstance->Montage_Pause(PairPressureObstacleFallMontage);
+			const float HoldPosition = FMath::Max(
+				0.0f,
+				PairPressureObstacleFallMontage->GetPlayLength()
+					- PPShopperObstacleFallPoseLeadSeconds);
+			// Clamp to an explicit grounded frame, then freeze by play rate instead of
+			// pausing. The montage remains an evaluated slot contributor, so its weight
+			// can subsequently fade over the synchronized recovery window.
+			AnimInstance->Montage_SetPosition(PairPressureObstacleFallMontage, HoldPosition);
+			AnimInstance->Montage_SetPlayRate(PairPressureObstacleFallMontage, 0.0f);
 		}
 	}
 }
@@ -1715,11 +1731,20 @@ void AVNHShopperCharacter::BeginPairPressureObstacleFallRecoveryPresentation(
 		0.03f,
 		FMath::Max(0.0f, RecoveryBlendSeconds)
 			- FMath::Max(0.0f, RecoveryElapsedSeconds));
-	AnimInstance->Montage_Resume(PairPressureObstacleFallMontage);
+	const float HoldPosition = FMath::Max(
+		0.0f,
+		PairPressureObstacleFallMontage->GetPlayLength()
+			- PPShopperObstacleFallPoseLeadSeconds);
+	// A recovery packet can arrive before the local hold timer (especially on a
+	// joining client). Force the same stable pose on every peer before beginning
+	// the fade, and keep playback frozen so the montage cannot hit its zero-time
+	// natural end while its slot weight blends back to locomotion.
+	AnimInstance->Montage_SetPosition(PairPressureObstacleFallMontage, HoldPosition);
+	AnimInstance->Montage_SetPlayRate(PairPressureObstacleFallMontage, 0.0f);
 	AnimInstance->Montage_Stop(RemainingBlendSeconds, PairPressureObstacleFallMontage);
 }
 
-void AVNHShopperCharacter::EndPairPressureObstacleFallPresentation()
+void AVNHShopperCharacter::EndPairPressureObstacleFallPresentation(float RecoveryBlendSeconds)
 {
 	GetWorldTimerManager().ClearTimer(PairPressureObstacleFallHoldTimerHandle);
 	const bool bHadSynchronizedRecovery = bPairPressureObstacleFallRecoveryActive;
@@ -1732,13 +1757,23 @@ void AVNHShopperCharacter::EndPairPressureObstacleFallPresentation()
 		if (UAnimInstance* AnimInstance = CharacterMesh->GetAnimInstance();
 			AnimInstance && PairPressureObstacleFallMontage)
 		{
-			// Replicated properties may coalesce under packet loss and skip the
-			// intermediate recovery timestamp. Keep a production-safe final blend so
-			// even that case returns to locomotion without a one-frame pose pop.
-			AnimInstance->Montage_Resume(PairPressureObstacleFallMontage);
-			AnimInstance->Montage_Stop(
-				bHadSynchronizedRecovery ? 0.05f : 0.15f,
-				PairPressureObstacleFallMontage);
+			if (!bHadSynchronizedRecovery)
+			{
+				// Replicated properties may coalesce and deliver Grounded before the
+				// intermediate recovery timestamp. Reconstruct the same held pose and
+				// full-duration fade instead of falling back to a short client-only pop.
+				const float HoldPosition = FMath::Max(
+					0.0f,
+					PairPressureObstacleFallMontage->GetPlayLength()
+						- PPShopperObstacleFallPoseLeadSeconds);
+				AnimInstance->Montage_SetPosition(PairPressureObstacleFallMontage, HoldPosition);
+				AnimInstance->Montage_SetPlayRate(PairPressureObstacleFallMontage, 0.0f);
+				AnimInstance->Montage_Stop(
+					FMath::Max(0.03f, RecoveryBlendSeconds),
+					PairPressureObstacleFallMontage);
+			}
+			// When synchronized recovery already started, leave its existing blend
+			// untouched. A second short Stop call can truncate the remaining fade.
 			bStoppedObstacleFallMontage = true;
 		}
 	}

@@ -26,7 +26,8 @@ const FName PPStablePenguinRagdollBones[] = {
 	FName(TEXT("hips")), FName(TEXT("chest"))
 };
 
-constexpr float PPPhysicalCourseKnockdownDurationSeconds = 0.75f;
+constexpr float PPPhysicalCourseKnockdownDurationSeconds = 1.50f;
+constexpr float PPPhysicalCourseRecoveryBlendSeconds = 0.60f;
 constexpr float PPPhysicalMaxRagdollAngularSpeedDegrees = 120.0f;
 constexpr float PPPhysicalRagdollRecoveryBlendSeconds = 0.28f;
 constexpr float PPPhysicalRagdollGroundedStabilitySeconds = 0.20f;
@@ -1085,7 +1086,9 @@ void UPPPhysicalStateComponent::SetPhysicalStateAuthoritative(
 					PPPhysicalRagdollGroundedSampleIntervalSeconds,
 					StateDurationSeconds
 						- PPPhysicalRagdollGroundedStabilitySeconds
-						- PPPhysicalRagdollRecoveryBlendSeconds)
+						- (bCourseRagdoll
+							? PPPhysicalCourseRecoveryBlendSeconds
+							: PPPhysicalRagdollRecoveryBlendSeconds))
 				: StateDurationSeconds;
 			GetWorld()->GetTimerManager().SetTimer(
 				RecoveryTimerHandle,
@@ -1293,7 +1296,7 @@ void UPPPhysicalStateComponent::EnterCourseObstacleKnockdownVisualState()
 					- RagdollNetworkState.CourseRecoveryStartServerTimeSeconds);
 			ShopperCharacter->BeginPairPressureObstacleFallRecoveryPresentation(
 				RecoveryElapsedSeconds,
-				PPPhysicalRagdollRecoveryBlendSeconds);
+				PPPhysicalCourseRecoveryBlendSeconds);
 		}
 	}
 }
@@ -1424,7 +1427,8 @@ void UPPPhysicalStateComponent::ExitCourseObstacleKnockdownVisualState()
 
 	if (AVNHShopperCharacter* ShopperCharacter = Cast<AVNHShopperCharacter>(OwnerCharacter))
 	{
-		ShopperCharacter->EndPairPressureObstacleFallPresentation();
+		ShopperCharacter->EndPairPressureObstacleFallPresentation(
+			PPPhysicalCourseRecoveryBlendSeconds);
 	}
 	if (UCapsuleComponent* Capsule = OwnerCharacter->GetCapsuleComponent())
 	{
@@ -1481,7 +1485,7 @@ void UPPPhysicalStateComponent::BeginCourseObstacleRecovery()
 	{
 		ShopperCharacter->BeginPairPressureObstacleFallRecoveryPresentation(
 			0.0f,
-			PPPhysicalRagdollRecoveryBlendSeconds);
+			PPPhysicalCourseRecoveryBlendSeconds);
 	}
 	PublishRagdollNetworkState(true);
 	OwnerCharacter->ForceNetUpdate();
@@ -1490,7 +1494,7 @@ void UPPPhysicalStateComponent::BeginCourseObstacleRecovery()
 		CourseRecoveryTimerHandle,
 		this,
 		&UPPPhysicalStateComponent::CompleteCourseObstacleRecovery,
-		PPPhysicalRagdollRecoveryBlendSeconds,
+		PPPhysicalCourseRecoveryBlendSeconds,
 		false);
 }
 
