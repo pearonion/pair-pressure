@@ -300,7 +300,7 @@ void AVNHShopperCharacter::BeginPlay()
 		// Load before the first input so diving never waits on synchronous asset IO.
 		PairPressureDiveAnimation = LoadObject<UAnimSequence>(
 			nullptr,
-			TEXT("/Game/CuteChubbyPenguin_V2/Content/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_falls_forward.AS_Penguin_UE_falls_forward"));
+			TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_falls_forward.AS_Penguin_UE_falls_forward"));
 		PreloadPairPressureObstacleFallAnimations();
 		// Camera anchoring must follow physics every frame while the capsule is
 		// disabled and the mascot body is being propelled or carried.
@@ -1588,7 +1588,7 @@ UAnimSequence* AVNHShopperCharacter::ResolvePairPressureObstacleFallAnimation(
 		if (FallDirection == EPPObstacleFallDirection::Forward)
 		{
 			FallbackPath = TEXT(
-				"/Game/CuteChubbyPenguin_V2/Content/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls_forward.AS_Penguin_UE_Anim_falls_forward");
+				"/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls_forward.AS_Penguin_UE_Anim_falls_forward");
 		}
 		else if (FallDirection == EPPObstacleFallDirection::Left)
 		{
@@ -1791,7 +1791,7 @@ UAnimSequence* AVNHShopperCharacter::ResolvePairPressureMascotAnimation(EPPGrabS
 	{
 		return LoadObject<UAnimSequence>(
 			nullptr,
-			TEXT("/Game/CuteChubbyPenguin_V2/Content/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_climb_all.AS_Penguin_UE_climb_all"));
+			TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_climb_all.AS_Penguin_UE_climb_all"));
 	}
 	const UDataTable* LoadedMascotTable = MascotAnimationTable.IsNull() ? nullptr : MascotAnimationTable.LoadSynchronous();
 	const FPPMascotAnimationRow* PenguinRow = LoadedMascotTable
@@ -1987,7 +1987,7 @@ void AVNHShopperCharacter::PlayPairPressureDiveRecoveryAnimation()
 	}
 	UAnimSequence* DiveRecoveryAnimation = LoadObject<UAnimSequence>(
 		nullptr,
-		TEXT("/Game/CuteChubbyPenguin_V2/Content/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_falls_forward_UP.AS_Penguin_UE_falls_forward_UP"));
+		TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_falls_forward_UP.AS_Penguin_UE_falls_forward_UP"));
 	PlayPairPressureMascotAnimation(DiveRecoveryAnimation, false);
 }
 
@@ -2015,7 +2015,7 @@ void AVNHShopperCharacter::HandlePairPressureGrabReleasedPresentation(bool bDrop
 	{
 		ReleaseAnimation = LoadObject<UAnimSequence>(
 			nullptr,
-			TEXT("/Game/CuteChubbyPenguin_V2/Content/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_climb_all.AS_Penguin_UE_climb_all"));
+			TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_climb_all.AS_Penguin_UE_climb_all"));
 	}
 	else if (PenguinRow)
 	{

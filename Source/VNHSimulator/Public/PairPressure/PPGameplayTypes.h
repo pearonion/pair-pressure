@@ -116,7 +116,7 @@ struct FPPMascotAnimationRow : public FTableRowBase
 	// deliberately separate from short hit reactions and physical throws.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Obstacle Falls")
 	TSoftObjectPtr<UAnimSequence> ObstacleFallFront = TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(
-		TEXT("/Game/CuteChubbyPenguin_V2/Content/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls_forward.AS_Penguin_UE_Anim_falls_forward")));
+		TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls_forward.AS_Penguin_UE_Anim_falls_forward")));
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Obstacle Falls")
 	TSoftObjectPtr<UAnimSequence> ObstacleFallBack = TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(
