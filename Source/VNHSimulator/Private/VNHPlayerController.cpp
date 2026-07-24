@@ -46,6 +46,7 @@
 #include "PairPressure/PPPlayerActionRouterComponent.h"
 #include "PairPressure/PPGrabberComponent.h"
 #include "PairPressure/PPPhysicalStateComponent.h"
+#include "PairPressure/Interfaces/PPMascotSelectionInterface.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SSpacer.h"
@@ -119,6 +120,21 @@ constexpr float ThrowMinSpeed = 850.0f;
 constexpr float ThrowMaxSpeed = 2400.0f;
 constexpr const TCHAR* VNHSettingsSection = TEXT("/Script/VNHSimulator.VNHSettings");
 constexpr const TCHAR* VNHSettingsSaveSlot = TEXT("PlayerSettings");
+
+void ConfigureVNHFullScreenLobbyViewportSlot(UVNHLobbyMenuWidget* InLobbyMenu)
+{
+	if (!InLobbyMenu)
+	{
+		return;
+	}
+
+	// SetPositionInViewport and SetDesiredSizeInViewport both reset anchors to
+	// top-left. Clear their offsets first, then apply stretch anchors last.
+	InLobbyMenu->SetAlignmentInViewport(FVector2D::ZeroVector);
+	InLobbyMenu->SetPositionInViewport(FVector2D::ZeroVector, false);
+	InLobbyMenu->SetDesiredSizeInViewport(FVector2D::ZeroVector);
+	InLobbyMenu->SetAnchorsInViewport(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
+}
 
 bool IsPairPressureInputTestWorld(const UWorld* World)
 {
@@ -1667,6 +1683,11 @@ void AVNHPlayerController::RequestLobbyTeam(int32 RequestedTeamId)
 	ServerSetLobbyTeam(RequestedTeamId);
 }
 
+void AVNHPlayerController::RequestMascotSelection(FName RequestedMascotRowName)
+{
+	ServerSetMascotSelection(RequestedMascotRowName);
+}
+
 void AVNHPlayerController::RequestPreRoundCustomizationReady()
 {
 	ServerSetPreRoundCustomizationReady();
@@ -1864,6 +1885,37 @@ void AVNHPlayerController::ServerSetLobbyTeam_Implementation(int32 RequestedTeam
 	}
 
 	LobbyPlayerState->SetLobbyTeamId(RequestedTeamId);
+}
+
+void AVNHPlayerController::ServerSetMascotSelection_Implementation(FName RequestedMascotRowName)
+{
+	AVNHPlayerState* MascotPlayerState = GetPlayerState<AVNHPlayerState>();
+	if (!MascotPlayerState
+		|| RequestedMascotRowName.IsNone()
+		|| !MascotPlayerState->GetClass()->ImplementsInterface(UPPMascotSelectionInterface::StaticClass()))
+	{
+		return;
+	}
+
+	UDataTable* MascotTable = LoadObject<UDataTable>(
+		nullptr,
+		TEXT("/Game/PairPressure/Data/DT_MascotAnimations.DT_MascotAnimations"));
+	const FPPMascotAnimationRow* RequestedMascotRow = MascotTable
+		? MascotTable->FindRow<FPPMascotAnimationRow>(
+			RequestedMascotRowName,
+			TEXT("Validate mascot selection"),
+			false)
+		: nullptr;
+	if (!RequestedMascotRow || RequestedMascotRow->Mesh.IsNull() || RequestedMascotRow->AnimationBlueprint.IsNull())
+	{
+		ClientReceiveInteractionText(TEXT("That mascot is unavailable."));
+		return;
+	}
+
+	IPPMascotSelectionInterface::Execute_ApplySelectedMascotRowName(
+		MascotPlayerState,
+		RequestedMascotRowName);
+	ClientReceiveInteractionText(FString::Printf(TEXT("Mascot selected: %s"), *RequestedMascotRow->DisplayName.ToString()));
 }
 
 void AVNHPlayerController::ServerDebugPossessShopper_Implementation(int32 ShopperIndex, EVNHPlayerRole ForcedRole)
@@ -3095,14 +3147,7 @@ void AVNHPlayerController::ShowLobbyMenu()
 		{
 			ExistingLobbyMenu->AddToViewport(20000);
 		}
-		ExistingLobbyMenu->SetAnchorsInViewport(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
-		ExistingLobbyMenu->SetAlignmentInViewport(FVector2D::ZeroVector);
-		ExistingLobbyMenu->SetPositionInViewport(FVector2D::ZeroVector, false);
-		int32 ExistingViewportX = 0;
-		int32 ExistingViewportY = 0;
-		GetViewportSize(ExistingViewportX, ExistingViewportY);
-		const float ExistingViewportScale = FMath::Max(UWidgetLayoutLibrary::GetViewportScale(ExistingLobbyMenu), 0.01f);
-		ExistingLobbyMenu->SetDesiredSizeInViewport(FVector2D(FMath::Max(1, ExistingViewportX), FMath::Max(1, ExistingViewportY)) / ExistingViewportScale);
+		ConfigureVNHFullScreenLobbyViewportSlot(ExistingLobbyMenu);
 		ExistingLobbyMenu->SetVisibility(ESlateVisibility::Visible);
 		UE_LOG(LogVNH, Display, TEXT("LobbyMenu: existing native overlay restored."));
 		return;
@@ -3123,14 +3168,7 @@ void AVNHPlayerController::ShowLobbyMenu()
 	}
 
 	NewLobbyMenu->AddToViewport(20000);
-	NewLobbyMenu->SetAnchorsInViewport(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
-	NewLobbyMenu->SetAlignmentInViewport(FVector2D::ZeroVector);
-	NewLobbyMenu->SetPositionInViewport(FVector2D::ZeroVector, false);
-	int32 NewViewportX = 0;
-	int32 NewViewportY = 0;
-	GetViewportSize(NewViewportX, NewViewportY);
-	const float NewViewportScale = FMath::Max(UWidgetLayoutLibrary::GetViewportScale(NewLobbyMenu), 0.01f);
-	NewLobbyMenu->SetDesiredSizeInViewport(FVector2D(FMath::Max(1, NewViewportX), FMath::Max(1, NewViewportY)) / NewViewportScale);
+	ConfigureVNHFullScreenLobbyViewportSlot(NewLobbyMenu);
 	NewLobbyMenu->SetVisibility(ESlateVisibility::Visible);
 	LobbyMenuWidget = NewLobbyMenu;
 	bGameplayInputModeApplied = false;

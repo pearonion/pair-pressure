@@ -141,6 +141,9 @@ struct FPPMascotAnimationRow : public FTableRowBase
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Actions")
 	TSoftObjectPtr<UAnimSequence> Punch;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Presentation")
+	TSoftObjectPtr<UAnimSequence> Confirm;
 };
 
 UENUM(BlueprintType)

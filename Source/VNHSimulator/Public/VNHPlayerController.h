@@ -131,6 +131,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Lobby")
 	void RequestLobbyTeam(int32 RequestedTeamId);
 
+	UFUNCTION(BlueprintCallable, Category = "Pair Pressure|Mascot")
+	void RequestMascotSelection(FName RequestedMascotRowName);
+
 	UFUNCTION(BlueprintCallable, Category = "VNH|Customization")
 	void ApplySavedCharacterCustomization();
 
@@ -178,6 +181,9 @@ public:
 
 	UFUNCTION(Server, Reliable)
 	void ServerSetLobbyTeam(int32 RequestedTeamId);
+
+	UFUNCTION(Server, Reliable)
+	void ServerSetMascotSelection(FName RequestedMascotRowName);
 
 	UFUNCTION(Server, Reliable)
 	void ServerSetCharacterCustomization(const FVNHCharacterCustomization& Customization);

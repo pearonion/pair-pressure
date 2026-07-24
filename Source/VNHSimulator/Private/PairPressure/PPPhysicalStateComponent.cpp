@@ -15,6 +15,7 @@
 #include "Net/UnrealNetwork.h"
 #include "PairPressure/PPGameplayTypes.h"
 #include "PairPressure/PPGrabberComponent.h"
+#include "PairPressure/Interfaces/PPMascotSelectionInterface.h"
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "PhysicsEngine/BodyInstance.h"
 #include "TimerManager.h"
@@ -1679,21 +1680,24 @@ void UPPPhysicalStateComponent::PlayGetUpAnimation()
 		nullptr,
 		TEXT("/Game/PairPressure/Data/DT_MascotAnimations.DT_MascotAnimations")))
 	{
-		if (const FPPMascotAnimationRow* PenguinRow = MascotAnimationTable->FindRow<FPPMascotAnimationRow>(
-			FName(TEXT("Penguin")),
+		const FName MascotRowName = OwnerCharacter->GetClass()->ImplementsInterface(UPPMascotSelectionInterface::StaticClass())
+			? IPPMascotSelectionInterface::Execute_GetSelectedMascotRowName(OwnerCharacter)
+			: FName(TEXT("Penguin"));
+		if (const FPPMascotAnimationRow* MascotRow = MascotAnimationTable->FindRow<FPPMascotAnimationRow>(
+			MascotRowName,
 			TEXT("Physical-state get-up"),
 			false))
 		{
 			const float SideUpAmount = LastRecoveryBodyRight.Z;
 			if (FMath::Abs(SideUpAmount) >= 0.45f)
 			{
-				GetUpAnimation = (SideUpAmount > 0.0f ? PenguinRow->GetUpLeft : PenguinRow->GetUpRight).LoadSynchronous();
+				GetUpAnimation = (SideUpAmount > 0.0f ? MascotRow->GetUpLeft : MascotRow->GetUpRight).LoadSynchronous();
 			}
 			else
 			{
 				// The table has a front recovery for both belly/back landings and
 				// side-specific recovery clips for lateral landings.
-				GetUpAnimation = PenguinRow->GetUpFront.LoadSynchronous();
+				GetUpAnimation = MascotRow->GetUpFront.LoadSynchronous();
 			}
 		}
 	}

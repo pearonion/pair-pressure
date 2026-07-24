@@ -2,18 +2,21 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerState.h"
+#include "PairPressure/Interfaces/PPMascotSelectionInterface.h"
 #include "VNHGameplayTypes.h"
 #include "VNHPlayerState.generated.h"
 
 UCLASS()
-class VNHSIMULATOR_API AVNHPlayerState : public APlayerState
+class VNHSIMULATOR_API AVNHPlayerState : public APlayerState, public IPPMascotSelectionInterface
 {
 	GENERATED_BODY()
 
 public:
 	AVNHPlayerState();
 
+	virtual void BeginPlay() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual void CopyProperties(APlayerState* TargetPlayerStateBase) override;
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Player")
 	EVNHPlayerRole GetRole() const { return AssignedRole; }
@@ -50,6 +53,9 @@ public:
 	void SetPreRoundReady(bool bNewPreRoundReady);
 	void SetLobbyTeamId(int32 NewLobbyTeamId);
 
+	virtual FName GetSelectedMascotRowName_Implementation() const override;
+	virtual void ApplySelectedMascotRowName_Implementation(FName InMascotRowName) override;
+
 private:
 	UPROPERTY(ReplicatedUsing = OnRep_AssignedRole, BlueprintReadOnly, Category = "VNH|Player", meta = (AllowPrivateAccess = "true"))
 	EVNHPlayerRole AssignedRole = EVNHPlayerRole::Unassigned;
@@ -63,6 +69,12 @@ private:
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "VNH|Lobby", meta = (AllowPrivateAccess = "true"))
 	int32 LobbyTeamId = INDEX_NONE;
 
+	UPROPERTY(ReplicatedUsing = OnRep_SelectedMascotRowName, BlueprintReadOnly, Category = "Pair Pressure|Mascot", meta = (AllowPrivateAccess = "true"))
+	FName SelectedMascotRowName = NAME_None;
+
 	UFUNCTION()
 	void OnRep_AssignedRole();
+
+	UFUNCTION()
+	void OnRep_SelectedMascotRowName();
 };

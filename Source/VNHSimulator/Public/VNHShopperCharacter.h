@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "PairPressure/Interfaces/PPMascotSelectionInterface.h"
 #include "PairPressure/PPGameplayTypes.h"
 #include "TimerManager.h"
 #include "VNHRoutineComponent.h"
@@ -30,7 +31,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FVNHActNaturalUsed, EVNHActNaturalRe
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FVNHPublicTestReceived, EVNHPublicTestType, TestType);
 
 UCLASS()
-class VNHSIMULATOR_API AVNHShopperCharacter : public ACharacter
+class VNHSIMULATOR_API AVNHShopperCharacter : public ACharacter, public IPPMascotSelectionInterface
 {
 	GENERATED_BODY()
 
@@ -46,6 +47,7 @@ public:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void PossessedBy(AController* NewController) override;
+	virtual void OnRep_PlayerState() override;
 	virtual void UnPossessed() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
@@ -78,6 +80,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Shopper")
 	USpringArmComponent* GetFollowCameraBoom() const { return FollowCameraBoom; }
+
+	virtual FName GetSelectedMascotRowName_Implementation() const override;
+	virtual void ApplySelectedMascotRowName_Implementation(FName InMascotRowName) override;
 
 	UFUNCTION(BlueprintPure, Category = "VNH|Shopper")
 	UCameraComponent* GetFollowCamera() const { return FollowCamera; }
@@ -212,6 +217,7 @@ private:
 	void UpdateCourseObstacleInteractions();
 	void UpdateRagdollCameraAnchor(float DeltaSeconds);
 	bool ShouldUsePairPressureMascotVisuals() const;
+	const FPPMascotAnimationRow* ResolveActiveMascotRow(const TCHAR* Context) const;
 	void UpdatePairPressureAnimationPresentation();
 	void PlayPairPressureMascotAnimation(UAnimSequence* Animation, bool bLooping);
 	void RestorePairPressureLocomotionAnimation();
@@ -338,6 +344,9 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Pair Pressure|Mascot", meta = (AllowPrivateAccess = "true"))
 	TSoftObjectPtr<UDataTable> MascotAnimationTable;
+
+	UPROPERTY(Transient)
+	FName ActiveMascotRowName = FName(TEXT("Penguin"));
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VNH|Shopper|AI", meta = (AllowPrivateAccess = "true", AllowedClasses = "/Script/StateTreeModule.StateTree"))
 	TSoftObjectPtr<UObject> ShopperStateTree = TSoftObjectPtr<UObject>(FSoftObjectPath(TEXT("/Game/AI/ST_Shoppers.ST_Shoppers")));

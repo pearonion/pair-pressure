@@ -23,6 +23,7 @@
 #include "PairPressure/PPPhysicalStateComponent.h"
 #include "PairPressure/PPPlayerActionRouterComponent.h"
 #include "PairPressure/PPTeamMemberComponent.h"
+#include "PairPressure/Interfaces/PPMascotSelectionInterface.h"
 #include "UObject/UnrealType.h"
 #include "VNHAlienLocomotionComponent.h"
 #include "VNHLog.h"
@@ -2330,12 +2331,15 @@ void UPPGrabberComponent::PlayGetUpFrontAnimation(ACharacter* RecoveringCharacte
 		nullptr,
 		TEXT("/Game/PairPressure/Data/DT_MascotAnimations.DT_MascotAnimations")))
 	{
-		if (const FPPMascotAnimationRow* PenguinRow = MascotAnimationTable->FindRow<FPPMascotAnimationRow>(
-			FName(TEXT("Penguin")),
+		const FName MascotRowName = RecoveringCharacter->GetClass()->ImplementsInterface(UPPMascotSelectionInterface::StaticClass())
+			? IPPMascotSelectionInterface::Execute_GetSelectedMascotRowName(RecoveringCharacter)
+			: FName(TEXT("Penguin"));
+		if (const FPPMascotAnimationRow* MascotRow = MascotAnimationTable->FindRow<FPPMascotAnimationRow>(
+			MascotRowName,
 			TEXT("Grab release get-up"),
 			false))
 		{
-			GetUpFrontAnimation = PenguinRow->GetUpFront.LoadSynchronous();
+			GetUpFrontAnimation = MascotRow->GetUpFront.LoadSynchronous();
 		}
 	}
 	if (!GetUpFrontAnimation)

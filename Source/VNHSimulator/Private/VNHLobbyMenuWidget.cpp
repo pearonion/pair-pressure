@@ -21,11 +21,19 @@
 #include "Components/SizeBoxSlot.h"
 #include "Components/Spacer.h"
 #include "Components/TextBlock.h"
+#include "Components/UniformGridPanel.h"
+#include "Components/UniformGridSlot.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "Animation/AnimSequence.h"
+#include "Engine/DataTable.h"
 #include "Engine/Font.h"
 #include "Engine/LocalPlayer.h"
+#include "Engine/SkeletalMesh.h"
 #include "Engine/Texture2D.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
@@ -36,6 +44,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "OnlineSubsystem.h"
 #include "OnlineSubsystemUtils.h"
+#include "PairPressure/Interfaces/PPMascotSelectionInterface.h"
+#include "PairPressure/PPMascotPreviewActor.h"
 #include "Styling/SlateBrush.h"
 #include "VNHGameInstance.h"
 #include "VNHGameState.h"
@@ -56,6 +66,38 @@ const FLinearColor LobbyOrange(1.0f, 0.42f, 0.02f, 1.0f);
 const FLinearColor LobbyBlue(0.02f, 0.38f, 0.88f, 1.0f);
 const FLinearColor LobbyGreen(0.12f, 0.62f, 0.20f, 1.0f);
 constexpr int32 DefaultLobbyMaxPlayers = 8;
+constexpr float LobbyMascotIdleSettleSeconds = 0.25f;
+constexpr float LobbyMascotNonRaccoonPortraitYOffset = 14.0f;
+constexpr float LobbyMascotNonRaccoonPreviewYOffset = 10.0f;
+
+float GetLobbyMascotPortraitYOffset(FName MascotRowName)
+{
+	return MascotRowName == FName(TEXT("Raccoon"))
+		? 0.0f
+		: LobbyMascotNonRaccoonPortraitYOffset;
+}
+
+float GetLobbyMascotPreviewYOffset(FName MascotRowName)
+{
+	return MascotRowName == FName(TEXT("Raccoon"))
+		? 0.0f
+		: LobbyMascotNonRaccoonPreviewYOffset;
+}
+
+UAnimSequence* LoadLobbyMascotConfirmFallback(FName MascotRowName)
+{
+	const TMap<FName, FString> FallbackPaths = {
+		{FName(TEXT("Penguin")), TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_happy.AS_Penguin_UE_Anim_happy")},
+		{FName(TEXT("Dog")), TEXT("/Game/CuteChubbyDog/Dog/Animations/AS_Dog_UE_Anim_happy.AS_Dog_UE_Anim_happy")},
+		{FName(TEXT("Cat")), TEXT("/Game/CuteChubbyCat/Cat/Animations/AS_cat_UE_Anim_happy.AS_cat_UE_Anim_happy")},
+		{FName(TEXT("Fox")), TEXT("/Game/CuteChubbyFox/Fox/Animations/AS_Fox_UE_Anim_happy.AS_Fox_UE_Anim_happy")},
+		{FName(TEXT("Panda")), TEXT("/Game/CuteChubbyPanda/Panda/Animations/AS_Panda_UE_Anim_happy.AS_Panda_UE_Anim_happy")},
+		{FName(TEXT("Pig")), TEXT("/Game/CuteChubbyPig/Pig/Animations/AS_Pig_UE_Anim_happy.AS_Pig_UE_Anim_happy")},
+		{FName(TEXT("Raccoon")), TEXT("/Game/CuteChubbyRacoon/Raccoon/Animations/AS_Raccoon_Anim_happy.AS_Raccoon_Anim_happy")}
+	};
+	const FString* FallbackPath = FallbackPaths.Find(MascotRowName);
+	return FallbackPath ? LoadObject<UAnimSequence>(nullptr, **FallbackPath) : nullptr;
+}
 
 UFont* GetLobbyFont()
 {
@@ -356,8 +398,28 @@ void UVNHLobbyMenuWidget::NativeConstruct()
 
 void UVNHLobbyMenuWidget::NativeDestruct()
 {
+	if (GetWorld())
+	{
+		GetWorld()->GetTimerManager().ClearTimer(MascotConfirmTimerHandle);
+	}
+	DestroyMascotPreviewActor();
 	VNHLobbyPlayerRowSignatures.Remove(this);
 	Super::NativeDestruct();
+}
+
+void UPPMascotTileButton::Initialize(UVNHLobbyMenuWidget* InOwner, FName InMascotRowName)
+{
+	Owner = InOwner;
+	MascotRowName = InMascotRowName;
+	OnClicked.AddUniqueDynamic(this, &UPPMascotTileButton::HandleClicked);
+}
+
+void UPPMascotTileButton::HandleClicked()
+{
+	if (Owner)
+	{
+		Owner->SelectMascotPreview(MascotRowName);
+	}
 }
 
 void UVNHLobbyMenuWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
@@ -390,6 +452,11 @@ FReply UVNHLobbyMenuWidget::NativeOnKeyDown(const FGeometry& InGeometry, const F
 		HandleMascotClicked();
 		return FReply::Handled();
 	}
+	if (InKeyEvent.GetKey() == EKeys::Escape && MascotDialog.IsValid() && MascotDialog->GetVisibility() == ESlateVisibility::Visible)
+	{
+		SetMascotDialogVisible(false);
+		return FReply::Handled();
+	}
 	if (InKeyEvent.GetKey() == EKeys::Escape && MatchSetupDialog.IsValid() && MatchSetupDialog->GetVisibility() == ESlateVisibility::Visible)
 	{
 		SetMatchSetupDialogVisible(false);
@@ -405,6 +472,17 @@ FReply UVNHLobbyMenuWidget::NativeOnKeyDown(const FGeometry& InGeometry, const F
 
 FReply UVNHLobbyMenuWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
+	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton
+		&& MascotDialog.IsValid()
+		&& MascotDialog->GetVisibility() == ESlateVisibility::Visible
+		&& MascotPreviewImage.IsValid()
+		&& MascotPreviewImage->GetCachedGeometry().IsUnderLocation(InMouseEvent.GetScreenSpacePosition()))
+	{
+		bDraggingMascotPreview = true;
+		LastMascotDragScreenPosition = InMouseEvent.GetScreenSpacePosition();
+		return FReply::Handled().CaptureMouse(TakeWidget());
+	}
+
 	if (!bUsingDesignerLobbyHud && InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && CachedActionSize.X > 0.0f && CachedActionSize.Y > 0.0f)
 	{
 		const FVector2D LocalPosition = InGeometry.AbsoluteToLocal(InMouseEvent.GetScreenSpacePosition());
@@ -430,6 +508,29 @@ FReply UVNHLobbyMenuWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry,
 	}
 
 	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+}
+
+FReply UVNHLobbyMenuWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	if (bDraggingMascotPreview && InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+	{
+		bDraggingMascotPreview = false;
+		return FReply::Handled().ReleaseMouseCapture();
+	}
+	return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
+}
+
+FReply UVNHLobbyMenuWidget::NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	if (bDraggingMascotPreview && MascotPreviewActor)
+	{
+		const FVector2D CurrentScreenPosition = InMouseEvent.GetScreenSpacePosition();
+		const float DragDeltaX = CurrentScreenPosition.X - LastMascotDragScreenPosition.X;
+		LastMascotDragScreenPosition = CurrentScreenPosition;
+		MascotPreviewActor->AddPreviewYaw(DragDeltaX * 0.35f);
+		return FReply::Handled();
+	}
+	return Super::NativeOnMouseMove(InGeometry, InMouseEvent);
 }
 
 bool UVNHLobbyMenuWidget::HasDesignerLobbyHud() const
@@ -493,6 +594,7 @@ bool UVNHLobbyMenuWidget::BindDesignerLobbyHud()
 	MapJungleButton = Cast<UButton>(GetWidgetFromName(TEXT("MapJungleButton")));
 	MapPipeButton = Cast<UButton>(GetWidgetFromName(TEXT("MapPipeButton")));
 	PresetMapsSection = GetWidgetFromName(TEXT("PresetMapsSection"));
+	BindDesignerMascotDialog();
 
 	LobbyNameSlot = LobbyNameText.IsValid() ? Cast<UCanvasPanelSlot>(LobbyNameText->Slot) : nullptr;
 	LobbyStatusSlot = LobbyStatusText.IsValid() ? Cast<UCanvasPanelSlot>(LobbyStatusText->Slot) : nullptr;
@@ -529,6 +631,8 @@ bool UVNHLobbyMenuWidget::BindDesignerLobbyHud()
 	if (MapSkyButton.IsValid()) MapSkyButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleMapSkyClicked);
 	if (MapJungleButton.IsValid()) MapJungleButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleMapJungleClicked);
 	if (MapPipeButton.IsValid()) MapPipeButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleMapPipeClicked);
+	if (MascotBackButton.IsValid()) MascotBackButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleMascotBackClicked);
+	if (MascotConfirmButton.IsValid()) MascotConfirmButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleMascotConfirmClicked);
 	if (UButton* CloseInviteButton = Cast<UButton>(GetWidgetFromName(TEXT("CloseInviteButton"))))
 	{
 		CloseInviteButton->OnClicked.AddUniqueDynamic(this, &UVNHLobbyMenuWidget::HandleCloseInviteClicked);
@@ -545,10 +649,377 @@ bool UVNHLobbyMenuWidget::BindDesignerLobbyHud()
 	{
 		SetupDialog->SetVisibility(ESlateVisibility::Collapsed);
 	}
+	if (UBorder* SelectorDialog = MascotDialog.Get())
+	{
+		SelectorDialog->SetVisibility(ESlateVisibility::Collapsed);
+	}
 	ApplyLobbyHudVisibility();
 
 	UE_LOG(LogVNH, Display, TEXT("LobbyMenuWidget: bound designer WBP_LobbyMenu widgets."));
 	return true;
+}
+
+bool UVNHLobbyMenuWidget::BindDesignerMascotDialog()
+{
+	MascotDialog = Cast<UBorder>(GetWidgetFromName(TEXT("MascotDialog")));
+	MascotPreviewImage = Cast<UImage>(GetWidgetFromName(TEXT("MascotPreviewImage")));
+	MascotNameText = Cast<UTextBlock>(GetWidgetFromName(TEXT("MascotNameText")));
+	MascotGrid = Cast<UUniformGridPanel>(GetWidgetFromName(TEXT("MascotGrid")));
+	MascotGridScroll = Cast<UScrollBox>(GetWidgetFromName(TEXT("MascotGridScroll")));
+	MascotBackButton = Cast<UButton>(GetWidgetFromName(TEXT("MascotBackButton")));
+	MascotConfirmButton = Cast<UButton>(GetWidgetFromName(TEXT("MascotConfirmButton")));
+	return MascotDialog.IsValid()
+		&& MascotPreviewImage.IsValid()
+		&& MascotNameText.IsValid()
+		&& MascotGrid.IsValid()
+		&& MascotGridScroll.IsValid()
+		&& MascotBackButton.IsValid()
+		&& MascotConfirmButton.IsValid();
+}
+
+void UVNHLobbyMenuWidget::SetMascotDialogVisible(bool bVisible)
+{
+	UBorder* SelectorDialog = MascotDialog.Get();
+	if (!SelectorDialog)
+	{
+		SetStatus(NSLOCTEXT("VNH", "MascotDialogMissing", "Mascot selector UI is unavailable."));
+		return;
+	}
+
+	if (!bVisible)
+	{
+		if (GetWorld())
+		{
+			GetWorld()->GetTimerManager().ClearTimer(MascotConfirmTimerHandle);
+		}
+		bDraggingMascotPreview = false;
+		bMascotConfirmationPending = false;
+		DestroyMascotPreviewActor();
+		SelectorDialog->SetVisibility(ESlateVisibility::Collapsed);
+		return;
+	}
+
+	SetInviteDialogVisible(false);
+	SetMatchSetupDialogVisible(false);
+	RebuildMascotGrid();
+	SelectorDialog->SetVisibility(ESlateVisibility::Visible);
+}
+
+void UVNHLobbyMenuWidget::RebuildMascotGrid()
+{
+	UUniformGridPanel* Grid = MascotGrid.Get();
+	UImage* PreviewImage = MascotPreviewImage.Get();
+	UWorld* World = GetWorld();
+	if (!Grid || !PreviewImage || !WidgetTree || !World)
+	{
+		return;
+	}
+
+	Grid->ClearChildren();
+	Grid->SetMinDesiredSlotWidth(220.0f);
+	Grid->SetMinDesiredSlotHeight(220.0f);
+	MascotGridRowNames.Reset();
+	MascotCheckmarks.Reset();
+
+	ConfirmedMascotRowName = FName(TEXT("Penguin"));
+	if (const AVNHPlayerState* MascotPlayerState = GetOwningPlayer()
+			? GetOwningPlayer()->GetPlayerState<AVNHPlayerState>()
+			: nullptr;
+		MascotPlayerState && MascotPlayerState->GetClass()->ImplementsInterface(UPPMascotSelectionInterface::StaticClass()))
+	{
+		ConfirmedMascotRowName = IPPMascotSelectionInterface::Execute_GetSelectedMascotRowName(MascotPlayerState);
+	}
+
+	UDataTable* MascotTable = LoadObject<UDataTable>(
+		nullptr,
+		TEXT("/Game/PairPressure/Data/DT_MascotAnimations.DT_MascotAnimations"));
+	if (!MascotTable)
+	{
+		return;
+	}
+
+	if (!MascotPreviewActor)
+	{
+		FActorSpawnParameters SpawnParameters;
+		SpawnParameters.ObjectFlags |= RF_Transient;
+		SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		MascotPreviewActor = World->SpawnActor<APPMascotPreviewActor>(
+			APPMascotPreviewActor::StaticClass(),
+			FVector(0.0f, 0.0f, -100000.0f),
+			FRotator::ZeroRotator,
+			SpawnParameters);
+	}
+	if (!MascotPreviewActor)
+	{
+		return;
+	}
+
+	MascotMainRenderTarget = NewObject<UTextureRenderTarget2D>(this, TEXT("MascotMainRenderTarget"));
+	MascotMainRenderTarget->RenderTargetFormat = ETextureRenderTargetFormat::RTF_RGBA16f;
+	MascotMainRenderTarget->ClearColor = FLinearColor::Transparent;
+	MascotMainRenderTarget->InitAutoFormat(1024, 1280);
+	MascotMainRenderTarget->UpdateResourceImmediate(true);
+	UMaterialInterface* MascotPreviewMaterial = LoadObject<UMaterialInterface>(
+		nullptr,
+		TEXT("/Game/PairPressure/UI/Materials/M_MascotPreviewAlpha.M_MascotPreviewAlpha"));
+	if (MascotPreviewMaterial)
+	{
+		PreviewImage->SetBrushFromMaterial(MascotPreviewMaterial);
+		PreviewImage->SetDesiredSizeOverride(FVector2D(1024.0f, 1280.0f));
+		if (UMaterialInstanceDynamic* MascotPreviewMaterialInstance = PreviewImage->GetDynamicMaterial())
+		{
+			MascotPreviewMaterialInstance->SetTextureParameterValue(
+				TEXT("MascotTexture"),
+				MascotMainRenderTarget);
+		}
+	}
+	else
+	{
+		FSlateBrush MainPreviewBrush;
+		MainPreviewBrush.SetResourceObject(MascotMainRenderTarget);
+		MainPreviewBrush.ImageSize = FVector2D(1024.0f, 1280.0f);
+		PreviewImage->SetBrush(MainPreviewBrush);
+	}
+
+	const TArray<FName> RowNames = MascotTable->GetRowNames();
+	for (const FName MascotRowName : RowNames)
+	{
+		const FPPMascotAnimationRow* MascotRow = MascotTable->FindRow<FPPMascotAnimationRow>(
+			MascotRowName,
+			TEXT("Build mascot selector grid"),
+			false);
+		if (!MascotRow || MascotRow->Mesh.IsNull() || MascotRow->Portrait.IsNull())
+		{
+			continue;
+		}
+
+		UTexture2D* PortraitTexture = MascotRow->Portrait.LoadSynchronous();
+		if (!PortraitTexture)
+		{
+			continue;
+		}
+
+		const int32 GridIndex = MascotGridRowNames.Num();
+		MascotGridRowNames.Add(MascotRowName);
+
+		UPPMascotTileButton* TileButton = WidgetTree->ConstructWidget<UPPMascotTileButton>(
+			UPPMascotTileButton::StaticClass(),
+			FName(*FString::Printf(TEXT("MascotTile_%s"), *MascotRowName.ToString())));
+		TileButton->Initialize(this, MascotRowName);
+		TileButton->SetStyle(ButtonStyle());
+
+		UOverlay* TileOverlay = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+		TileOverlay->SetClipping(EWidgetClipping::ClipToBounds);
+		UImage* TileImage = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		FSlateBrush TileBrush;
+		TileBrush.SetResourceObject(PortraitTexture);
+		TileBrush.ImageSize = FVector2D(220.0f, 220.0f);
+		TileImage->SetBrush(TileBrush);
+		TileImage->SetDesiredSizeOverride(FVector2D(220.0f, 220.0f));
+		TileImage->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+		TileImage->SetRenderScale(FVector2D(1.55f, 1.55f));
+		TileImage->SetRenderTranslation(
+			FVector2D(0.0f, GetLobbyMascotPortraitYOffset(MascotRowName)));
+		UOverlaySlot* ImageSlot = TileOverlay->AddChildToOverlay(TileImage);
+		ImageSlot->SetHorizontalAlignment(HAlign_Fill);
+		ImageSlot->SetVerticalAlignment(VAlign_Fill);
+
+		UTextBlock* Checkmark = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+		Checkmark->SetText(FText::FromString(TEXT("\u2713")));
+		Checkmark->SetFont(LobbyFont(34));
+		Checkmark->SetColorAndOpacity(FSlateColor(FLinearColor(0.72f, 1.0f, 0.08f, 1.0f)));
+		Checkmark->SetShadowOffset(FVector2D(2.0f, 2.0f));
+		Checkmark->SetShadowColorAndOpacity(FLinearColor::Black);
+		UOverlaySlot* CheckSlot = TileOverlay->AddChildToOverlay(Checkmark);
+		CheckSlot->SetHorizontalAlignment(HAlign_Right);
+		CheckSlot->SetVerticalAlignment(VAlign_Bottom);
+		CheckSlot->SetPadding(FMargin(0.0f, 0.0f, 8.0f, 5.0f));
+		MascotCheckmarks.Add(Checkmark);
+
+		TileButton->AddChild(TileOverlay);
+		UUniformGridSlot* GridSlot = Grid->AddChildToUniformGrid(
+			TileButton,
+			GridIndex / 4,
+			GridIndex % 4);
+		GridSlot->SetHorizontalAlignment(HAlign_Fill);
+		GridSlot->SetVerticalAlignment(VAlign_Fill);
+	}
+
+	CandidateMascotRowName = MascotGridRowNames.Contains(ConfirmedMascotRowName)
+		? ConfirmedMascotRowName
+		: (MascotGridRowNames.IsEmpty() ? NAME_None : MascotGridRowNames[0]);
+	RefreshMascotSelectionPresentation();
+	SelectMascotPreview(CandidateMascotRowName);
+}
+
+void UVNHLobbyMenuWidget::SelectMascotPreview(FName MascotRowName)
+{
+	if (bMascotConfirmationPending || MascotRowName.IsNone() || !MascotPreviewActor || !MascotMainRenderTarget)
+	{
+		return;
+	}
+
+	UDataTable* MascotTable = LoadObject<UDataTable>(
+		nullptr,
+		TEXT("/Game/PairPressure/Data/DT_MascotAnimations.DT_MascotAnimations"));
+	const FPPMascotAnimationRow* MascotRow = MascotTable
+		? MascotTable->FindRow<FPPMascotAnimationRow>(
+			MascotRowName,
+			TEXT("Preview mascot selection"),
+			false)
+		: nullptr;
+	if (!MascotRow)
+	{
+		return;
+	}
+
+	CandidateMascotRowName = MascotRowName;
+	if (UTextBlock* NameText = MascotNameText.Get())
+	{
+		NameText->SetText(MascotRow->DisplayName);
+	}
+	MascotPreviewActor->SetPreviewYaw(0.0f);
+	MascotPreviewActor->ConfigurePreview(
+		MascotRow->Mesh.LoadSynchronous(),
+		MascotRow->Idle.LoadSynchronous(),
+		MascotMainRenderTarget,
+		true,
+		true,
+		GetLobbyMascotPreviewYOffset(MascotRowName));
+	RefreshMascotSelectionPresentation();
+}
+
+void UVNHLobbyMenuWidget::RefreshMascotSelectionPresentation()
+{
+	for (int32 Index = 0; Index < MascotCheckmarks.Num(); ++Index)
+	{
+		if (UTextBlock* Checkmark = MascotCheckmarks[Index].Get())
+		{
+			const bool bIsConfirmed = MascotGridRowNames.IsValidIndex(Index)
+				&& MascotGridRowNames[Index] == ConfirmedMascotRowName;
+			Checkmark->SetVisibility(bIsConfirmed ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		}
+	}
+}
+
+void UVNHLobbyMenuWidget::HandleMascotBackClicked()
+{
+	if (!bMascotConfirmationPending)
+	{
+		SetMascotDialogVisible(false);
+	}
+}
+
+void UVNHLobbyMenuWidget::HandleMascotConfirmClicked()
+{
+	if (bMascotConfirmationPending || CandidateMascotRowName.IsNone() || !MascotPreviewActor || !MascotMainRenderTarget)
+	{
+		return;
+	}
+
+	UDataTable* MascotTable = LoadObject<UDataTable>(
+		nullptr,
+		TEXT("/Game/PairPressure/Data/DT_MascotAnimations.DT_MascotAnimations"));
+	const FPPMascotAnimationRow* MascotRow = MascotTable
+		? MascotTable->FindRow<FPPMascotAnimationRow>(
+			CandidateMascotRowName,
+			TEXT("Confirm mascot selection"),
+			false)
+		: nullptr;
+	if (!MascotRow)
+	{
+		return;
+	}
+
+	bMascotConfirmationPending = true;
+	ConfirmedMascotRowName = CandidateMascotRowName;
+	RefreshMascotSelectionPresentation();
+	if (UButton* ConfirmButton = MascotConfirmButton.Get())
+	{
+		ConfirmButton->SetIsEnabled(false);
+	}
+
+	UAnimSequence* ConfirmAnimation = MascotRow->Confirm.LoadSynchronous();
+	if (!ConfirmAnimation)
+	{
+		ConfirmAnimation = LoadLobbyMascotConfirmFallback(CandidateMascotRowName);
+	}
+	const float ConfirmationSeconds = ConfirmAnimation
+		? FMath::Max(0.15f, ConfirmAnimation->GetPlayLength())
+		: 0.35f;
+	MascotPreviewActor->ConfigurePreview(
+		MascotRow->Mesh.LoadSynchronous(),
+		ConfirmAnimation ? ConfirmAnimation : MascotRow->Idle.LoadSynchronous(),
+		MascotMainRenderTarget,
+		false,
+		true,
+		GetLobbyMascotPreviewYOffset(CandidateMascotRowName));
+	GetWorld()->GetTimerManager().SetTimer(
+		MascotConfirmTimerHandle,
+		this,
+		&UVNHLobbyMenuWidget::FinishMascotConfirmation,
+		ConfirmationSeconds,
+		false);
+}
+
+void UVNHLobbyMenuWidget::FinishMascotConfirmation()
+{
+	UDataTable* MascotTable = LoadObject<UDataTable>(
+		nullptr,
+		TEXT("/Game/PairPressure/Data/DT_MascotAnimations.DT_MascotAnimations"));
+	const FPPMascotAnimationRow* MascotRow = MascotTable
+		? MascotTable->FindRow<FPPMascotAnimationRow>(
+			CandidateMascotRowName,
+			TEXT("Restore confirmed mascot idle preview"),
+			false)
+		: nullptr;
+	if (MascotRow && MascotPreviewActor && MascotMainRenderTarget)
+	{
+		MascotPreviewActor->ConfigurePreview(
+			MascotRow->Mesh.LoadSynchronous(),
+			MascotRow->Idle.LoadSynchronous(),
+			MascotMainRenderTarget,
+			true,
+			true,
+			GetLobbyMascotPreviewYOffset(CandidateMascotRowName));
+	}
+
+	if (GetWorld())
+	{
+		GetWorld()->GetTimerManager().SetTimer(
+			MascotConfirmTimerHandle,
+			this,
+			&UVNHLobbyMenuWidget::CompleteMascotConfirmation,
+			LobbyMascotIdleSettleSeconds,
+			false);
+		return;
+	}
+
+	CompleteMascotConfirmation();
+}
+
+void UVNHLobbyMenuWidget::CompleteMascotConfirmation()
+{
+	if (AVNHPlayerController* LobbyController = Cast<AVNHPlayerController>(GetOwningPlayer()))
+	{
+		LobbyController->RequestMascotSelection(CandidateMascotRowName);
+	}
+	if (UButton* ConfirmButton = MascotConfirmButton.Get())
+	{
+		ConfirmButton->SetIsEnabled(true);
+	}
+	bMascotConfirmationPending = false;
+	SetMascotDialogVisible(false);
+}
+
+void UVNHLobbyMenuWidget::DestroyMascotPreviewActor()
+{
+	if (MascotPreviewActor)
+	{
+		MascotPreviewActor->Destroy();
+		MascotPreviewActor = nullptr;
+	}
+	MascotMainRenderTarget = nullptr;
 }
 
 UCanvasPanel* UVNHLobbyMenuWidget::EnsureLobbyRootWidget()
@@ -1337,10 +1808,7 @@ void UVNHLobbyMenuWidget::HandleInviteClicked()
 void UVNHLobbyMenuWidget::HandleCustomizeClicked()
 {
 	UE_LOG(LogVNH, Display, TEXT("LobbyMenuWidget: Customize clicked."));
-	if (UVNHGameInstance* VNHGameInstance = GetGameInstance<UVNHGameInstance>())
-	{
-		VNHGameInstance->ShowCharacterCustomizer(true);
-	}
+	SetMascotDialogVisible(true);
 }
 
 void UVNHLobbyMenuWidget::HandleMatchSetupClicked()
@@ -1433,10 +1901,7 @@ void UVNHLobbyMenuWidget::HandleGreenTeamClicked()
 
 void UVNHLobbyMenuWidget::HandleMascotClicked()
 {
-	if (AVNHPlayerController* LobbyController = Cast<AVNHPlayerController>(GetOwningPlayer()))
-	{
-		LobbyController->ClientReceiveInteractionText(TEXT("Choose Your Mascot is coming in the next lobby phase."));
-	}
+	SetMascotDialogVisible(true);
 }
 
 void UVNHLobbyMenuWidget::HandleHideHudClicked()

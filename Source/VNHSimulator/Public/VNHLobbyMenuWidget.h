@@ -6,6 +6,7 @@
 #include "Interfaces/OnlineFriendsInterface.h"
 #include "Interfaces/OnlineSessionInterface.h"
 #include "PairPressure/PPGameplayTypes.h"
+#include "TimerManager.h"
 #include "VNHLobbyMenuWidget.generated.h"
 
 class UBorder;
@@ -15,11 +16,15 @@ class UCircularThrobber;
 class UEditableTextBox;
 class UHorizontalBox;
 class UImage;
+class UOverlay;
 class UScrollBox;
 class UTextBlock;
 class UTexture2D;
+class UTextureRenderTarget2D;
+class UUniformGridPanel;
 class UVerticalBox;
 class UVNHLobbyMenuWidget;
+class APPMascotPreviewActor;
 
 UCLASS()
 class VNHSIMULATOR_API UVNHLobbyFriendInviteButton : public UButton
@@ -40,6 +45,24 @@ private:
 };
 
 UCLASS()
+class VNHSIMULATOR_API UPPMascotTileButton : public UButton
+{
+	GENERATED_BODY()
+
+public:
+	void Initialize(UVNHLobbyMenuWidget* InOwner, FName InMascotRowName);
+
+private:
+	UFUNCTION()
+	void HandleClicked();
+
+	UPROPERTY(Transient)
+	TObjectPtr<UVNHLobbyMenuWidget> Owner;
+
+	FName MascotRowName = NAME_None;
+};
+
+UCLASS()
 class VNHSIMULATOR_API UVNHLobbyMenuWidget : public UUserWidget
 {
 	GENERATED_BODY()
@@ -51,8 +74,11 @@ public:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual FReply NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual FReply NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 
 	void InviteFriendById(const FString& FriendId);
+	void SelectMascotPreview(FName MascotRowName);
 
 private:
 	struct FSteamFriendEntry
@@ -87,6 +113,13 @@ private:
 	void HandleReadFriendsListComplete(int32 LocalUserNum, bool bWasSuccessful, const FString& ListName, const FString& ErrorString);
 	void RebuildFriendsList();
 	void SetInviteDialogVisible(bool bVisible);
+	bool BindDesignerMascotDialog();
+	void SetMascotDialogVisible(bool bVisible);
+	void RebuildMascotGrid();
+	void RefreshMascotSelectionPresentation();
+	void FinishMascotConfirmation();
+	void CompleteMascotConfirmation();
+	void DestroyMascotPreviewActor();
 	void SetStatus(const FText& NewStatusText);
 
 	UFUNCTION()
@@ -94,6 +127,12 @@ private:
 
 	UFUNCTION()
 	void HandleCustomizeClicked();
+
+	UFUNCTION()
+	void HandleMascotBackClicked();
+
+	UFUNCTION()
+	void HandleMascotConfirmClicked();
 
 	UFUNCTION()
 	void HandleMatchSetupClicked();
@@ -205,6 +244,21 @@ private:
 	TWeakObjectPtr<UEditableTextBox> SearchTextBox;
 	TWeakObjectPtr<UScrollBox> FriendsScrollBox;
 	TWeakObjectPtr<UTextBlock> InviteStatusText;
+	TWeakObjectPtr<UBorder> MascotDialog;
+	TWeakObjectPtr<UImage> MascotPreviewImage;
+	TWeakObjectPtr<UTextBlock> MascotNameText;
+	TWeakObjectPtr<UUniformGridPanel> MascotGrid;
+	TWeakObjectPtr<UScrollBox> MascotGridScroll;
+	TWeakObjectPtr<UButton> MascotBackButton;
+	TWeakObjectPtr<UButton> MascotConfirmButton;
+	TArray<TWeakObjectPtr<UTextBlock>> MascotCheckmarks;
+	TArray<FName> MascotGridRowNames;
+
+	UPROPERTY(Transient)
+	TObjectPtr<APPMascotPreviewActor> MascotPreviewActor;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextureRenderTarget2D> MascotMainRenderTarget;
 
 	IOnlineFriendsPtr ActiveFriendsInterface;
 	IOnlineSessionPtr ActiveSessionInterface;
@@ -215,6 +269,12 @@ private:
 	FVector2D CachedActionSize = FVector2D::ZeroVector;
 	bool bUsingDesignerLobbyHud = false;
 	bool bLobbyHudHidden = false;
+	bool bDraggingMascotPreview = false;
+	bool bMascotConfirmationPending = false;
+	FVector2D LastMascotDragScreenPosition = FVector2D::ZeroVector;
+	FName CandidateMascotRowName = NAME_None;
+	FName ConfirmedMascotRowName = NAME_None;
+	FTimerHandle MascotConfirmTimerHandle;
 	EPPGameMode PendingGameMode = EPPGameMode::BringYourIdiotHome;
 	EPPLobbyCourseType PendingCourseType = EPPLobbyCourseType::PresetMaps;
 	EPPPresetMap PendingPresetMap = EPPPresetMap::FactoryFiasco;

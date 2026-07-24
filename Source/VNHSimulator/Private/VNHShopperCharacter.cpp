@@ -298,9 +298,16 @@ void AVNHShopperCharacter::BeginPlay()
 	if (ShouldUsePairPressureMascotVisuals())
 	{
 		// Load before the first input so diving never waits on synchronous asset IO.
-		PairPressureDiveAnimation = LoadObject<UAnimSequence>(
-			nullptr,
-			TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_falls_forward.AS_Penguin_UE_falls_forward"));
+		if (const FPPMascotAnimationRow* ActiveMascotRow = ResolveActiveMascotRow(TEXT("Preload mascot dive")))
+		{
+			PairPressureDiveAnimation = ActiveMascotRow->Dive.LoadSynchronous();
+		}
+		if (!PairPressureDiveAnimation)
+		{
+			PairPressureDiveAnimation = LoadObject<UAnimSequence>(
+				nullptr,
+				TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_falls_forward.AS_Penguin_UE_falls_forward"));
+		}
 		PreloadPairPressureObstacleFallAnimations();
 		// Camera anchoring must follow physics every frame while the capsule is
 		// disabled and the mascot body is being propelled or carried.
@@ -352,6 +359,13 @@ void AVNHShopperCharacter::Tick(float DeltaSeconds)
 void AVNHShopperCharacter::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
+
+	if (const AVNHPlayerState* MascotPlayerState = GetPlayerState<AVNHPlayerState>();
+		MascotPlayerState && MascotPlayerState->GetClass()->ImplementsInterface(UPPMascotSelectionInterface::StaticClass()))
+	{
+		ApplySelectedMascotRowName_Implementation(
+			IPPMascotSelectionInterface::Execute_GetSelectedMascotRowName(MascotPlayerState));
+	}
 
 	if (HasAuthority() && NewController && NewController->IsPlayerController())
 	{
@@ -1398,6 +1412,18 @@ void AVNHShopperCharacter::HandleJumpInputPressed()
 	}
 }
 
+void AVNHShopperCharacter::OnRep_PlayerState()
+{
+	Super::OnRep_PlayerState();
+
+	if (const AVNHPlayerState* MascotPlayerState = GetPlayerState<AVNHPlayerState>();
+		MascotPlayerState && MascotPlayerState->GetClass()->ImplementsInterface(UPPMascotSelectionInterface::StaticClass()))
+	{
+		ApplySelectedMascotRowName_Implementation(
+			IPPMascotSelectionInterface::Execute_GetSelectedMascotRowName(MascotPlayerState));
+	}
+}
+
 void AVNHShopperCharacter::HandleJumpInputReleased()
 {
 	bJumpInputHeld = false;
@@ -1544,31 +1570,23 @@ UAnimSequence* AVNHShopperCharacter::ResolvePairPressureObstacleFallAnimation(
 	{
 		PairPressureObstacleFallAnimations.SetNum(PPShopperObstacleFallDirectionCount);
 	}
-	const UDataTable* LoadedMascotTable = MascotAnimationTable.IsNull()
-		? nullptr
-		: MascotAnimationTable.LoadSynchronous();
-	const FPPMascotAnimationRow* PenguinRow = LoadedMascotTable
-		? LoadedMascotTable->FindRow<FPPMascotAnimationRow>(
-			FName(TEXT("Penguin")),
-			TEXT("Obstacle fall presentation"),
-			false)
-		: nullptr;
+	const FPPMascotAnimationRow* ActiveMascotRow = ResolveActiveMascotRow(TEXT("Obstacle fall presentation"));
 	const TSoftObjectPtr<UAnimSequence>* RequestedAnimation = nullptr;
-	if (PenguinRow)
+	if (ActiveMascotRow)
 	{
 		switch (FallDirection)
 		{
 		case EPPObstacleFallDirection::Forward:
-			RequestedAnimation = &PenguinRow->ObstacleFallFront;
+			RequestedAnimation = &ActiveMascotRow->ObstacleFallFront;
 			break;
 		case EPPObstacleFallDirection::Backward:
-			RequestedAnimation = &PenguinRow->ObstacleFallBack;
+			RequestedAnimation = &ActiveMascotRow->ObstacleFallBack;
 			break;
 		case EPPObstacleFallDirection::Left:
-			RequestedAnimation = &PenguinRow->ObstacleFallLeft;
+			RequestedAnimation = &ActiveMascotRow->ObstacleFallLeft;
 			break;
 		case EPPObstacleFallDirection::Right:
-			RequestedAnimation = &PenguinRow->ObstacleFallRight;
+			RequestedAnimation = &ActiveMascotRow->ObstacleFallRight;
 			break;
 		default:
 			break;
@@ -1793,38 +1811,35 @@ UAnimSequence* AVNHShopperCharacter::ResolvePairPressureMascotAnimation(EPPGrabS
 			nullptr,
 			TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_climb_all.AS_Penguin_UE_climb_all"));
 	}
-	const UDataTable* LoadedMascotTable = MascotAnimationTable.IsNull() ? nullptr : MascotAnimationTable.LoadSynchronous();
-	const FPPMascotAnimationRow* PenguinRow = LoadedMascotTable
-		? LoadedMascotTable->FindRow<FPPMascotAnimationRow>(FName(TEXT("Penguin")), TEXT("Pair Pressure presentation"), false)
-		: nullptr;
-	if (!PenguinRow)
+	const FPPMascotAnimationRow* ActiveMascotRow = ResolveActiveMascotRow(TEXT("Pair Pressure presentation"));
+	if (!ActiveMascotRow)
 	{
 		return nullptr;
 	}
 	if (GrabState == EPPGrabState::HangingFromLedge)
 	{
-		return PenguinRow->Hanging.LoadSynchronous();
+		return ActiveMascotRow->Hanging.LoadSynchronous();
 	}
-	const TSoftObjectPtr<UAnimSequence>* RequestedAnimation = &PenguinRow->Grab;
+	const TSoftObjectPtr<UAnimSequence>* RequestedAnimation = &ActiveMascotRow->Grab;
 	switch (GrabState)
 	{
 	case EPPGrabState::Reaching:
-		RequestedAnimation = PenguinRow->Reach.IsNull() ? &PenguinRow->Grab : &PenguinRow->Reach;
+		RequestedAnimation = ActiveMascotRow->Reach.IsNull() ? &ActiveMascotRow->Grab : &ActiveMascotRow->Reach;
 		break;
 	case EPPGrabState::HoldingItem:
-		RequestedAnimation = PenguinRow->HoldItem.IsNull() ? &PenguinRow->OverheadThrow : &PenguinRow->HoldItem;
+		RequestedAnimation = ActiveMascotRow->HoldItem.IsNull() ? &ActiveMascotRow->OverheadThrow : &ActiveMascotRow->HoldItem;
 		break;
 	case EPPGrabState::GrabbingPlayer:
-		RequestedAnimation = PenguinRow->PlayerGrab.IsNull() ? &PenguinRow->Punch : &PenguinRow->PlayerGrab;
+		RequestedAnimation = ActiveMascotRow->PlayerGrab.IsNull() ? &ActiveMascotRow->Punch : &ActiveMascotRow->PlayerGrab;
 		break;
 	case EPPGrabState::MutualGrab:
-		RequestedAnimation = PenguinRow->MutualGrab.IsNull() ? &PenguinRow->Crouch : &PenguinRow->MutualGrab;
+		RequestedAnimation = ActiveMascotRow->MutualGrab.IsNull() ? &ActiveMascotRow->Crouch : &ActiveMascotRow->MutualGrab;
 		break;
 	case EPPGrabState::PushingObject:
-		RequestedAnimation = PenguinRow->Push.IsNull() ? &PenguinRow->Crouch : &PenguinRow->Push;
+		RequestedAnimation = ActiveMascotRow->Push.IsNull() ? &ActiveMascotRow->Crouch : &ActiveMascotRow->Push;
 		break;
 	case EPPGrabState::Releasing:
-		RequestedAnimation = PenguinRow->GrabRelease.IsNull() ? &PenguinRow->Throw : &PenguinRow->GrabRelease;
+		RequestedAnimation = ActiveMascotRow->GrabRelease.IsNull() ? &ActiveMascotRow->Throw : &ActiveMascotRow->GrabRelease;
 		break;
 	default:
 		break;
@@ -1890,13 +1905,10 @@ void AVNHShopperCharacter::HandlePairPressureGrabStateChanged(EPPGrabState NewGr
 
 void AVNHShopperCharacter::HandlePairPressureGrabFailed()
 {
-	const UDataTable* LoadedMascotTable = MascotAnimationTable.IsNull() ? nullptr : MascotAnimationTable.LoadSynchronous();
-	const FPPMascotAnimationRow* PenguinRow = LoadedMascotTable
-		? LoadedMascotTable->FindRow<FPPMascotAnimationRow>(FName(TEXT("Penguin")), TEXT("Failed grab presentation"), false)
-		: nullptr;
+	const FPPMascotAnimationRow* ActiveMascotRow = ResolveActiveMascotRow(TEXT("Failed grab presentation"));
 	bPairPressureActionPresentationActive = true;
-	PlayPairPressureMascotAnimation(PenguinRow
-		? (PenguinRow->FailedGrab.IsNull() ? PenguinRow->HitFront : PenguinRow->FailedGrab).LoadSynchronous()
+	PlayPairPressureMascotAnimation(ActiveMascotRow
+		? (ActiveMascotRow->FailedGrab.IsNull() ? ActiveMascotRow->HitFront : ActiveMascotRow->FailedGrab).LoadSynchronous()
 		: nullptr, false);
 	GetWorldTimerManager().SetTimer(PairPressurePresentationTimerHandle, this, &AVNHShopperCharacter::FinishPairPressureActionPresentation, 0.30f, false);
 }
@@ -2005,10 +2017,7 @@ void AVNHShopperCharacter::HandlePairPressureGrabReleasedPresentation(bool bDrop
 		return;
 	}
 
-	const UDataTable* LoadedMascotTable = MascotAnimationTable.IsNull() ? nullptr : MascotAnimationTable.LoadSynchronous();
-	const FPPMascotAnimationRow* PenguinRow = LoadedMascotTable
-		? LoadedMascotTable->FindRow<FPPMascotAnimationRow>(FName(TEXT("Penguin")), TEXT("Grab release presentation"), false)
-		: nullptr;
+	const FPPMascotAnimationRow* ActiveMascotRow = ResolveActiveMascotRow(TEXT("Grab release presentation"));
 	bPairPressureActionPresentationActive = true;
 	UAnimSequence* ReleaseAnimation = nullptr;
 	if (bLedgeClimb)
@@ -2017,11 +2026,11 @@ void AVNHShopperCharacter::HandlePairPressureGrabReleasedPresentation(bool bDrop
 			nullptr,
 			TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_climb_all.AS_Penguin_UE_climb_all"));
 	}
-	else if (PenguinRow)
+	else if (ActiveMascotRow)
 	{
 		const TSoftObjectPtr<UAnimSequence>& RequestedRelease = bDroppedItem
-			? (PenguinRow->ItemDrop.IsNull() ? PenguinRow->Throw : PenguinRow->ItemDrop)
-			: (PenguinRow->GrabRelease.IsNull() ? PenguinRow->Throw : PenguinRow->GrabRelease);
+			? (ActiveMascotRow->ItemDrop.IsNull() ? ActiveMascotRow->Throw : ActiveMascotRow->ItemDrop)
+			: (ActiveMascotRow->GrabRelease.IsNull() ? ActiveMascotRow->Throw : ActiveMascotRow->GrabRelease);
 		ReleaseAnimation = RequestedRelease.LoadSynchronous();
 	}
 	PlayPairPressureMascotAnimation(ReleaseAnimation, false);
@@ -2038,12 +2047,9 @@ void AVNHShopperCharacter::HandlePairPressureGrabReleasedPresentation(bool bDrop
 
 void AVNHShopperCharacter::HandlePairPressureGrabThrowPresentation(bool bChargedThrow)
 {
-	const UDataTable* LoadedMascotTable = MascotAnimationTable.IsNull() ? nullptr : MascotAnimationTable.LoadSynchronous();
-	const FPPMascotAnimationRow* PenguinRow = LoadedMascotTable
-		? LoadedMascotTable->FindRow<FPPMascotAnimationRow>(FName(TEXT("Penguin")), TEXT("Throw presentation"), false)
-		: nullptr;
-	UAnimSequence* ThrowAnimation = PenguinRow
-		? (bChargedThrow ? PenguinRow->OverheadThrow : PenguinRow->Throw).LoadSynchronous()
+	const FPPMascotAnimationRow* ActiveMascotRow = ResolveActiveMascotRow(TEXT("Throw presentation"));
+	UAnimSequence* ThrowAnimation = ActiveMascotRow
+		? (bChargedThrow ? ActiveMascotRow->OverheadThrow : ActiveMascotRow->Throw).LoadSynchronous()
 		: nullptr;
 	bPairPressureActionPresentationActive = true;
 	PlayPairPressureMascotAnimation(ThrowAnimation, false);
@@ -2345,6 +2351,60 @@ bool AVNHShopperCharacter::ShouldUsePairPressureMascotVisuals() const
 	return MapName.Contains(TEXT("Lobby")) || MapName.Contains(TEXT("PP_"));
 }
 
+FName AVNHShopperCharacter::GetSelectedMascotRowName_Implementation() const
+{
+	return ActiveMascotRowName.IsNone() ? FName(TEXT("Penguin")) : ActiveMascotRowName;
+}
+
+void AVNHShopperCharacter::ApplySelectedMascotRowName_Implementation(FName InMascotRowName)
+{
+	if (InMascotRowName.IsNone() || ActiveMascotRowName == InMascotRowName)
+	{
+		return;
+	}
+
+	const FName PreviousMascotRowName = ActiveMascotRowName;
+	ActiveMascotRowName = InMascotRowName;
+	if (!ResolveActiveMascotRow(TEXT("Apply mascot selection")))
+	{
+		ActiveMascotRowName = PreviousMascotRowName.IsNone()
+			? FName(TEXT("Penguin"))
+			: PreviousMascotRowName;
+		return;
+	}
+
+	PairPressureObstacleFallAnimations.Reset();
+	PairPressureDiveAnimation = nullptr;
+	ConfigureCharacterVisuals();
+	ApplyCharacterCustomization();
+	PreloadPairPressureObstacleFallAnimations();
+}
+
+const FPPMascotAnimationRow* AVNHShopperCharacter::ResolveActiveMascotRow(const TCHAR* Context) const
+{
+	const UDataTable* LoadedMascotTable = MascotAnimationTable.IsNull()
+		? nullptr
+		: MascotAnimationTable.LoadSynchronous();
+	if (!LoadedMascotTable)
+	{
+		return nullptr;
+	}
+
+	const FName MascotRowName = GetSelectedMascotRowName_Implementation();
+	if (const FPPMascotAnimationRow* MascotRow = LoadedMascotTable->FindRow<FPPMascotAnimationRow>(
+		MascotRowName,
+		Context,
+		false))
+	{
+		return MascotRow;
+	}
+
+	return LoadedMascotTable->FindRow<FPPMascotAnimationRow>(
+		FName(TEXT("Penguin")),
+		TEXT("Fallback Penguin mascot"),
+		false);
+}
+
 void AVNHShopperCharacter::ConfigureCharacterVisuals()
 {
 	USkeletalMeshComponent* MeshComponent = GetMesh();
@@ -2353,15 +2413,12 @@ void AVNHShopperCharacter::ConfigureCharacterVisuals()
 		return;
 	}
 
-	const UDataTable* LoadedMascotTable = MascotAnimationTable.IsNull() ? nullptr : MascotAnimationTable.LoadSynchronous();
-	const FPPMascotAnimationRow* PenguinMascotRow = LoadedMascotTable
-		? LoadedMascotTable->FindRow<FPPMascotAnimationRow>(FName(TEXT("Penguin")), TEXT("Configure default Penguin mascot"), false)
-		: nullptr;
+	const FPPMascotAnimationRow* ActiveMascotRow = ResolveActiveMascotRow(TEXT("Configure active mascot"));
 	const bool bForcePairPressureMascot = ShouldUsePairPressureMascotVisuals();
 
 	if (bForcePairPressureMascot || !MeshComponent->GetSkeletalMeshAsset())
 	{
-		USkeletalMesh* DefaultBodyMesh = PenguinMascotRow ? PenguinMascotRow->Mesh.LoadSynchronous() : nullptr;
+		USkeletalMesh* DefaultBodyMesh = ActiveMascotRow ? ActiveMascotRow->Mesh.LoadSynchronous() : nullptr;
 		if (!DefaultBodyMesh)
 		{
 			DefaultBodyMesh = LoadObject<USkeletalMesh>(nullptr, DefaultBodyMeshPath);
@@ -2381,7 +2438,7 @@ void AVNHShopperCharacter::ConfigureCharacterVisuals()
 
 	if (bForcePairPressureMascot || !MeshComponent->GetAnimClass())
 	{
-		UClass* MascotLocomotionAnimClass = PenguinMascotRow ? PenguinMascotRow->AnimationBlueprint.LoadSynchronous() : nullptr;
+		UClass* MascotLocomotionAnimClass = ActiveMascotRow ? ActiveMascotRow->AnimationBlueprint.LoadSynchronous() : nullptr;
 		if (!MascotLocomotionAnimClass)
 		{
 			MascotLocomotionAnimClass = LoadClass<UAnimInstance>(nullptr, DefaultMascotAnimBlueprintPath);
@@ -2402,7 +2459,7 @@ void AVNHShopperCharacter::ConfigureCharacterVisuals()
 
 	if (!MeshComponent->GetAnimClass())
 	{
-		UAnimationAsset* IdleAnimation = PenguinMascotRow ? PenguinMascotRow->Idle.LoadSynchronous() : nullptr;
+		UAnimationAsset* IdleAnimation = ActiveMascotRow ? ActiveMascotRow->Idle.LoadSynchronous() : nullptr;
 		if (!IdleAnimation)
 		{
 			IdleAnimation = LoadObject<UAnimationAsset>(nullptr, DefaultMascotIdleAnimPath);
