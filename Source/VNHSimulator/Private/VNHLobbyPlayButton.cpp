@@ -37,7 +37,7 @@ AVNHLobbyPlayButton::AVNHLobbyPlayButton()
 	PromptText->SetRelativeRotation(FRotator(0.0f, 180.0f, 0.0f));
 	PromptText->SetHorizontalAlignment(EHTA_Center);
 	PromptText->SetVerticalAlignment(EVRTA_TextCenter);
-	PromptText->SetText(FText::FromString(TEXT("HOST START\nHOLD E")));
+	PromptText->SetText(FText::FromString(TEXT("HOST START")));
 	PromptText->SetTextRenderColor(FColor(0, 255, 235));
 	PromptText->SetWorldSize(32.0f);
 

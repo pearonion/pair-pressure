@@ -8,6 +8,7 @@
 
 class UInputAction;
 class UInputMappingContext;
+class UImage;
 class UAnimMontage;
 class UDataTable;
 class UMaterialInterface;
@@ -109,6 +110,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "VNH|Interaction")
 	void RequestInteract();
+
+	UFUNCTION(BlueprintCallable, Category = "VNH|Input")
+	void RefreshRuntimeInputMappings();
 
 	UFUNCTION(BlueprintCallable, Category = "VNH|Interaction")
 	void MarkFocusedShopper();
@@ -312,6 +316,7 @@ private:
 	void EnsureMarkedSuspectsWidget();
 	void EnsureComposureWidget();
 	void EnsurePairPressureHUD();
+	void UpdatePairPressureInputPrompts(float DeltaTime);
 	void RemoveComposureWidget();
 	void BindRoleHudActionButtons();
 	void BindRoleHudActionButton(FName ButtonName, FName HandlerName);
@@ -442,6 +447,7 @@ private:
 	TWeakObjectPtr<UWidget> RoleHudEveryonePointCooldownPanelWidget;
 	TWeakObjectPtr<UTextBlock> RoleHudEveryonePointCooldownTextBlock;
 	TWeakObjectPtr<UTextBlock> RoleHudActionHotkeyTextBlocks[6];
+	TWeakObjectPtr<UImage> RoleHudActionHotkeyImages[6];
 	TWeakObjectPtr<UWidget> RoleHudFartCooldownPanelWidget;
 	TWeakObjectPtr<UTextBlock> RoleHudFartCooldownTextBlock;
 	TArray<TWeakObjectPtr<AVNHShopperCharacter>> MarkedSuspects;
@@ -450,6 +456,9 @@ private:
 	TWeakObjectPtr<UWidget> MarkedSuspectsPanelWidget;
 	TWeakObjectPtr<UUserWidget> ComposureWidget;
 	TWeakObjectPtr<UUserWidget> PairPressureHUDWidget;
+	TWeakObjectPtr<UUserWidget> PairPressureControlHintWidget;
+	TWeakObjectPtr<UImage> PairPressureControlHintImages[6];
+	float PairPressurePromptRefreshAccumulator = 0.0f;
 	TWeakObjectPtr<UWidget> ComposurePanelWidget;
 	TWeakObjectPtr<UTextBlock> ComposureStateTextBlock;
 	TWeakObjectPtr<UTextBlock> ComposureValueTextBlock;

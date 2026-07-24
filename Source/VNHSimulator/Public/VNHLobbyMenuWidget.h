@@ -229,6 +229,7 @@ private:
 	TWeakObjectPtr<UWidget> PresetMapsSection;
 	TWeakObjectPtr<UBorder> LobbyStartPromptPanel;
 	TWeakObjectPtr<UTextBlock> LobbyStartPromptText;
+	TWeakObjectPtr<UImage> LobbyStartPromptKeyImage;
 	TWeakObjectPtr<UCircularThrobber> LobbyStartProgressCircle;
 	TWeakObjectPtr<UHorizontalBox> PingBarsBox;
 	TWeakObjectPtr<UVerticalBox> PlayerRowsBox;

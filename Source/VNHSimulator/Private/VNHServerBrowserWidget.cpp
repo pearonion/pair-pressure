@@ -408,6 +408,10 @@ void UVNHServerBrowserWidget::NativeConstruct()
 	UpdateSortHeaderLabels();
 	RebuildVisibleEntries();
 	SetStatus(NSLOCTEXT("VNH", "ServerBrowserReady", "Showing example servers. Click REFRESH to search for Steam servers."));
+	if (RefreshButton && GetOwningPlayer())
+	{
+		RefreshButton->SetUserFocus(GetOwningPlayer());
+	}
 	UE_LOG(LogVNH, Display, TEXT("ServerBrowser: constructed and ready."));
 }
 

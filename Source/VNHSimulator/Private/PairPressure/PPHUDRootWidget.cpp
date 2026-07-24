@@ -134,8 +134,8 @@ FPPHUDSnapshot UPPHUDRootWidget::BuildHUDSnapshot() const
 		Snapshot.bPartnerHome = PartnerTeam->IsHome();
 	}
 	Snapshot.InteractionPrompt = PhysicalStateComponent && PhysicalStateComponent->IsRagdolled()
-		? NSLOCTEXT("PairPressure", "RecoverPrompt", "CTRL  //  RECOVER")
-		: NSLOCTEXT("PairPressure", "AssistPrompt", "E  //  HOLD TO ASSIST  •  CTRL  //  DIVE");
+		? NSLOCTEXT("PairPressure", "RecoverPrompt", "RECOVER")
+		: NSLOCTEXT("PairPressure", "AssistPrompt", "HOLD TO ASSIST  //  DIVE  //  GRAB");
 	return Snapshot;
 }
 

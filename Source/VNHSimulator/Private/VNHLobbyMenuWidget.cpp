@@ -49,6 +49,7 @@
 #include "Styling/SlateBrush.h"
 #include "VNHGameInstance.h"
 #include "VNHGameState.h"
+#include "VNHInputPromptLibrary.h"
 #include "VNHLog.h"
 #include "VNHPlayerController.h"
 #include "VNHPlayerState.h"
@@ -382,6 +383,18 @@ void UVNHLobbyMenuWidget::NativeConstruct()
 	Super::NativeConstruct();
 	SetIsFocusable(true);
 	bUsingDesignerLobbyHud = BindDesignerLobbyHud();
+	if (APlayerController* OwningPlayerController = GetOwningPlayer())
+	{
+		UButton* InitialFocusButton = PrimaryActionButton.Get();
+		if (!InitialFocusButton)
+		{
+			InitialFocusButton = MatchSetupButton.Get();
+		}
+		if (InitialFocusButton)
+		{
+			InitialFocusButton->SetUserFocus(OwningPlayerController);
+		}
+	}
 	if (!bUsingDesignerLobbyHud)
 	{
 		const FVector2D ViewportSize = UWidgetLayoutLibrary::GetViewportSize(this);
@@ -562,6 +575,7 @@ bool UVNHLobbyMenuWidget::BindDesignerLobbyHud()
 	PingText = Cast<UTextBlock>(GetWidgetFromName(TEXT("PingText")));
 	LobbyStartPromptPanel = Cast<UBorder>(GetWidgetFromName(TEXT("LobbyStartPromptPanel")));
 	LobbyStartPromptText = Cast<UTextBlock>(GetWidgetFromName(TEXT("LobbyStartPromptText")));
+	LobbyStartPromptKeyImage = Cast<UImage>(GetWidgetFromName(TEXT("LobbyStartPromptKeyImage")));
 	LobbyStartProgressCircle = Cast<UCircularThrobber>(GetWidgetFromName(TEXT("LobbyStartProgressCircle")));
 	PingBarsBox = Cast<UHorizontalBox>(GetWidgetFromName(TEXT("PingBarsBox")));
 	PlayerRowsBox = Cast<UVerticalBox>(GetWidgetFromName(TEXT("PlayerRowsBox")));
@@ -1132,7 +1146,7 @@ void UVNHLobbyMenuWidget::BuildLobbyHud()
 	CircleSlot->SetVerticalAlignment(VAlign_Center);
 	UVerticalBox* StartPromptTextStack = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("LobbyStartPromptTextStack"));
 	StartPromptTextStack->AddChildToVerticalBox(Text(StartPromptTextStack, TEXT("START GAME"), 24, Accent));
-	LobbyStartPromptText = Text(StartPromptTextStack, TEXT("HOLD E  0%"), 18, White);
+	LobbyStartPromptText = Text(StartPromptTextStack, TEXT("HOLD  0%"), 18, White);
 	StartPromptTextStack->AddChildToVerticalBox(LobbyStartPromptText.Get());
 	StartPromptRow->AddChildToHorizontalBox(StartPromptTextStack)->SetVerticalAlignment(VAlign_Center);
 
@@ -1321,7 +1335,28 @@ void UVNHLobbyMenuWidget::UpdateLobbyStartPrompt()
 	const float Progress = VNHPlayerController->GetLobbyStartHoldProgress();
 	if (UTextBlock* PromptText = LobbyStartPromptText.Get())
 	{
-		PromptText->SetText(FText::FromString(FString::Printf(TEXT("HOLD E  %.0f%%"), Progress * 100.0f)));
+		PromptText->SetText(FText::FromString(FString::Printf(TEXT("HOLD  %.0f%%"), Progress * 100.0f)));
+	}
+	if (UImage* PromptKeyImage = LobbyStartPromptKeyImage.Get())
+	{
+		const bool bGamepadPrompts =
+			UVNHInputPromptLibrary::ShouldUseGamepadPrompts(VNHPlayerController);
+		const FKey InteractKey = UVNHInputPromptLibrary::GetPrimaryActionKey(
+			TEXT("VNH_Interact"),
+			bGamepadPrompts);
+		const EVNHInputPromptFamily PromptFamily = bGamepadPrompts
+			? UVNHInputPromptLibrary::GetPromptFamily(VNHPlayerController)
+			: EVNHInputPromptFamily::KeyboardMouse;
+		if (UTexture2D* PromptTexture =
+			UVNHInputPromptLibrary::GetKeyIcon(InteractKey, PromptFamily))
+		{
+			PromptKeyImage->SetBrushFromTexture(PromptTexture, true);
+			PromptKeyImage->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+		else
+		{
+			PromptKeyImage->SetVisibility(ESlateVisibility::Collapsed);
+		}
 	}
 	if (UCircularThrobber* ProgressCircle = LobbyStartProgressCircle.Get())
 	{

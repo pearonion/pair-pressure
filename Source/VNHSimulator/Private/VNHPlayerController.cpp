@@ -1,6 +1,7 @@
 #include "VNHPlayerController.h"
 
 #include "EnhancedInputComponent.h"
+#include "EnhancedInputLibrary.h"
 #include "EnhancedInputSubsystems.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimInstance.h"
@@ -11,6 +12,7 @@
 #include "Components/PostProcessComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/ProgressBar.h"
+#include "Components/Image.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/TextBlock.h"
 #include "Components/Button.h"
@@ -38,6 +40,7 @@
 #include "VNHCharacterCustomizerWidget.h"
 #include "VNHDebugHUD.h"
 #include "VNHGameInstance.h"
+#include "VNHInputPromptLibrary.h"
 #include "VNHLobbyPlayButton.h"
 #include "VNHLobbyMenuWidget.h"
 #include "VNHLog.h"
@@ -265,15 +268,9 @@ bool GetSavedInvertLook()
 	return GetCachedSavedRuntimeSettings().bInvertLook;
 }
 
-bool IsControllerInputPresetSelected()
+bool IsControllerInputPresetSelected(const APlayerController* PlayerController)
 {
-	FString InputPreset;
-	if (GConfig)
-	{
-		GConfig->GetString(VNHSettingsSection, TEXT("InputPreset"), InputPreset, GGameUserSettingsIni);
-	}
-
-	return InputPreset == TEXT("Controller");
+	return UVNHInputPromptLibrary::ShouldUseGamepadPrompts(PlayerController);
 }
 
 const TCHAR* ToUniversalActionText(EVNHUniversalAction Action)
@@ -611,6 +608,7 @@ void AVNHPlayerController::EnsureRoleHudWidget()
 			for (int32 SlotIndex = 0; SlotIndex < RoleHudActionSlotCount; ++SlotIndex)
 			{
 				RoleHudActionHotkeyTextBlocks[SlotIndex].Reset();
+				RoleHudActionHotkeyImages[SlotIndex].Reset();
 			}
 			RoleHudFartCooldownPanelWidget.Reset();
 			RoleHudFartCooldownTextBlock.Reset();
@@ -643,6 +641,7 @@ void AVNHPlayerController::EnsureRoleHudWidget()
 		for (int32 SlotIndex = 0; SlotIndex < RoleHudActionSlotCount; ++SlotIndex)
 		{
 			RoleHudActionHotkeyTextBlocks[SlotIndex].Reset();
+			RoleHudActionHotkeyImages[SlotIndex].Reset();
 		}
 		RoleHudFartCooldownPanelWidget.Reset();
 		RoleHudFartCooldownTextBlock.Reset();
@@ -831,18 +830,12 @@ void AVNHPlayerController::SetupInputComponent()
 	InputComponent->BindAction(TEXT("Jump"), IE_Released, this, &AVNHPlayerController::HandleJumpReleased);
 	InputComponent->BindAction(TEXT("Crouch"), IE_Pressed, this, &AVNHPlayerController::HandleCrouchPressed);
 	InputComponent->BindAction(TEXT("Crouch"), IE_Released, this, &AVNHPlayerController::HandleCrouchReleased);
-	InputComponent->BindKey(EKeys::One, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot1Pressed);
-	InputComponent->BindKey(EKeys::Gamepad_LeftThumbstick, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot1Pressed);
-	InputComponent->BindKey(EKeys::Two, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot2Pressed);
-	InputComponent->BindKey(EKeys::Gamepad_RightThumbstick, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot2Pressed);
-	InputComponent->BindKey(EKeys::Three, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot3Pressed);
-	InputComponent->BindKey(EKeys::Gamepad_FaceButton_Top, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot3Pressed);
-	InputComponent->BindKey(EKeys::Four, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot4Pressed);
-	InputComponent->BindKey(EKeys::Gamepad_FaceButton_Left, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot4Pressed);
-	InputComponent->BindKey(EKeys::Five, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot5Pressed);
-	InputComponent->BindKey(EKeys::Gamepad_Special_Left, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot5Pressed);
-	InputComponent->BindKey(EKeys::Six, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot6Pressed);
-	InputComponent->BindKey(EKeys::Gamepad_Special_Right, IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot6Pressed);
+	InputComponent->BindAction(TEXT("VNH_RoleAction1"), IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot1Pressed);
+	InputComponent->BindAction(TEXT("VNH_RoleAction2"), IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot2Pressed);
+	InputComponent->BindAction(TEXT("VNH_RoleAction3"), IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot3Pressed);
+	InputComponent->BindAction(TEXT("VNH_RoleAction4"), IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot4Pressed);
+	InputComponent->BindAction(TEXT("VNH_RoleAction5"), IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot5Pressed);
+	InputComponent->BindAction(TEXT("VNH_RoleAction6"), IE_Pressed, this, &AVNHPlayerController::HandleRoleHudActionSlot6Pressed);
 	InputComponent->BindAction(TEXT("VNH_PickUp"), IE_Pressed, this, &AVNHPlayerController::HandlePickUpPressed);
 	InputComponent->BindAction(TEXT("VNH_Drop"), IE_Pressed, this, &AVNHPlayerController::HandleDropPressed);
 	InputComponent->BindAction(TEXT("VNH_MarkSuspect"), IE_Pressed, this, &AVNHPlayerController::MarkFocusedShopper);
@@ -940,6 +933,99 @@ void AVNHPlayerController::EnsurePairPressureHUD()
 	}
 }
 
+void AVNHPlayerController::UpdatePairPressureInputPrompts(const float DeltaTime)
+{
+	PairPressurePromptRefreshAccumulator -= DeltaTime;
+	if (PairPressurePromptRefreshAccumulator > 0.0f)
+	{
+		return;
+	}
+	PairPressurePromptRefreshAccumulator = 0.35f;
+
+	EnsurePairPressureHUD();
+	UUserWidget* PairPressureHUD = PairPressureHUDWidget.Get();
+	if (!PairPressureHUD)
+	{
+		PairPressureControlHintWidget.Reset();
+		for (TWeakObjectPtr<UImage>& PromptImage : PairPressureControlHintImages)
+		{
+			PromptImage.Reset();
+		}
+		return;
+	}
+
+	if (!PairPressureControlHintWidget.IsValid())
+	{
+		PairPressureControlHintWidget = Cast<UUserWidget>(
+			PairPressureHUD->GetWidgetFromName(TEXT("ControlHintWidget")));
+	}
+	UUserWidget* ControlHintWidget = PairPressureControlHintWidget.Get();
+	if (!ControlHintWidget)
+	{
+		return;
+	}
+
+	static const TCHAR* const PromptSuffixes[] =
+	{
+		TEXT("Move"),
+		TEXT("Jump"),
+		TEXT("Dive"),
+		TEXT("Grab"),
+		TEXT("Throw"),
+		TEXT("Assist")
+	};
+	static const FName PromptActionNames[] =
+	{
+		NAME_None,
+		TEXT("Jump"),
+		TEXT("PP_Dive"),
+		TEXT("PP_Grab"),
+		TEXT("VNH_AlienActNatural"),
+		TEXT("PP_Assist")
+	};
+
+	const bool bGamepadPrompts =
+		UVNHInputPromptLibrary::ShouldUseGamepadPrompts(this);
+	const EVNHInputPromptFamily PromptFamily = bGamepadPrompts
+		? UVNHInputPromptLibrary::GetPromptFamily(this)
+		: EVNHInputPromptFamily::KeyboardMouse;
+	for (int32 PromptIndex = 0; PromptIndex < UE_ARRAY_COUNT(PromptSuffixes); ++PromptIndex)
+	{
+		if (!PairPressureControlHintImages[PromptIndex].IsValid())
+		{
+			PairPressureControlHintImages[PromptIndex] = Cast<UImage>(
+				ControlHintWidget->GetWidgetFromName(FName(FString::Printf(
+					TEXT("ControlHintImage_%s"),
+					PromptSuffixes[PromptIndex]))));
+		}
+
+		UImage* PromptImage = PairPressureControlHintImages[PromptIndex].Get();
+		if (!PromptImage)
+		{
+			continue;
+		}
+
+		const FKey BoundKey = PromptIndex == 0
+			? UVNHInputPromptLibrary::GetPrimaryAxisKey(
+				TEXT("VNH_AlienMoveForward"),
+				1.0f,
+				bGamepadPrompts)
+			: UVNHInputPromptLibrary::GetPrimaryActionKey(
+				PromptActionNames[PromptIndex],
+				bGamepadPrompts);
+		if (UTexture2D* PromptTexture =
+			UVNHInputPromptLibrary::GetKeyIcon(BoundKey, PromptFamily))
+		{
+			PromptImage->SetBrushFromTexture(PromptTexture, true);
+			PromptImage->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+		else
+		{
+			PromptImage->SetVisibility(ESlateVisibility::Collapsed);
+		}
+	}
+}
+
 void AVNHPlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
@@ -983,6 +1069,7 @@ void AVNHPlayerController::PlayerTick(float DeltaTime)
 	UpdateCursorReticleAndHeadLook(DeltaTime);
 	UpdateDebugDeckRuntimeLabels(DeltaTime);
 	UpdateMarkedSuspectsWidgetRuntimeLabels(DeltaTime);
+	UpdatePairPressureInputPrompts(DeltaTime);
 	UpdateThrowChargeIndicator();
 }
 
@@ -1097,7 +1184,7 @@ void AVNHPlayerController::UpdateRoleHudActionHotkeyLabels()
 
 	const AVNHPlayerState* VNHPlayerState = GetPlayerState<AVNHPlayerState>();
 	const EVNHPlayerRole AssignedRole = VNHPlayerState ? VNHPlayerState->GetRole() : EVNHPlayerRole::Unassigned;
-	const bool bController = IsControllerInputPresetSelected();
+	const bool bController = IsControllerInputPresetSelected(this);
 	const bool bHunter = AssignedRole == EVNHPlayerRole::Hunter;
 	const TCHAR* const* ActiveActionSuffixes = bHunter ? HunterRoleHudActionSuffixes : RoleHudActionSuffixes;
 	const int32 VisibleSlotCount = bHunter || AssignedRole == EVNHPlayerRole::Alien ? RoleHudActionSlotCount : 5;
@@ -1108,6 +1195,11 @@ void AVNHPlayerController::UpdateRoleHudActionHotkeyLabels()
 		{
 			RoleHudActionHotkeyTextBlocks[SlotIndex] = Cast<UTextBlock>(Widget->GetWidgetFromName(
 				FName(FString::Printf(TEXT("ActionHotkeyText_%s"), ActiveActionSuffixes[SlotIndex]))));
+		}
+		if (!RoleHudActionHotkeyImages[SlotIndex].IsValid())
+		{
+			RoleHudActionHotkeyImages[SlotIndex] = Cast<UImage>(Widget->GetWidgetFromName(
+				FName(FString::Printf(TEXT("ActionHotkeyImage_%s"), ActiveActionSuffixes[SlotIndex]))));
 		}
 
 		if (UTextBlock* HotkeyText = RoleHudActionHotkeyTextBlocks[SlotIndex].Get())
@@ -1120,6 +1212,54 @@ void AVNHPlayerController::UpdateRoleHudActionHotkeyLabels()
 				HotkeyLabel = RoleHudControllerHotkeyLabels[SlotIndex];
 			}
 			HotkeyText->SetText(FText::FromString(FString(HotkeyLabel)));
+		}
+
+		if (UImage* HotkeyImage = RoleHudActionHotkeyImages[SlotIndex].Get())
+		{
+			const bool bShowSlot = SlotIndex < VisibleSlotCount;
+			const FName MappingName(*FString::Printf(TEXT("VNH_RoleAction%d"), SlotIndex + 1));
+			const FKey BoundKey = UVNHInputPromptLibrary::GetPrimaryActionKey(MappingName, bController);
+			const EVNHInputPromptFamily PromptFamily = bController
+				? UVNHInputPromptLibrary::GetPromptFamily(this)
+				: EVNHInputPromptFamily::KeyboardMouse;
+			UTexture2D* PromptTexture = bShowSlot
+				? UVNHInputPromptLibrary::GetKeyIcon(BoundKey, PromptFamily)
+				: nullptr;
+			if (PromptTexture)
+			{
+				HotkeyImage->SetBrushFromTexture(PromptTexture, true);
+				HotkeyImage->SetVisibility(ESlateVisibility::HitTestInvisible);
+				if (UTextBlock* HotkeyText = RoleHudActionHotkeyTextBlocks[SlotIndex].Get())
+				{
+					HotkeyText->SetVisibility(ESlateVisibility::Collapsed);
+				}
+			}
+			else
+			{
+				HotkeyImage->SetVisibility(ESlateVisibility::Collapsed);
+			}
+		}
+	}
+
+	if (UImage* ThrowHotkeyImage =
+		Cast<UImage>(Widget->GetWidgetFromName(TEXT("ActionHotkeyImage_Throw"))))
+	{
+		const FKey ThrowKey = UVNHInputPromptLibrary::GetPrimaryActionKey(
+			TEXT("VNH_AlienActNatural"),
+			bController);
+		const EVNHInputPromptFamily ThrowPromptFamily = bController
+			? UVNHInputPromptLibrary::GetPromptFamily(this)
+			: EVNHInputPromptFamily::KeyboardMouse;
+		if (UTexture2D* ThrowPromptTexture =
+			UVNHInputPromptLibrary::GetKeyIcon(ThrowKey, ThrowPromptFamily))
+		{
+			ThrowHotkeyImage->SetBrushFromTexture(ThrowPromptTexture, true);
+			ThrowHotkeyImage->SetVisibility(ESlateVisibility::HitTestInvisible);
+			if (UTextBlock* ThrowHotkeyText =
+				Cast<UTextBlock>(Widget->GetWidgetFromName(TEXT("ActionHotkeyText_Throw"))))
+			{
+				ThrowHotkeyText->SetVisibility(ESlateVisibility::Collapsed);
+			}
 		}
 	}
 }
@@ -2410,9 +2550,34 @@ void AVNHPlayerController::InitializePairPressureGrabInput()
 	if (!GrabInputMappingContext)
 	{
 		GrabInputMappingContext = NewObject<UInputMappingContext>(this, TEXT("IMC_PairPressureGrab_Runtime"));
-		GrabInputMappingContext->MapKey(GrabAction, EKeys::LeftMouseButton);
-		GrabInputMappingContext->MapKey(GrabAction, EKeys::Gamepad_RightTrigger);
 	}
+	RefreshRuntimeInputMappings();
+}
+
+void AVNHPlayerController::RefreshRuntimeInputMappings()
+{
+	UVNHInputPromptLibrary::RefreshPlayerInput(this);
+	if (!GrabInputMappingContext || !GrabAction)
+	{
+		return;
+	}
+
+	GrabInputMappingContext->UnmapAllKeysFromAction(GrabAction);
+	const FKey KeyboardGrabKey =
+		UVNHInputPromptLibrary::GetPrimaryActionKey(TEXT("PP_Grab"), false);
+	const FKey GamepadGrabKey =
+		UVNHInputPromptLibrary::GetPrimaryActionKey(TEXT("PP_Grab"), true);
+	if (KeyboardGrabKey.IsValid())
+	{
+		GrabInputMappingContext->MapKey(GrabAction, KeyboardGrabKey);
+	}
+	if (GamepadGrabKey.IsValid())
+	{
+		GrabInputMappingContext->MapKey(GrabAction, GamepadGrabKey);
+	}
+	UEnhancedInputLibrary::RequestRebuildControlMappingsUsingContext(
+		GrabInputMappingContext,
+		true);
 }
 
 void AVNHPlayerController::UpdatePairPressureGrabInputMapping()
@@ -2832,7 +2997,7 @@ void AVNHPlayerController::HandleThrowChargePressed()
 	{
 		bThrowChargeActive = true;
 		ThrowChargeStartedAtSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
-		ClientReceiveInteractionText(TEXT("Charging throw... release Q to throw."));
+		ClientReceiveInteractionText(TEXT("Charging throw... release to throw."));
 		return;
 	}
 
@@ -4077,14 +4242,14 @@ FString AVNHPlayerController::GetInteractionPromptText() const
 	if (FocusedLobbyPlayButton.IsValid())
 	{
 		return bLobbyStartHoldActive
-			? FString::Printf(TEXT("HOLD E // STARTING %.0f%%"), GetLobbyStartHoldProgress() * 100.0f)
-			: TEXT("HOLD E // START ROUND");
+			? FString::Printf(TEXT("STARTING %.0f%%"), GetLobbyStartHoldProgress() * 100.0f)
+			: TEXT("HOLD // START ROUND");
 	}
 
 	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
 	if (MapName.Contains(TEXT("Lobby")))
 	{
-		return IsLocalLobbyHost() ? TEXT("START CONSOLE // HOLD E") : FString();
+		return IsLocalLobbyHost() ? TEXT("START CONSOLE // HOLD") : FString();
 	}
 
 	if (const AVNHShopperCharacter* Shopper = TargetedShopper.Get())

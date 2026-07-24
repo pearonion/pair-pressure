@@ -9,7 +9,10 @@ class UCheckBox;
 class UComboBoxString;
 class USlider;
 class UTextBlock;
+class UVerticalBox;
 class UWidgetSwitcher;
+class UVNHInputBindingKeySelector;
+enum class EVNHInputPromptFamily : uint8;
 
 UCLASS()
 class VNHSIMULATOR_API UVNHSettingsDialogWidget : public UUserWidget
@@ -18,6 +21,7 @@ class VNHSIMULATOR_API UVNHSettingsDialogWidget : public UUserWidget
 
 public:
 	virtual void NativeConstruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 	UFUNCTION(BlueprintCallable, Category = "VNH|Settings")
 	void LoadSettings();
@@ -33,6 +37,8 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "VNH|Settings")
 	void ApplyMuteWhenUnfocusedSettings();
+
+	void HandleInputBindingSelected(UVNHInputBindingKeySelector* BindingSelector, FKey NewKey);
 
 protected:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
@@ -157,6 +163,16 @@ private:
 	void ApplyAudioSettings();
 	void ApplyVideoSettings();
 	void StyleComboBox(UComboBoxString* ComboBox) const;
+	void BuildInputBindingRows();
+	void RefreshInputBindingRows();
+	void AddInputBindingRow(
+		UVerticalBox* BindingList,
+		const FText& ActionLabel,
+		FName MappingName,
+		bool bAxisMapping,
+		float AxisScale,
+		bool bAllowKeyboard,
+		bool bAllowGamepad);
 
 	UFUNCTION()
 	void HandleAudioSliderChanged(float Value);
@@ -199,4 +215,10 @@ private:
 
 	UFUNCTION()
 	void HandleControllerLayoutChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UVNHInputBindingKeySelector>> InputBindingSelectors;
+
+	EVNHInputPromptFamily CachedPromptFamily;
+	float InputPromptRefreshAccumulator = 0.0f;
 };

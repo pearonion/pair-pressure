@@ -5,8 +5,16 @@
 #include "Components/Button.h"
 #include "Components/CheckBox.h"
 #include "Components/ComboBoxString.h"
+#include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
+#include "Components/Image.h"
+#include "Components/InputKeySelector.h"
+#include "Components/PanelWidget.h"
+#include "Components/SizeBox.h"
 #include "Components/Slider.h"
 #include "Components/TextBlock.h"
+#include "Components/VerticalBox.h"
+#include "Components/VerticalBoxSlot.h"
 #include "Components/WidgetSwitcher.h"
 #include "Engine/Engine.h"
 #include "Framework/Application/SlateApplication.h"
@@ -16,9 +24,14 @@
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundClass.h"
 #include "Sound/SoundMix.h"
+#include "Styling/CoreStyle.h"
 #include "Styling/SlateTypes.h"
 #include "UObject/UnrealType.h"
+#include "Blueprint/WidgetTree.h"
+#include "VNHInputBindingKeySelector.h"
+#include "VNHInputPromptLibrary.h"
 #include "VNHLog.h"
+#include "VNHPlayerController.h"
 
 namespace
 {
@@ -155,10 +168,11 @@ float BrightnessToDisplayGamma(float Brightness)
 void UVNHSettingsDialogWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+	SetIsFocusable(true);
 
 	PopulateComboBox(WindowModeCombo, {TEXT("Fullscreen"), TEXT("Windowed Fullscreen"), TEXT("Windowed")}, TEXT("Windowed Fullscreen"));
 	PopulateComboBox(QualityPresetCombo, {TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Epic")}, TEXT("High"));
-	PopulateComboBox(InputPresetCombo, {TEXT("Keyboard & Mouse"), TEXT("Controller")}, TEXT("Keyboard & Mouse"));
+	PopulateComboBox(InputPresetCombo, {TEXT("Auto"), TEXT("Keyboard & Mouse"), TEXT("Controller")}, TEXT("Auto"));
 	PopulateComboBox(KeyboardLayoutCombo, {TEXT("WASD"), TEXT("Arrow Keys"), TEXT("Left-Handed")}, TEXT("WASD"));
 	PopulateComboBox(ControllerLayoutCombo, {TEXT("Default"), TEXT("Southpaw"), TEXT("Legacy")}, TEXT("Default"));
 	StyleComboBox(WindowModeCombo);
@@ -234,7 +248,32 @@ void UVNHSettingsDialogWidget::NativeConstruct()
 
 	LoadSettings();
 	ApplySettings();
+	BuildInputBindingRows();
+	if (TabGameplayButton && GetOwningPlayer())
+	{
+		TabGameplayButton->SetUserFocus(GetOwningPlayer());
+	}
 	SetTab(0, NSLOCTEXT("VNH", "SettingsLoaded", "Settings loaded."));
+}
+
+void UVNHSettingsDialogWidget::NativeTick(const FGeometry& MyGeometry, const float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	InputPromptRefreshAccumulator += InDeltaTime;
+	if (InputPromptRefreshAccumulator < 0.35f)
+	{
+		return;
+	}
+
+	InputPromptRefreshAccumulator = 0.0f;
+	const EVNHInputPromptFamily CurrentPromptFamily =
+		UVNHInputPromptLibrary::GetPromptFamily(GetOwningPlayer());
+	if (CurrentPromptFamily != CachedPromptFamily)
+	{
+		CachedPromptFamily = CurrentPromptFamily;
+		RefreshInputBindingRows();
+		UpdateControlLabels();
+	}
 }
 
 void UVNHSettingsDialogWidget::LoadSettings()
@@ -341,7 +380,7 @@ void UVNHSettingsDialogWidget::LoadSettings()
 
 	GConfig->GetString(SettingsSection, TEXT("InputPreset"), StringValue, GGameUserSettingsIni);
 	StringValue = GetSettingsStringPropertyValue(SaveGame, TEXT("InputPreset"), StringValue);
-	SetSelectedOption(InputPresetCombo, StringValue, TEXT("Keyboard & Mouse"));
+	SetSelectedOption(InputPresetCombo, StringValue, TEXT("Auto"));
 	GConfig->GetString(SettingsSection, TEXT("KeyboardLayout"), StringValue, GGameUserSettingsIni);
 	StringValue = GetSettingsStringPropertyValue(SaveGame, TEXT("KeyboardLayout"), StringValue);
 	SetSelectedOption(KeyboardLayoutCombo, StringValue, TEXT("WASD"));
@@ -411,7 +450,7 @@ void UVNHSettingsDialogWidget::SaveSettings()
 		SetSettingsStringPropertyValue(SaveGame, TEXT("QualityPreset"), GetSelectedOption(QualityPresetCombo, TEXT("High")));
 		SetSettingsBoolPropertyValue(SaveGame, TEXT("VSync"), GetCheckBoxValue(VSyncCheckBox, false));
 		SetSettingsFloatPropertyValue(SaveGame, TEXT("Brightness"), GetSliderValue(BrightnessSlider, 0.5f));
-		SetSettingsStringPropertyValue(SaveGame, TEXT("InputPreset"), GetSelectedOption(InputPresetCombo, TEXT("Keyboard & Mouse")));
+		SetSettingsStringPropertyValue(SaveGame, TEXT("InputPreset"), GetSelectedOption(InputPresetCombo, TEXT("Auto")));
 		SetSettingsStringPropertyValue(SaveGame, TEXT("KeyboardLayout"), GetSelectedOption(KeyboardLayoutCombo, TEXT("WASD")));
 		SetSettingsStringPropertyValue(SaveGame, TEXT("ControllerLayout"), GetSelectedOption(ControllerLayoutCombo, TEXT("Default")));
 		SetSettingsBoolPropertyValue(SaveGame, TEXT("Subtitles"), GetCheckBoxValue(SubtitlesCheckBox, true));
@@ -429,7 +468,7 @@ void UVNHSettingsDialogWidget::SaveSettings()
 	GConfig->SetFloat(SettingsSection, TEXT("SfxVolume"), GetSliderValue(SfxVolumeSlider, 0.8f), GGameUserSettingsIni);
 	GConfig->SetBool(SettingsSection, TEXT("bMuteWhenUnfocused"), GetCheckBoxValue(MuteWhenUnfocusedCheckBox, true), GGameUserSettingsIni);
 	GConfig->SetFloat(SettingsSection, TEXT("Brightness"), GetSliderValue(BrightnessSlider, 0.5f), GGameUserSettingsIni);
-	GConfig->SetString(SettingsSection, TEXT("InputPreset"), *GetSelectedOption(InputPresetCombo, TEXT("Keyboard & Mouse")), GGameUserSettingsIni);
+	GConfig->SetString(SettingsSection, TEXT("InputPreset"), *GetSelectedOption(InputPresetCombo, TEXT("Auto")), GGameUserSettingsIni);
 	GConfig->SetString(SettingsSection, TEXT("KeyboardLayout"), *GetSelectedOption(KeyboardLayoutCombo, TEXT("WASD")), GGameUserSettingsIni);
 	GConfig->SetString(SettingsSection, TEXT("ControllerLayout"), *GetSelectedOption(ControllerLayoutCombo, TEXT("Default")), GGameUserSettingsIni);
 	GConfig->SetBool(SettingsSection, TEXT("bSubtitles"), GetCheckBoxValue(SubtitlesCheckBox, true), GGameUserSettingsIni);
@@ -600,10 +639,9 @@ void UVNHSettingsDialogWidget::SetTab(int32 TabIndex, const FText& StatusText)
 
 void UVNHSettingsDialogWidget::UpdateControlLabels()
 {
-	const FString InputPreset = GetSelectedOption(InputPresetCombo, TEXT("Keyboard & Mouse"));
 	const FString KeyboardLayout = GetSelectedOption(KeyboardLayoutCombo, TEXT("WASD"));
 	const FString ControllerLayout = GetSelectedOption(ControllerLayoutCombo, TEXT("Default"));
-	const bool bController = InputPreset == TEXT("Controller");
+	const bool bController = UVNHInputPromptLibrary::ShouldUseGamepadPrompts(GetOwningPlayer());
 	auto ResolveTextBlock = [this](TObjectPtr<UTextBlock>& CachedTextBlock, const FName WidgetName) -> UTextBlock*
 	{
 		if (!CachedTextBlock)
@@ -651,6 +689,262 @@ void UVNHSettingsDialogWidget::UpdateControlLabels()
 	{
 		TextBlock->SetText(FText::FromString(bController ? FString(TEXT("Xbox B / PS5 Circle")) : FString(TEXT("CTRL"))));
 	}
+}
+
+void UVNHSettingsDialogWidget::BuildInputBindingRows()
+{
+	if (!WidgetTree)
+	{
+		return;
+	}
+
+	UVerticalBox* ControlsPanelWidget =
+		Cast<UVerticalBox>(GetWidgetFromName(TEXT("ControlsPanel")));
+	if (!ControlsPanelWidget)
+	{
+		UE_LOG(LogVNH, Warning, TEXT("Settings: ControlsPanel is missing; bindable controls were not built."));
+		return;
+	}
+
+	if (InputBindingSelectors.Num() > 0)
+	{
+		RefreshInputBindingRows();
+		return;
+	}
+
+	// Keep the old Designer widgets intact, but hide the informational rows that
+	// the live binding grid supersedes.
+	const FName SupersededWidgetNames[] =
+	{
+		TEXT("ComboRow_KeyboardLayout"),
+		TEXT("ComboRow_ControllerLayout"),
+		TEXT("Row_HumanActions"),
+		TEXT("Row_AlienActions"),
+		TEXT("Row_Move"),
+		TEXT("Row_Interact"),
+		TEXT("Row_QuickChatKey"),
+		TEXT("Row_ActNatural"),
+		TEXT("Row_Jump"),
+		TEXT("Row_Crouch")
+	};
+	for (const FName SupersededWidgetName : SupersededWidgetNames)
+	{
+		if (UWidget* SupersededWidget = GetWidgetFromName(SupersededWidgetName))
+		{
+			SupersededWidget->SetVisibility(ESlateVisibility::Collapsed);
+		}
+	}
+	if (UTextBlock* InputPresetLabel =
+		Cast<UTextBlock>(GetWidgetFromName(TEXT("ComboLabel_InputPreset"))))
+	{
+		InputPresetLabel->SetText(NSLOCTEXT("VNH", "PromptDeviceLabel", "PROMPT DEVICE"));
+	}
+
+	UVerticalBox* BindingList =
+		Cast<UVerticalBox>(GetWidgetFromName(TEXT("ControlsBindingList")));
+	if (!BindingList)
+	{
+		BindingList = WidgetTree->ConstructWidget<UVerticalBox>(
+			UVerticalBox::StaticClass(),
+			TEXT("ControlsBindingList"));
+		ControlsPanelWidget->AddChildToVerticalBox(BindingList);
+	}
+
+	UHorizontalBox* HeaderRow = WidgetTree->ConstructWidget<UHorizontalBox>(
+		UHorizontalBox::StaticClass());
+	BindingList->AddChildToVerticalBox(HeaderRow);
+
+	auto AddHeaderCell = [this, HeaderRow](const FText& HeaderText, const float Width)
+	{
+		USizeBox* HeaderSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		HeaderSize->SetWidthOverride(Width);
+		UTextBlock* HeaderLabel = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+		HeaderLabel->SetText(HeaderText);
+		HeaderLabel->SetColorAndOpacity(FSlateColor(FLinearColor(0.0f, 0.92f, 0.78f, 1.0f)));
+		HeaderLabel->SetFont(FSlateFontInfo(
+			FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 14)));
+		HeaderSize->AddChild(HeaderLabel);
+		HeaderRow->AddChildToHorizontalBox(HeaderSize);
+	};
+	AddHeaderCell(NSLOCTEXT("VNH", "ControlHeaderAction", "ACTION"), 250.0f);
+	AddHeaderCell(NSLOCTEXT("VNH", "ControlHeaderKeyboard", "KEYBOARD / MOUSE"), 285.0f);
+	AddHeaderCell(NSLOCTEXT("VNH", "ControlHeaderController", "CONTROLLER"), 285.0f);
+
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindMoveForward", "MOVE FORWARD"), TEXT("VNH_AlienMoveForward"), true, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindMoveBackward", "MOVE BACKWARD"), TEXT("VNH_AlienMoveForward"), true, -1.0f, true, false);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindMoveLeft", "MOVE LEFT"), TEXT("VNH_AlienMoveRight"), true, -1.0f, true, false);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindMoveRight", "MOVE RIGHT"), TEXT("VNH_AlienMoveRight"), true, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindLookHorizontal", "LOOK HORIZONTAL"), TEXT("Turn Right / Left Gamepad"), true, 1.0f, false, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindLookVertical", "LOOK VERTICAL"), TEXT("Look Up / Down Gamepad"), true, 1.0f, false, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindJump", "JUMP / CLIMB"), TEXT("Jump"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindDive", "DIVE (JUMP + DIVE IN AIR)"), TEXT("PP_Dive"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindGrab", "GRAB / HOLD"), TEXT("PP_Grab"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindThrow", "THROW (HOLD TO CHARGE)"), TEXT("VNH_AlienActNatural"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindAssist", "ASSIST PARTNER"), TEXT("PP_Assist"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindInteract", "INTERACT"), TEXT("VNH_Interact"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindCrouch", "CROUCH"), TEXT("Crouch"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindSprint", "FAST WALK / SPRINT"), TEXT("VNH_AlienFastWalk"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindFocus", "TARGET FOCUS"), TEXT("VNH_TargetFocus"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindQuickChat", "QUICK CHAT"), TEXT("VNH_QuickChat"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindPickUp", "PICK UP"), TEXT("VNH_PickUp"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindDrop", "DROP"), TEXT("VNH_Drop"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindRole1", "ROLE ACTION 1"), TEXT("VNH_RoleAction1"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindRole2", "ROLE ACTION 2"), TEXT("VNH_RoleAction2"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindRole3", "ROLE ACTION 3"), TEXT("VNH_RoleAction3"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindRole4", "ROLE ACTION 4"), TEXT("VNH_RoleAction4"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindRole5", "ROLE ACTION 5"), TEXT("VNH_RoleAction5"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindRole6", "ROLE ACTION 6"), TEXT("VNH_RoleAction6"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindMark", "MARK SUSPECT"), TEXT("VNH_MarkSuspect"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindFakeAccuse", "FAKE ACCUSE"), TEXT("VNH_FakeAccuse"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindAccuse", "ACCUSE"), TEXT("VNH_Accuse"), false, 1.0f, true, true);
+
+	CachedPromptFamily = UVNHInputPromptLibrary::GetPromptFamily(GetOwningPlayer());
+	RefreshInputBindingRows();
+}
+
+void UVNHSettingsDialogWidget::AddInputBindingRow(
+	UVerticalBox* BindingList,
+	const FText& ActionLabel,
+	const FName MappingName,
+	const bool bAxisMapping,
+	const float AxisScale,
+	const bool bAllowKeyboard,
+	const bool bAllowGamepad)
+{
+	if (!BindingList || !WidgetTree)
+	{
+		return;
+	}
+
+	UHorizontalBox* BindingRow = WidgetTree->ConstructWidget<UHorizontalBox>(
+		UHorizontalBox::StaticClass());
+	if (UVerticalBoxSlot* BindingRowSlot = BindingList->AddChildToVerticalBox(BindingRow))
+	{
+		BindingRowSlot->SetPadding(FMargin(0.0f, 5.0f));
+	}
+
+	USizeBox* LabelSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+	LabelSize->SetWidthOverride(250.0f);
+	UTextBlock* LabelText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+	LabelText->SetText(ActionLabel);
+	LabelText->SetColorAndOpacity(FSlateColor(FLinearColor(0.92f, 0.90f, 0.85f, 1.0f)));
+	LabelText->SetFont(FSlateFontInfo(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"), 13)));
+	LabelSize->AddChild(LabelText);
+	BindingRow->AddChildToHorizontalBox(LabelSize);
+
+	auto AddBindingCell = [this, BindingRow, MappingName, bAxisMapping, AxisScale](
+		const bool bGamepadCell,
+		const bool bCellEnabled)
+	{
+		USizeBox* CellSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		CellSize->SetWidthOverride(285.0f);
+		UHorizontalBox* CellRow = WidgetTree->ConstructWidget<UHorizontalBox>(
+			UHorizontalBox::StaticClass());
+		CellSize->AddChild(CellRow);
+		BindingRow->AddChildToHorizontalBox(CellSize);
+
+		if (!bCellEnabled)
+		{
+			UTextBlock* NotApplicableText =
+				WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+			NotApplicableText->SetText(NSLOCTEXT("VNH", "BindingNotApplicable", "-"));
+			NotApplicableText->SetColorAndOpacity(
+				FSlateColor(FLinearColor(0.30f, 0.33f, 0.36f, 1.0f)));
+			CellRow->AddChildToHorizontalBox(NotApplicableText);
+			return;
+		}
+
+		USizeBox* IconSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		IconSize->SetWidthOverride(42.0f);
+		IconSize->SetHeightOverride(42.0f);
+		UImage* PromptImage = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		IconSize->AddChild(PromptImage);
+		if (UHorizontalBoxSlot* IconSlot = CellRow->AddChildToHorizontalBox(IconSize))
+		{
+			IconSlot->SetPadding(FMargin(0.0f, 0.0f, 8.0f, 0.0f));
+			IconSlot->SetVerticalAlignment(VAlign_Center);
+		}
+
+		UVNHInputBindingKeySelector* BindingSelector =
+			WidgetTree->ConstructWidget<UVNHInputBindingKeySelector>(
+				UVNHInputBindingKeySelector::StaticClass());
+		if (UHorizontalBoxSlot* SelectorSlot =
+			CellRow->AddChildToHorizontalBox(BindingSelector))
+		{
+			SelectorSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			SelectorSlot->SetVerticalAlignment(VAlign_Center);
+		}
+		BindingSelector->InitializeBinding(
+			this,
+			MappingName,
+			bAxisMapping,
+			AxisScale,
+			bGamepadCell,
+			PromptImage);
+		InputBindingSelectors.Add(BindingSelector);
+	};
+
+	AddBindingCell(false, bAllowKeyboard);
+	AddBindingCell(true, bAllowGamepad);
+}
+
+void UVNHSettingsDialogWidget::RefreshInputBindingRows()
+{
+	for (UVNHInputBindingKeySelector* BindingSelector : InputBindingSelectors)
+	{
+		if (BindingSelector)
+		{
+			BindingSelector->RefreshFromInputSettings();
+		}
+	}
+}
+
+void UVNHSettingsDialogWidget::HandleInputBindingSelected(
+	UVNHInputBindingKeySelector* BindingSelector,
+	const FKey NewKey)
+{
+	if (!BindingSelector || !NewKey.IsValid())
+	{
+		return;
+	}
+
+	const bool bGamepadBinding = BindingSelector->IsGamepadBinding();
+	if (NewKey.IsGamepadKey() != bGamepadBinding)
+	{
+		SetStatus(bGamepadBinding
+			? NSLOCTEXT("VNH", "ControllerBindingRequired", "Choose a controller input for the controller column.")
+			: NSLOCTEXT("VNH", "KeyboardBindingRequired", "Choose a keyboard or mouse input for the keyboard column."));
+		BindingSelector->RefreshFromInputSettings();
+		return;
+	}
+
+	const bool bBindingUpdated = BindingSelector->IsAxisMapping()
+		? UVNHInputPromptLibrary::RebindAxis(
+			BindingSelector->GetMappingName(),
+			BindingSelector->GetAxisScale(),
+			NewKey,
+			bGamepadBinding)
+		: UVNHInputPromptLibrary::RebindAction(
+			BindingSelector->GetMappingName(),
+			NewKey,
+			bGamepadBinding);
+	if (!bBindingUpdated)
+	{
+		SetStatus(NSLOCTEXT("VNH", "BindingFailed", "That input could not be rebound."));
+		BindingSelector->RefreshFromInputSettings();
+		return;
+	}
+
+	UVNHInputPromptLibrary::RefreshPlayerInput(GetOwningPlayer());
+	if (AVNHPlayerController* ResolvedPlayerController =
+		Cast<AVNHPlayerController>(GetOwningPlayer()))
+	{
+		ResolvedPlayerController->RefreshRuntimeInputMappings();
+	}
+	RefreshInputBindingRows();
+	SetStatus(FText::Format(
+		NSLOCTEXT("VNH", "BindingUpdated", "{0} updated."),
+		FText::FromName(BindingSelector->GetMappingName())));
 }
 
 void UVNHSettingsDialogWidget::ApplyAudioSettings()

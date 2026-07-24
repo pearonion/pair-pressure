@@ -101,6 +101,10 @@ void UVNHCreateServerWidget::NativeConstruct()
 	SetPrivateMode(false);
 	SetPasswordVisible(false);
 	SetStatus(NSLOCTEXT("VNH", "CreateServerReady", "Choose your server settings."));
+	if (PublicButton && GetOwningPlayer())
+	{
+		PublicButton->SetUserFocus(GetOwningPlayer());
+	}
 }
 
 void UVNHCreateServerWidget::ConfigureInitialMode(bool bInitialPrivateMode)

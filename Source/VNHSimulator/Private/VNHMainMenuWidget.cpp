@@ -46,6 +46,11 @@ void UVNHMainMenuWidget::NativeConstruct()
 
 	if (APlayerController* PlayerController = GetOwningPlayer())
 	{
+		UButton* InitialFocusButton = Cast<UButton>(GetWidgetFromName(TEXT("PlayButton")));
+		if (!InitialFocusButton)
+		{
+			InitialFocusButton = HostPrivateButton;
+		}
 		const bool bDefaultCursorRegistered = UWidgetBlueprintLibrary::SetHardwareCursor(
 			PlayerController,
 			EMouseCursor::Default,
@@ -63,9 +68,14 @@ void UVNHMainMenuWidget::NativeConstruct()
 		PlayerController->CurrentMouseCursor = EMouseCursor::Default;
 
 		FInputModeUIOnly InputMode;
-		InputMode.SetWidgetToFocus(TakeWidget());
+		InputMode.SetWidgetToFocus(
+			InitialFocusButton ? InitialFocusButton->TakeWidget() : TakeWidget());
 		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 		PlayerController->SetInputMode(InputMode);
+		if (InitialFocusButton)
+		{
+			InitialFocusButton->SetUserFocus(PlayerController);
+		}
 	}
 
 	RefreshStatusText();

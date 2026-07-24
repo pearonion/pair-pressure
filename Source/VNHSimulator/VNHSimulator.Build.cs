@@ -14,6 +14,7 @@ public class VNHSimulator : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"InputCore",
+			"ApplicationCore",
 			"EnhancedInput",
 			"AIModule",
 			"GameplayTasks",
