@@ -20,6 +20,17 @@ UTTTMatchHUDPresenterComponent::UTTTMatchHUDPresenterComponent()
 void UTTTMatchHUDPresenterComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	if (!bEnableMatchHUD)
+	{
+		return;
+	}
+
+	ResolvedConfig = HUDConfigAsset.LoadSynchronous();
+	if (!ResolvedConfig || !ResolvedConfig->MatchHUDClass)
+	{
+		return;
+	}
+
 	TryInitializeHUD();
 	if (!MatchHUDWidget && GetWorld())
 	{
@@ -35,6 +46,11 @@ void UTTTMatchHUDPresenterComponent::EndPlay(const EEndPlayReason::Type EndPlayR
 
 void UTTTMatchHUDPresenterComponent::TryInitializeHUD()
 {
+	if (!bEnableMatchHUD)
+	{
+		return;
+	}
+
 	APlayerController* PlayerController = Cast<APlayerController>(GetOwner());
 	if (!PlayerController || !PlayerController->IsLocalController() || !PlayerController->GetLocalPlayer() || !GetWorld()) return;
 	if (!GetWorld()->GetMapName().Contains(TEXT("PP_"))) return;
@@ -55,7 +71,10 @@ void UTTTMatchHUDPresenterComponent::TryInitializeHUD()
 	}
 	PlayerHUDSource = CurrentPawnSource;
 
-	ResolvedConfig = HUDConfigAsset.LoadSynchronous();
+	if (!ResolvedConfig)
+	{
+		ResolvedConfig = HUDConfigAsset.LoadSynchronous();
+	}
 	if (!ResolvedConfig || !ResolvedConfig->MatchHUDClass) return;
 	MatchHUDWidget = CreateWidget<UTTTMatchHUDWidget>(PlayerController, ResolvedConfig->MatchHUDClass);
 	if (!MatchHUDWidget) return;

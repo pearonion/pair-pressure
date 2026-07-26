@@ -903,9 +903,23 @@ void AVNHPlayerController::HandlePairPressureAssistReleased()
 
 void AVNHPlayerController::EnsurePairPressureHUD()
 {
-	if (TTTMatchHUDPresenter)
+	if (!IsLocalController() || !GetLocalPlayer() || !GetWorld()
+		|| !GetWorld()->GetMapName().Contains(TEXT("PP_")) || PairPressureHUDWidget.IsValid())
 	{
-		TTTMatchHUDPresenter->TryInitializeHUD();
+		return;
+	}
+
+	UClass* HUDClass = LoadClass<UUserWidget>(nullptr, TEXT("/Game/PairPressure/UI/HUD/WBP_PP_HUD_Root.WBP_PP_HUD_Root_C"));
+	if (!HUDClass)
+	{
+		return;
+	}
+
+	UUserWidget* NewHUDWidget = CreateWidget<UUserWidget>(this, HUDClass);
+	if (NewHUDWidget)
+	{
+		NewHUDWidget->AddToViewport(25);
+		PairPressureHUDWidget = NewHUDWidget;
 	}
 }
 

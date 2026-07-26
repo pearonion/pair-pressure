@@ -26,6 +26,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Two to Tangle|HUD|Debug") void ToggleHUD();
 	UFUNCTION(BlueprintPure, Category = "Two to Tangle|HUD") UTTTPlayerHUDSourceComponent* GetPlayerHUDSource() const { return PlayerHUDSource; }
 
+	// Keep the staged native framework dormant until its config and Designer
+	// assets are committed and the legacy HUD consumers are fully bridged.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Two to Tangle|HUD")
+	bool bEnableMatchHUD = false;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Two to Tangle|HUD") TSoftObjectPtr<UTTTMatchHUDConfig> HUDConfigAsset;
 
 private:

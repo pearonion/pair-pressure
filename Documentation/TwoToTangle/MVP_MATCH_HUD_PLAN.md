@@ -78,21 +78,18 @@ creating or reparenting production widgets.
 
 ## Current implementation status
 
-- Native TTT reflection classes are loaded and all production UMG assets have
-  native parents, Designer-authored responsive hierarchies, and valid BindWidget
-  names.
-- All three existing round-start paths now call one authoritative 3-second
-  countdown bridge before the original `StartRunPhase` function.
-- The existing finish zone records individual PlayerState crossings through the
-  replicated finish tracker without replacing its existing round rules.
-- Round completion resolves every registered unfinished team as eliminated.
-- The legacy PlayerController HUD creation execution path is disconnected; its
-  nodes are retained and documented for reversibility.
-- The real football implements `TTTThrowableItemInterface` and supplies the HUD
-  icon and charge presentation.
+- Native TTT contracts, race components, HUD source/presenter classes, widget
+  parent classes, and debug commands are staged in source.
+- The native presenter is disabled by default. The established
+  `WBP_PP_HUD_Root` creation path and `PairPressureHUDWidget` assignment remain
+  active so adaptive controller prompts continue to work.
+- Production TTT UMG children, match-root Widget Blueprint, config/style data
+  assets, football interface wiring, authoritative countdown bridges, and finish
+  tracker Blueprint calls are not committed yet.
 - Fully-Dazed players no longer auto-recover. Carried recovery is authoritative,
   stops in the green zone, and supports a server-validated Jump dismount.
 
-All affected Blueprint and Widget Blueprint assets compile with zero warnings and
-are saved. The current source changes still require a normal Visual Studio editor
-build and editor restart before PIE/network validation; do not use Live Coding.
+The native source previously completed a Development Editor build, but the
+corrective source changes still require a new normal Visual Studio Development
+Editor build. No production TTT Widget Blueprint or race-integration validation
+is claimed. Do not use Live Coding for these structural reflection changes.
