@@ -1,6 +1,8 @@
 #include "TwoToTangle/UI/Components/TTTPlayerHUDSourceComponent.h"
 
 #include "Engine/World.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
 #include "GameFramework/GameStateBase.h"
 #include "PairPressure/PPCarryComponent.h"
 #include "PairPressure/PPGrabberComponent.h"
@@ -9,6 +11,7 @@
 #include "TimerManager.h"
 #include "TwoToTangle/Gameplay/Items/TTTThrowableItemInterface.h"
 #include "TwoToTangle/Gameplay/Race/TTTRaceComponents.h"
+#include "TwoToTangle/UI/Components/TTTMatchHUDPresenterComponent.h"
 #include "TwoToTangle/UI/Data/TTTMatchHUDConfig.h"
 
 UTTTPlayerHUDSourceComponent::UTTTPlayerHUDSourceComponent()
@@ -20,6 +23,22 @@ UTTTPlayerHUDSourceComponent::UTTTPlayerHUDSourceComponent()
 void UTTTPlayerHUDSourceComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	const APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	const APlayerController* LocalController = OwnerPawn
+		? Cast<APlayerController>(OwnerPawn->GetController())
+		: nullptr;
+	const UTTTMatchHUDPresenterComponent* Presenter = LocalController
+		? LocalController->FindComponentByClass<UTTTMatchHUDPresenterComponent>()
+		: nullptr;
+	const bool bShouldRunPresentation = GetWorld()
+		&& GetWorld()->GetMapName().Contains(TEXT("PP_"))
+		&& OwnerPawn && OwnerPawn->IsLocallyControlled()
+		&& Presenter && Presenter->IsMatchHUDEnabled();
+	if (!bShouldRunPresentation)
+	{
+		return;
+	}
+
 	if (!HUDConfig)
 	{
 		HUDConfig = LoadObject<UTTTMatchHUDConfig>(nullptr, TEXT("/Game/PairPressure/UI/Styles/DA_MatchHUDConfig.DA_MatchHUDConfig"));

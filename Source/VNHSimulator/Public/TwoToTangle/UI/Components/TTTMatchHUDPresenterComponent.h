@@ -25,6 +25,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Two to Tangle|HUD") void TeardownHUD();
 	UFUNCTION(BlueprintCallable, Category = "Two to Tangle|HUD|Debug") void ToggleHUD();
 	UFUNCTION(BlueprintPure, Category = "Two to Tangle|HUD") UTTTPlayerHUDSourceComponent* GetPlayerHUDSource() const { return PlayerHUDSource; }
+	UFUNCTION(BlueprintPure, Category = "Two to Tangle|HUD") bool IsMatchHUDEnabled() const { return bEnableMatchHUD; }
+	UFUNCTION(BlueprintPure, Category = "Two to Tangle|HUD") bool HasActiveMatchHUD() const { return MatchHUDWidget != nullptr; }
 
 	// Keep the staged native framework dormant until its config and Designer
 	// assets are committed and the legacy HUD consumers are fully bridged.

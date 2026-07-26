@@ -82,7 +82,14 @@ creating or reparenting production widgets.
   parent classes, and debug commands are staged in source.
 - The native presenter is disabled by default. The established
   `WBP_PP_HUD_Root` creation path and `PairPressureHUDWidget` assignment remain
-  active so adaptive controller prompts continue to work.
+  active so adaptive controller prompts continue to work. While the native
+  presenter is inactive, the established standalone Slate throw-charge indicator
+  remains the visible charge-feedback path.
+- The per-player HUD source does not load the missing TTT config, bind gameplay
+  delegates, or start its 20 Hz presentation timer unless the presenter is
+  explicitly enabled for a locally controlled pawn in a Pair Pressure map.
+- Physical-state carried-recovery defaults remain native component settings and
+  do not load the absent TTT HUD config during shopper startup.
 - Production TTT UMG children, match-root Widget Blueprint, config/style data
   assets, football interface wiring, authoritative countdown bridges, and finish
   tracker Blueprint calls are not committed yet.

@@ -20,7 +20,6 @@
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "PhysicsEngine/BodyInstance.h"
 #include "TimerManager.h"
-#include "TwoToTangle/UI/Data/TTTMatchHUDConfig.h"
 #include "VNHShopperCharacter.h"
 
 namespace
@@ -161,7 +160,6 @@ UPPPhysicalStateComponent::UPPPhysicalStateComponent()
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = false;
 	PrimaryComponentTick.TickInterval = 0.1f;
-	MatchHUDConfig = TSoftObjectPtr<UTTTMatchHUDConfig>(FSoftObjectPath(TEXT("/Game/PairPressure/UI/Styles/DA_MatchHUDConfig.DA_MatchHUDConfig")));
 }
 
 void UPPPhysicalStateComponent::BeginPlay()
@@ -175,12 +173,6 @@ void UPPPhysicalStateComponent::BeginPlay()
 	}
 
 	SetComponentTickEnabled(true);
-	if (const UTTTMatchHUDConfig* LoadedHUDConfig = MatchHUDConfig.LoadSynchronous())
-	{
-		CarriedRecoveryThresholdNormalized = FMath::Clamp(LoadedHUDConfig->DazeRecoveryThreshold, 0.0f, 1.0f);
-		CarriedDazeRecoveryPerSecond = FMath::Max(0.0f, LoadedHUDConfig->CarriedDazeRecoveryRate);
-	}
-
 	if (const ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner()))
 	{
 		if (const USkeletalMeshComponent* CharacterMesh = OwnerCharacter->GetMesh())

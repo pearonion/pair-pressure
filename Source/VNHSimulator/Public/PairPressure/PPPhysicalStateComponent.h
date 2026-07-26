@@ -7,7 +7,6 @@
 #include "PPPhysicalStateComponent.generated.h"
 
 class UPrimitiveComponent;
-class UTTTMatchHUDConfig;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FPPPhysicalStateChanged, EPPPhysicalState, NewState, float, DazeNormalized);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FPPDazeChanged, float, DazeNormalized);
@@ -245,9 +244,6 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Carry", meta = (ClampMin = "0.0"))
 	float CarriedDazeRecoveryPerSecond = 20.0f;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Carry")
-	TSoftObjectPtr<UTTTMatchHUDConfig> MatchHUDConfig;
 
 	float ReviveProgressSeconds = 0.0f;
 	double LastKnockdownTimeSeconds = -100.0;

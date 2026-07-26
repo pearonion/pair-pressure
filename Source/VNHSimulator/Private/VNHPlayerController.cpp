@@ -52,9 +52,22 @@
 #include "PairPressure/Interfaces/PPMascotSelectionInterface.h"
 #include "TwoToTangle/UI/Components/TTTMatchHUDPresenterComponent.h"
 #include "TwoToTangle/UI/Components/TTTPlayerHUDSourceComponent.h"
+#include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/Layout/SSpacer.h"
+#include "Widgets/Notifications/SProgressBar.h"
+#include "Widgets/SBoxPanel.h"
 
 namespace
 {
+struct FVNHPlayerControllerThrowChargeIndicatorState
+{
+	TSharedPtr<SProgressBar> ProgressBar;
+	TSharedPtr<SWidget> Widget;
+};
+
+TMap<TWeakObjectPtr<AVNHPlayerController>, FVNHPlayerControllerThrowChargeIndicatorState> VNHPlayerControllerThrowChargeIndicators;
+
 const TCHAR* ToPhaseText(EVNHRoundPhase Phase)
 {
 	switch (Phase)
@@ -3041,24 +3054,98 @@ void AVNHPlayerController::UpdateThrowChargeIndicator()
 {
 	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : ThrowChargeStartedAtSeconds;
 	const float ChargeAlpha = FMath::Clamp((Now - ThrowChargeStartedAtSeconds) / ThrowMaxChargeSeconds, 0.0f, 1.0f);
-	if (APawn* ControlledPawn = GetPawn())
+	if (TTTMatchHUDPresenter && TTTMatchHUDPresenter->HasActiveMatchHUD())
 	{
-		if (UTTTPlayerHUDSourceComponent* HUDSource = ControlledPawn->FindComponentByClass<UTTTPlayerHUDSourceComponent>())
+		if (APawn* ControlledPawn = GetPawn())
 		{
-			HUDSource->SetThrowChargeState(bThrowChargeActive, ChargeAlpha);
+			if (UTTTPlayerHUDSourceComponent* HUDSource = ControlledPawn->FindComponentByClass<UTTTPlayerHUDSourceComponent>())
+			{
+				HUDSource->SetThrowChargeState(bThrowChargeActive, ChargeAlpha);
+			}
 		}
+		return;
 	}
+
+	if (!IsLocalController())
+	{
+		return;
+	}
+	FVNHPlayerControllerThrowChargeIndicatorState* ExistingIndicator = VNHPlayerControllerThrowChargeIndicators.Find(this);
+	if (!bThrowChargeActive && !ExistingIndicator)
+	{
+		return;
+	}
+	FVNHPlayerControllerThrowChargeIndicatorState& Indicator = VNHPlayerControllerThrowChargeIndicators.FindOrAdd(this);
+
+	if (!Indicator.Widget.IsValid() && GEngine && GEngine->GameViewport)
+	{
+		Indicator.ProgressBar = SNew(SProgressBar)
+			.Percent(0.0f)
+			.FillColorAndOpacity(FLinearColor(0.18f, 0.85f, 1.0f, 1.0f));
+
+		Indicator.Widget = SNew(SVerticalBox)
+			+ SVerticalBox::Slot()
+			.FillHeight(0.80f)
+			[
+				SNew(SSpacer)
+			]
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.HAlign(HAlign_Center)
+			[
+				SNew(SBorder)
+				.Padding(FMargin(4.0f))
+				.BorderBackgroundColor(FLinearColor(0.015f, 0.025f, 0.04f, 0.82f))
+				[
+					SNew(SBox)
+					.WidthOverride(230.0f)
+					.HeightOverride(12.0f)
+					[
+						Indicator.ProgressBar.ToSharedRef()
+					]
+				]
+			]
+			+ SVerticalBox::Slot()
+			.FillHeight(0.20f)
+			[
+				SNew(SSpacer)
+			];
+		Indicator.Widget->SetVisibility(EVisibility::Collapsed);
+		GEngine->GameViewport->AddViewportWidgetContent(Indicator.Widget.ToSharedRef(), 80);
+	}
+
+	if (!Indicator.Widget.IsValid() || !Indicator.ProgressBar.IsValid())
+	{
+		return;
+	}
+	if (!bThrowChargeActive)
+	{
+		Indicator.Widget->SetVisibility(EVisibility::Collapsed);
+		return;
+	}
+	Indicator.ProgressBar->SetPercent(ChargeAlpha);
+	Indicator.Widget->SetVisibility(EVisibility::HitTestInvisible);
 }
 
 void AVNHPlayerController::RemoveThrowChargeIndicator()
 {
-	if (APawn* ControlledPawn = GetPawn())
+	if (TTTMatchHUDPresenter && TTTMatchHUDPresenter->HasActiveMatchHUD())
 	{
-		if (UTTTPlayerHUDSourceComponent* HUDSource = ControlledPawn->FindComponentByClass<UTTTPlayerHUDSourceComponent>())
+		if (APawn* ControlledPawn = GetPawn())
 		{
-			HUDSource->SetThrowChargeState(false, 0.0f);
+			if (UTTTPlayerHUDSourceComponent* HUDSource = ControlledPawn->FindComponentByClass<UTTTPlayerHUDSourceComponent>())
+			{
+				HUDSource->SetThrowChargeState(false, 0.0f);
+			}
 		}
 	}
+
+	FVNHPlayerControllerThrowChargeIndicatorState* Indicator = VNHPlayerControllerThrowChargeIndicators.Find(this);
+	if (Indicator && Indicator->Widget.IsValid() && GEngine && GEngine->GameViewport)
+	{
+		GEngine->GameViewport->RemoveViewportWidgetContent(Indicator->Widget.ToSharedRef());
+	}
+	VNHPlayerControllerThrowChargeIndicators.Remove(this);
 }
 
 void AVNHPlayerController::HandleInteractPressed()
