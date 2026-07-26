@@ -26,6 +26,7 @@ class UStaticMeshComponent;
 class USkeletalMeshComponent;
 class UPhysicsHandleComponent;
 class UPrimitiveComponent;
+class UTTTPlayerHUDSourceComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FVNHActNaturalUsed, EVNHActNaturalRecovery, Recovery);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FVNHPublicTestReceived, EVNHPublicTestType, TestType);
@@ -276,6 +277,9 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pair Pressure|Features", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UPPPlayerActionRouterComponent> PairPressureActionRouter;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Two to Tangle|HUD", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UTTTPlayerHUDSourceComponent> TTTPlayerHUDSource;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VNH|Shopper", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USpringArmComponent> FollowCameraBoom;

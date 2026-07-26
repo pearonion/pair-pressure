@@ -35,6 +35,7 @@
 #include "PairPressure/PPPhysicalStateComponent.h"
 #include "PairPressure/PPPlayerActionRouterComponent.h"
 #include "PairPressure/PPTeamMemberComponent.h"
+#include "TwoToTangle/UI/Components/TTTPlayerHUDSourceComponent.h"
 #include "PhysicsEngine/PhysicsHandleComponent.h"
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "VNHAlienLocomotionComponent.h"
@@ -191,6 +192,7 @@ AVNHShopperCharacter::AVNHShopperCharacter()
 	PairPressureGrabbable->GripPointComponentName = TEXT("GrabAnchor");
 	PairPressureImpactSensor = CreateDefaultSubobject<UPPImpactSensorComponent>(TEXT("PairPressureImpactSensor"));
 	PairPressureActionRouter = CreateDefaultSubobject<UPPPlayerActionRouterComponent>(TEXT("PairPressureActionRouter"));
+	TTTPlayerHUDSource = CreateDefaultSubobject<UTTTPlayerHUDSourceComponent>(TEXT("TTTPlayerHUDSource"));
 
 	FollowCameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("FollowCameraBoom"));
 	FollowCameraBoom->SetupAttachment(RootComponent);
@@ -1373,6 +1375,7 @@ bool AVNHShopperCharacter::CanJumpInternal_Implementation() const
 {
 	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
 	return (!MovementComponent || !MovementComponent->IsFalling())
+		&& (!TTTPlayerHUDSource || TTTPlayerHUDSource->CanLocalPlayerMove_Implementation())
 		&& Super::CanJumpInternal_Implementation()
 		&& (!PairPressurePhysicalStateComponent || !PairPressurePhysicalStateComponent->IsRagdolled())
 		&& (!PairPressureGrabber || PairPressureGrabber->CanJumpOrDive())
@@ -1381,6 +1384,13 @@ bool AVNHShopperCharacter::CanJumpInternal_Implementation() const
 
 void AVNHShopperCharacter::HandleJumpInputPressed()
 {
+	if (PairPressurePhysicalStateComponent && PairPressurePhysicalStateComponent->IsCarryDismountAvailable())
+	{
+		bJumpInputHeld = false;
+		bLandingJumpRequested = false;
+		PairPressurePhysicalStateComponent->RequestCarryDismount();
+		return;
+	}
 	if (PairPressurePhysicalStateComponent && PairPressurePhysicalStateComponent->IsRagdolled())
 	{
 		bJumpInputHeld = false;

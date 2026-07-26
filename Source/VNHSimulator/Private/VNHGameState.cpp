@@ -1,10 +1,15 @@
 #include "VNHGameState.h"
 
 #include "Net/UnrealNetwork.h"
+#include "TwoToTangle/Gameplay/Race/TTTRaceComponents.h"
 
 AVNHGameState::AVNHGameState()
 {
 	bReplicates = true;
+	TTTRaceState = CreateDefaultSubobject<UTTTRaceStateComponent>(TEXT("TTTRaceState"));
+	TTTRaceClock = CreateDefaultSubobject<UTTTRaceClockComponent>(TEXT("TTTRaceClock"));
+	TTTRaceRanking = CreateDefaultSubobject<UTTTRaceRankingComponent>(TEXT("TTTRaceRanking"));
+	TTTFinishTracker = CreateDefaultSubobject<UTTTFinishTrackerComponent>(TEXT("TTTFinishTracker"));
 }
 
 void AVNHGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const

@@ -9,6 +9,7 @@
 #include "PairPressure/PPPhysicalStateComponent.h"
 #include "PairPressure/PPPlayerActionRouterComponent.h"
 #include "PairPressure/PPTeamMemberComponent.h"
+#include "TwoToTangle/UI/Components/TTTPlayerHUDSourceComponent.h"
 #include "UObject/StructOnScope.h"
 #include "UObject/UnrealType.h"
 #include "VNHMovementTuningData.h"
@@ -194,9 +195,13 @@ bool UVNHAlienLocomotionComponent::ShouldDriveLocomotion() const
 		: nullptr;
 	const UPPPhysicalStateComponent* PhysicalState =
 		UPPPhysicalStateComponent::FindPhysicalStateComponent(GetOwner());
+	const UTTTPlayerHUDSourceComponent* HUDSource = GetOwner()
+		? GetOwner()->FindComponentByClass<UTTTPlayerHUDSourceComponent>()
+		: nullptr;
 	return Controller && Controller->IsPlayerController() && OwnerCharacter->IsLocallyControlled()
 		&& (!PhysicalState || !PhysicalState->IsRagdolled())
-		&& (!ActionRouter || !ActionRouter->IsAirDiveRecovering());
+		&& (!ActionRouter || !ActionRouter->IsAirDiveRecovering())
+		&& (!HUDSource || HUDSource->CanLocalPlayerMove_Implementation());
 }
 
 FVector UVNHAlienLocomotionComponent::BuildCameraRelativeMoveDirection() const

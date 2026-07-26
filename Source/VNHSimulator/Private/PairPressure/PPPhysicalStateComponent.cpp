@@ -13,12 +13,14 @@
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Net/UnrealNetwork.h"
+#include "PairPressure/PPCarryComponent.h"
 #include "PairPressure/PPGameplayTypes.h"
 #include "PairPressure/PPGrabberComponent.h"
 #include "PairPressure/Interfaces/PPMascotSelectionInterface.h"
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "PhysicsEngine/BodyInstance.h"
 #include "TimerManager.h"
+#include "TwoToTangle/UI/Data/TTTMatchHUDConfig.h"
 #include "VNHShopperCharacter.h"
 
 namespace
@@ -159,6 +161,7 @@ UPPPhysicalStateComponent::UPPPhysicalStateComponent()
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = false;
 	PrimaryComponentTick.TickInterval = 0.1f;
+	MatchHUDConfig = TSoftObjectPtr<UTTTMatchHUDConfig>(FSoftObjectPath(TEXT("/Game/PairPressure/UI/Styles/DA_MatchHUDConfig.DA_MatchHUDConfig")));
 }
 
 void UPPPhysicalStateComponent::BeginPlay()
@@ -172,6 +175,11 @@ void UPPPhysicalStateComponent::BeginPlay()
 	}
 
 	SetComponentTickEnabled(true);
+	if (const UTTTMatchHUDConfig* LoadedHUDConfig = MatchHUDConfig.LoadSynchronous())
+	{
+		CarriedRecoveryThresholdNormalized = FMath::Clamp(LoadedHUDConfig->DazeRecoveryThreshold, 0.0f, 1.0f);
+		CarriedDazeRecoveryPerSecond = FMath::Max(0.0f, LoadedHUDConfig->CarriedDazeRecoveryRate);
+	}
 
 	if (const ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner()))
 	{
@@ -261,6 +269,32 @@ void UPPPhysicalStateComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 			OnDazeChanged.Broadcast(GetDazeNormalized_Implementation());
 		}
 	}
+
+	if (OwnerActor->HasAuthority() && Carrier)
+	{
+		if (!IsValid(Carrier))
+		{
+			Carrier = nullptr;
+			bCanDismountCarry = false;
+			OnCarriedRecoveryChanged.Broadcast(false, false);
+		}
+		else if (!bCanDismountCarry && Daze > MaxDaze * CarriedRecoveryThresholdNormalized)
+		{
+			const float PreviousDaze = Daze;
+			Daze = FMath::Max(
+				MaxDaze * CarriedRecoveryThresholdNormalized,
+				Daze - CarriedDazeRecoveryPerSecond * DeltaTime);
+			if (!FMath::IsNearlyEqual(PreviousDaze, Daze, 0.01f))
+			{
+				OnDazeChanged.Broadcast(GetDazeNormalized_Implementation());
+			}
+			if (Daze <= MaxDaze * CarriedRecoveryThresholdNormalized + KINDA_SMALL_NUMBER)
+			{
+				bCanDismountCarry = true;
+				OnCarriedRecoveryChanged.Broadcast(true, true);
+			}
+		}
+	}
 }
 
 void UPPPhysicalStateComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -269,6 +303,8 @@ void UPPPhysicalStateComponent::GetLifetimeReplicatedProps(TArray<FLifetimePrope
 	DOREPLIFETIME(UPPPhysicalStateComponent, PhysicalState);
 	DOREPLIFETIME(UPPPhysicalStateComponent, Daze);
 	DOREPLIFETIME(UPPPhysicalStateComponent, RagdollNetworkState);
+	DOREPLIFETIME(UPPPhysicalStateComponent, Carrier);
+	DOREPLIFETIME(UPPPhysicalStateComponent, bCanDismountCarry);
 }
 
 float UPPPhysicalStateComponent::GetDazeNormalized_Implementation() const
@@ -340,18 +376,67 @@ void UPPPhysicalStateComponent::ReceiveImpactData_Implementation(const FPPImpact
 
 bool UPPPhysicalStateComponent::CanCarry_Implementation(AActor* RequestedCarrier) const
 {
-	return RequestedCarrier && RequestedCarrier != GetOwner() && IsRagdolled()
+	return RequestedCarrier && RequestedCarrier != GetOwner()
+		&& PhysicalState == EPPPhysicalState::Unconscious
+		&& !Carrier
 		&& !IsCourseObstacleKnockdown();
 }
 
 void UPPPhysicalStateComponent::OnCarryStarted_Implementation(AActor* NewCarrier)
 {
+	if (!GetOwner() || !GetOwner()->HasAuthority()
+		|| PhysicalState != EPPPhysicalState::Unconscious || !NewCarrier)
+	{
+		return;
+	}
 	ReviveProgressSeconds = 0.0f;
+	Carrier = NewCarrier;
+	bCanDismountCarry = Daze <= MaxDaze * CarriedRecoveryThresholdNormalized;
+	OnCarriedRecoveryChanged.Broadcast(true, bCanDismountCarry);
 }
 
 void UPPPhysicalStateComponent::OnCarryEnded_Implementation(AActor* PreviousCarrier)
 {
+	if (!GetOwner() || !GetOwner()->HasAuthority() || (PreviousCarrier && Carrier != PreviousCarrier))
+	{
+		return;
+	}
 	ReviveProgressSeconds = 0.0f;
+	const bool bRecoveredForDismount = bCanDismountCarry;
+	Carrier = nullptr;
+	bCanDismountCarry = false;
+	OnCarriedRecoveryChanged.Broadcast(false, false);
+	if (bRecoveredForDismount)
+	{
+		RecoverFromCurrentState();
+	}
+}
+
+void UPPPhysicalStateComponent::RequestCarryDismount()
+{
+	if (!GetOwner())
+	{
+		return;
+	}
+	if (!GetOwner()->HasAuthority())
+	{
+		ServerRequestCarryDismount();
+		return;
+	}
+	if (!Carrier || !bCanDismountCarry)
+	{
+		return;
+	}
+
+	AActor* CurrentCarrier = Carrier;
+	if (UPPCarryComponent* CarrierCarry = CurrentCarrier->FindComponentByClass<UPPCarryComponent>())
+	{
+		CarrierCarry->EndAssist();
+	}
+	else
+	{
+		OnCarryEnded_Implementation(CurrentCarrier);
+	}
 }
 
 bool UPPPhysicalStateComponent::IsRagdolled() const
@@ -389,18 +474,15 @@ float UPPPhysicalStateComponent::GetRagdollRecoveryBlendAlpha() const
 
 void UPPPhysicalStateComponent::AddReviveProgress(float DeltaSeconds, AActor* Reviver)
 {
-	if (!GetOwner() || !GetOwner()->HasAuthority() || PhysicalState != EPPPhysicalState::Unconscious || !Reviver)
+	if (!GetOwner() || !GetOwner()->HasAuthority()
+		|| PhysicalState != EPPPhysicalState::Unconscious || !Reviver || Carrier != Reviver)
 	{
 		return;
 	}
 
+	// Carried recovery is applied from the authoritative component tick. This
+	// remains the carry system's in-range heartbeat.
 	ReviveProgressSeconds += FMath::Max(0.0f, DeltaSeconds);
-	if (ReviveProgressSeconds >= TeammateReviveSeconds)
-	{
-		Daze = FMath::Min(Daze, MaxDaze * 0.7f);
-		OnDazeChanged.Broadcast(GetDazeNormalized_Implementation());
-		RecoverFromCurrentState();
-	}
 }
 
 void UPPPhysicalStateComponent::RequestDebugRagdoll()
@@ -433,6 +515,20 @@ void UPPPhysicalStateComponent::RequestDebugRecovery()
 	}
 
 	RecoverFromCurrentState();
+}
+
+void UPPPhysicalStateComponent::DebugSetDazeNormalized(float NormalizedDaze)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+	Daze = FMath::Clamp(NormalizedDaze, 0.0f, 1.0f) * MaxDaze;
+	OnDazeChanged.Broadcast(GetDazeNormalized_Implementation());
+	if (Daze >= MaxDaze)
+	{
+		SetPhysicalStateAuthoritative(EPPPhysicalState::Unconscious);
+	}
 }
 
 void UPPPhysicalStateComponent::RequestThrownRagdoll(
@@ -669,6 +765,11 @@ void UPPPhysicalStateComponent::ServerRequestDebugRecovery_Implementation()
 	RequestDebugRecovery();
 }
 
+void UPPPhysicalStateComponent::ServerRequestCarryDismount_Implementation()
+{
+	RequestCarryDismount();
+}
+
 void UPPPhysicalStateComponent::OnRep_PhysicalState()
 {
 	if (IsRagdolled())
@@ -710,6 +811,11 @@ void UPPPhysicalStateComponent::OnRep_RagdollNetworkState()
 			ApplyRemoteRagdollNetworkState(bNewSequence);
 		}
 	}
+}
+
+void UPPPhysicalStateComponent::OnRep_CarriedRecoveryState()
+{
+	OnCarriedRecoveryChanged.Broadcast(Carrier != nullptr, bCanDismountCarry);
 }
 
 void UPPPhysicalStateComponent::PublishRagdollNetworkState(bool bActive)
@@ -1076,7 +1182,7 @@ void UPPPhysicalStateComponent::SetPhysicalStateAuthoritative(
 	{
 		GetWorld()->GetTimerManager().ClearTimer(RecoveryTimerHandle);
 		GetWorld()->GetTimerManager().ClearTimer(CourseRecoveryTimerHandle);
-		if (StateDurationSeconds > 0.0f)
+		if (StateDurationSeconds > 0.0f && NewState != EPPPhysicalState::Unconscious)
 		{
 			// Begin checking for continuous ground stability early enough that both
 			// that confirmation and the standing blend finish at the authored minimum

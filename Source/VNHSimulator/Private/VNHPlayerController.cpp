@@ -50,22 +50,11 @@
 #include "PairPressure/PPGrabberComponent.h"
 #include "PairPressure/PPPhysicalStateComponent.h"
 #include "PairPressure/Interfaces/PPMascotSelectionInterface.h"
-#include "Widgets/Layout/SBorder.h"
-#include "Widgets/Layout/SBox.h"
-#include "Widgets/Layout/SSpacer.h"
-#include "Widgets/Notifications/SProgressBar.h"
-#include "Widgets/SBoxPanel.h"
+#include "TwoToTangle/UI/Components/TTTMatchHUDPresenterComponent.h"
+#include "TwoToTangle/UI/Components/TTTPlayerHUDSourceComponent.h"
 
 namespace
 {
-struct FVNHPlayerControllerThrowChargeIndicatorState
-{
-	TSharedPtr<SProgressBar> ProgressBar;
-	TSharedPtr<SWidget> Widget;
-};
-
-TMap<TWeakObjectPtr<AVNHPlayerController>, FVNHPlayerControllerThrowChargeIndicatorState> VNHPlayerControllerThrowChargeIndicators;
-
 const TCHAR* ToPhaseText(EVNHRoundPhase Phase)
 {
 	switch (Phase)
@@ -473,6 +462,7 @@ bool IsCharacterCustomizerScreenOpen(const APlayerController* PlayerController)
 
 AVNHPlayerController::AVNHPlayerController()
 {
+	TTTMatchHUDPresenter = CreateDefaultSubobject<UTTTMatchHUDPresenterComponent>(TEXT("TTTMatchHUDPresenter"));
 	HumanActionAnimationTable = TSoftObjectPtr<UDataTable>(FSoftObjectPath(TEXT("/Game/Data/DT_HumanActionAnimations.DT_HumanActionAnimations")));
 	AlienActionAnimationTable = TSoftObjectPtr<UDataTable>(FSoftObjectPath(TEXT("/Game/Data/DT_AlienActionAnimations.DT_AlienActionAnimations")));
 	GrabAction = LoadObject<UInputAction>(nullptr, TEXT("/Game/Input/Actions/IA_Grab.IA_Grab"));
@@ -913,23 +903,9 @@ void AVNHPlayerController::HandlePairPressureAssistReleased()
 
 void AVNHPlayerController::EnsurePairPressureHUD()
 {
-	if (!IsLocalController() || !GetLocalPlayer() || !GetWorld()
-		|| !GetWorld()->GetMapName().Contains(TEXT("PP_")) || PairPressureHUDWidget.IsValid())
+	if (TTTMatchHUDPresenter)
 	{
-		return;
-	}
-
-	UClass* HUDClass = LoadClass<UUserWidget>(nullptr, TEXT("/Game/PairPressure/UI/HUD/WBP_PP_HUD_Root.WBP_PP_HUD_Root_C"));
-	if (!HUDClass)
-	{
-		return;
-	}
-
-	UUserWidget* NewHUDWidget = CreateWidget<UUserWidget>(this, HUDClass);
-	if (NewHUDWidget)
-	{
-		NewHUDWidget->AddToViewport(25);
-		PairPressureHUDWidget = NewHUDWidget;
+		TTTMatchHUDPresenter->TryInitializeHUD();
 	}
 }
 
@@ -3049,78 +3025,26 @@ void AVNHPlayerController::HandleThrowChargeReleased()
 
 void AVNHPlayerController::UpdateThrowChargeIndicator()
 {
-	if (!IsLocalController())
-	{
-		return;
-	}
-	FVNHPlayerControllerThrowChargeIndicatorState* ExistingIndicator = VNHPlayerControllerThrowChargeIndicators.Find(this);
-	if (!bThrowChargeActive && !ExistingIndicator)
-	{
-		return;
-	}
-	FVNHPlayerControllerThrowChargeIndicatorState& Indicator = VNHPlayerControllerThrowChargeIndicators.FindOrAdd(this);
-
-	if (!Indicator.Widget.IsValid() && GEngine && GEngine->GameViewport)
-	{
-		Indicator.ProgressBar = SNew(SProgressBar)
-			.Percent(0.0f)
-			.FillColorAndOpacity(FLinearColor(0.18f, 0.85f, 1.0f, 1.0f));
-
-		Indicator.Widget = SNew(SVerticalBox)
-			+ SVerticalBox::Slot()
-			.FillHeight(0.80f)
-			[
-				SNew(SSpacer)
-			]
-			+ SVerticalBox::Slot()
-			.AutoHeight()
-			.HAlign(HAlign_Center)
-			[
-				SNew(SBorder)
-				.Padding(FMargin(4.0f))
-				.BorderBackgroundColor(FLinearColor(0.015f, 0.025f, 0.04f, 0.82f))
-				[
-					SNew(SBox)
-					.WidthOverride(230.0f)
-					.HeightOverride(12.0f)
-					[
-						Indicator.ProgressBar.ToSharedRef()
-					]
-				]
-			]
-			+ SVerticalBox::Slot()
-			.FillHeight(0.20f)
-			[
-				SNew(SSpacer)
-			];
-		Indicator.Widget->SetVisibility(EVisibility::Collapsed);
-		GEngine->GameViewport->AddViewportWidgetContent(Indicator.Widget.ToSharedRef(), 80);
-	}
-
-	if (!Indicator.Widget.IsValid() || !Indicator.ProgressBar.IsValid())
-	{
-		return;
-	}
-	if (!bThrowChargeActive)
-	{
-		Indicator.Widget->SetVisibility(EVisibility::Collapsed);
-		return;
-	}
-
 	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : ThrowChargeStartedAtSeconds;
 	const float ChargeAlpha = FMath::Clamp((Now - ThrowChargeStartedAtSeconds) / ThrowMaxChargeSeconds, 0.0f, 1.0f);
-	Indicator.ProgressBar->SetPercent(ChargeAlpha);
-	Indicator.Widget->SetVisibility(EVisibility::HitTestInvisible);
+	if (APawn* ControlledPawn = GetPawn())
+	{
+		if (UTTTPlayerHUDSourceComponent* HUDSource = ControlledPawn->FindComponentByClass<UTTTPlayerHUDSourceComponent>())
+		{
+			HUDSource->SetThrowChargeState(bThrowChargeActive, ChargeAlpha);
+		}
+	}
 }
 
 void AVNHPlayerController::RemoveThrowChargeIndicator()
 {
-	FVNHPlayerControllerThrowChargeIndicatorState* Indicator = VNHPlayerControllerThrowChargeIndicators.Find(this);
-	if (Indicator && Indicator->Widget.IsValid() && GEngine && GEngine->GameViewport)
+	if (APawn* ControlledPawn = GetPawn())
 	{
-		GEngine->GameViewport->RemoveViewportWidgetContent(Indicator->Widget.ToSharedRef());
+		if (UTTTPlayerHUDSourceComponent* HUDSource = ControlledPawn->FindComponentByClass<UTTTPlayerHUDSourceComponent>())
+		{
+			HUDSource->SetThrowChargeState(false, 0.0f);
+		}
 	}
-	VNHPlayerControllerThrowChargeIndicators.Remove(this);
 }
 
 void AVNHPlayerController::HandleInteractPressed()

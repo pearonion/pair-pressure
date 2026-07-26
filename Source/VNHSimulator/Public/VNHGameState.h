@@ -6,6 +6,11 @@
 #include "VNHGameplayTypes.h"
 #include "VNHGameState.generated.h"
 
+class UTTTFinishTrackerComponent;
+class UTTTRaceClockComponent;
+class UTTTRaceRankingComponent;
+class UTTTRaceStateComponent;
+
 UCLASS()
 class VNHSIMULATOR_API AVNHGameState : public AGameStateBase
 {
@@ -84,6 +89,18 @@ public:
 	void ClearRoundOutcome();
 
 private:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Two to Tangle|Race", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UTTTRaceStateComponent> TTTRaceState;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Two to Tangle|Race", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UTTTRaceClockComponent> TTTRaceClock;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Two to Tangle|Race", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UTTTRaceRankingComponent> TTTRaceRanking;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Two to Tangle|Race", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UTTTFinishTrackerComponent> TTTFinishTracker;
+
 	UPROPERTY(ReplicatedUsing = OnRep_RoundPhase, BlueprintReadOnly, Category = "VNH|Round", meta = (AllowPrivateAccess = "true"))
 	EVNHRoundPhase RoundPhase = EVNHRoundPhase::WaitingForPlayers;
 

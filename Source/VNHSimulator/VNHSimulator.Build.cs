@@ -18,6 +18,7 @@ public class VNHSimulator : ModuleRules
 			"EnhancedInput",
 			"AIModule",
 			"GameplayTasks",
+			"GameplayTags",
 			"UMG",
 			"AssetRegistry",
 			"OnlineSubsystem",

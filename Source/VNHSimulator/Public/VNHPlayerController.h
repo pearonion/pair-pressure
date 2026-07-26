@@ -21,6 +21,7 @@ class UWidget;
 class UVNHAlienLocomotionComponent;
 class AVNHLobbyPlayButton;
 class AVNHShopperCharacter;
+class UTTTMatchHUDPresenterComponent;
 
 UCLASS()
 class VNHSIMULATOR_API AVNHPlayerController : public APlayerController
@@ -456,6 +457,8 @@ private:
 	TWeakObjectPtr<UWidget> MarkedSuspectsPanelWidget;
 	TWeakObjectPtr<UUserWidget> ComposureWidget;
 	TWeakObjectPtr<UUserWidget> PairPressureHUDWidget;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Two to Tangle|HUD", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UTTTMatchHUDPresenterComponent> TTTMatchHUDPresenter;
 	TWeakObjectPtr<UUserWidget> PairPressureControlHintWidget;
 	TWeakObjectPtr<UImage> PairPressureControlHintImages[6];
 	float PairPressurePromptRefreshAccumulator = 0.0f;

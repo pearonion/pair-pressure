@@ -3,6 +3,7 @@
 #include "PairPressure/PPCarryComponent.h"
 #include "PairPressure/PPGrabberComponent.h"
 #include "PairPressure/PPPhysicalStateComponent.h"
+#include "TwoToTangle/UI/Components/TTTPlayerHUDSourceComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/GameStateBase.h"
@@ -118,11 +119,15 @@ bool UPPPlayerActionRouterComponent::CanAirDive() const
 		? GetOwner()->FindComponentByClass<UPPGrabberComponent>()
 		: nullptr;
 	const UPPPhysicalStateComponent* PhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(GetOwner());
+	const UTTTPlayerHUDSourceComponent* HUDSource = GetOwner()
+		? GetOwner()->FindComponentByClass<UTTTPlayerHUDSourceComponent>()
+		: nullptr;
 	// The jump notification and the dive key can arrive in either order across
 	// the client/server boundary. While ascending from a jump, permit the dive
 	// immediately instead of waiting for the arm RPC to replicate back.
 	const bool bIsJumpAscent = OwnerMovement && OwnerMovement->IsFalling() && OwnerMovement->Velocity.Z > 0.0f;
 	return (bAirDiveArmed || bIsJumpAscent) && !bAirDiveActive && OwnerMovement && OwnerMovement->IsFalling()
+		&& (!HUDSource || HUDSource->CanLocalPlayerMove_Implementation())
 		&& (!PhysicalState || (!PhysicalState->IsRagdolled() && !PhysicalState->IsUnconscious()))
 		&& (!GrabberComponent || GrabberComponent->CanJumpOrDive());
 }

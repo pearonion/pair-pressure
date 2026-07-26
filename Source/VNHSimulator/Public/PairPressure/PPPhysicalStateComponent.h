@@ -3,12 +3,15 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "PairPressure/PPGameplayInterfaces.h"
+#include "TwoToTangle/Gameplay/PhysicalState/TTTPlayerActionPermissionInterface.h"
 #include "PPPhysicalStateComponent.generated.h"
 
 class UPrimitiveComponent;
+class UTTTMatchHUDConfig;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FPPPhysicalStateChanged, EPPPhysicalState, NewState, float, DazeNormalized);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FPPDazeChanged, float, DazeNormalized);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FPPCarriedRecoveryChanged, bool, bIsBeingCarried, bool, bCanDismount);
 
 // Compact server-authoritative physical-state presentation. Full throws use the
 // root-body snapshot, while course knockdowns use the same monotonic sequence to
@@ -50,7 +53,8 @@ UCLASS(ClassGroup = (PairPressure), BlueprintType, Blueprintable, meta = (Bluepr
 class VNHSIMULATOR_API UPPPhysicalStateComponent : public UActorComponent,
 	public IPPPhysicalStateInterface,
 	public IPPImpactReceiver,
-	public IPPCarryable
+	public IPPCarryable,
+	public ITTTPlayerActionPermissionInterface
 {
 	GENERATED_BODY()
 
@@ -69,6 +73,12 @@ public:
 	virtual bool CanCarry_Implementation(AActor* RequestedCarrier) const override;
 	virtual void OnCarryStarted_Implementation(AActor* NewCarrier) override;
 	virtual void OnCarryEnded_Implementation(AActor* PreviousCarrier) override;
+	virtual bool CanMove_Implementation() const override { return !IsRagdolled() && Carrier == nullptr; }
+	virtual bool CanJump_Implementation() const override { return CanMove_Implementation(); }
+	virtual bool CanDive_Implementation() const override { return CanMove_Implementation(); }
+	virtual bool CanGrab_Implementation() const override { return CanMove_Implementation(); }
+	virtual bool CanUseItem_Implementation() const override { return CanMove_Implementation(); }
+	virtual bool CanDismountCarry_Implementation() const override { return Carrier != nullptr && bCanDismountCarry; }
 
 	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Physical State")
 	EPPPhysicalState GetCurrentPhysicalState() const { return PhysicalState; }
@@ -87,6 +97,18 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Physical State")
 	bool IsUnconscious() const { return PhysicalState == EPPPhysicalState::Unconscious; }
 
+	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Carry")
+	bool IsBeingCarried() const { return Carrier != nullptr; }
+
+	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Carry")
+	bool IsCarryDismountAvailable() const { return bCanDismountCarry; }
+
+	UFUNCTION(BlueprintPure, Category = "Pair Pressure|Carry")
+	AActor* GetCarrier() const { return Carrier; }
+
+	UFUNCTION(BlueprintCallable, Category = "Pair Pressure|Carry")
+	void RequestCarryDismount();
+
 	UFUNCTION(BlueprintCallable, Category = "Pair Pressure|Physical State")
 	void AddReviveProgress(float DeltaSeconds, AActor* Reviver);
 
@@ -95,6 +117,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Pair Pressure|Physical State|Debug")
 	void RequestDebugRecovery();
+
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Pair Pressure|Physical State|Debug")
+	void DebugSetDazeNormalized(float NormalizedDaze);
 
 	// Authority-only throw entry point used by the dedicated grab dummy. It
 	// starts the normal ragdoll/recovery path while preserving an authored launch.
@@ -128,6 +153,9 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Pair Pressure|Physical State")
 	FPPDazeChanged OnDazeChanged;
 
+	UPROPERTY(BlueprintAssignable, Category = "Pair Pressure|Carry")
+	FPPCarriedRecoveryChanged OnCarriedRecoveryChanged;
+
 	static UPPPhysicalStateComponent* FindPhysicalStateComponent(const AActor* Actor);
 
 private:
@@ -143,6 +171,9 @@ private:
 	UFUNCTION(Server, Reliable)
 	void ServerRequestDebugRecovery();
 
+	UFUNCTION(Server, Reliable)
+	void ServerRequestCarryDismount();
+
 	UFUNCTION()
 	void OnRep_PhysicalState();
 
@@ -151,6 +182,9 @@ private:
 
 	UFUNCTION()
 	void OnRep_RagdollNetworkState();
+
+	UFUNCTION()
+	void OnRep_CarriedRecoveryState();
 
 	void ApplyImpactAuthoritative(const FPPImpactData& ImpactData);
 	void SetPhysicalStateAuthoritative(
@@ -185,6 +219,12 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_RagdollNetworkState)
 	FPPRagdollNetworkState RagdollNetworkState;
 
+	UPROPERTY(ReplicatedUsing = OnRep_CarriedRecoveryState, VisibleInstanceOnly, Category = "Pair Pressure|Carry")
+	TObjectPtr<AActor> Carrier = nullptr;
+
+	UPROPERTY(ReplicatedUsing = OnRep_CarriedRecoveryState, VisibleInstanceOnly, Category = "Pair Pressure|Carry")
+	bool bCanDismountCarry = false;
+
 	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Physical State", meta = (ClampMin = "0.0"))
 	float MaxDaze = 100.0f;
 
@@ -199,6 +239,15 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Physical State", meta = (ClampMin = "0.1"))
 	float TeammateReviveSeconds = 3.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Carry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float CarriedRecoveryThresholdNormalized = 0.3f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Carry", meta = (ClampMin = "0.0"))
+	float CarriedDazeRecoveryPerSecond = 20.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Pair Pressure|Carry")
+	TSoftObjectPtr<UTTTMatchHUDConfig> MatchHUDConfig;
 
 	float ReviveProgressSeconds = 0.0f;
 	double LastKnockdownTimeSeconds = -100.0;

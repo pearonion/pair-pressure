@@ -119,7 +119,7 @@ AActor* UPPCarryComponent::FindBestAssistTarget() const
 	{
 		AActor* Candidate = Hit.GetActor();
 		UPPPhysicalStateComponent* CandidatePhysicalState = UPPPhysicalStateComponent::FindPhysicalStateComponent(Candidate);
-		if (!Candidate || !CandidatePhysicalState || !CandidatePhysicalState->IsRagdolled()
+		if (!Candidate || !CandidatePhysicalState || !CandidatePhysicalState->IsUnconscious()
 			|| !OwnerTeam->IsFriendlyTo_Implementation(Candidate))
 		{
 			continue;
