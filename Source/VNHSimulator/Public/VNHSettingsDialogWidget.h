@@ -11,7 +11,8 @@ class USlider;
 class UTextBlock;
 class UVerticalBox;
 class UWidgetSwitcher;
-class UVNHInputBindingKeySelector;
+class UVNHInputBindingButton;
+class FVNHInputBindingCaptureProcessor;
 enum class EVNHInputPromptFamily : uint8;
 
 UCLASS()
@@ -21,6 +22,7 @@ class VNHSIMULATOR_API UVNHSettingsDialogWidget : public UUserWidget
 
 public:
 	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 	UFUNCTION(BlueprintCallable, Category = "VNH|Settings")
@@ -38,7 +40,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Settings")
 	void ApplyMuteWhenUnfocusedSettings();
 
-	void HandleInputBindingSelected(UVNHInputBindingKeySelector* BindingSelector, FKey NewKey);
+	void BeginInputBindingCapture(UVNHInputBindingButton* BindingButton);
+	bool HandleCapturedInput(FKey NewKey);
 
 protected:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
@@ -165,14 +168,17 @@ private:
 	void StyleComboBox(UComboBoxString* ComboBox) const;
 	void BuildInputBindingRows();
 	void RefreshInputBindingRows();
+	void EndInputBindingCapture();
 	void AddInputBindingRow(
 		UVerticalBox* BindingList,
 		const FText& ActionLabel,
 		FName MappingName,
 		bool bAxisMapping,
 		float AxisScale,
+		bool bAllowMouse,
 		bool bAllowKeyboard,
-		bool bAllowGamepad);
+		bool bAllowGamepad,
+		FKey ControllerDisplayKey);
 
 	UFUNCTION()
 	void HandleAudioSliderChanged(float Value);
@@ -217,8 +223,12 @@ private:
 	void HandleControllerLayoutChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
 
 	UPROPERTY(Transient)
-	TArray<TObjectPtr<UVNHInputBindingKeySelector>> InputBindingSelectors;
+	TArray<TObjectPtr<UVNHInputBindingButton>> InputBindingButtons;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UVNHInputBindingButton> ActiveInputBindingButton;
+
+	TSharedPtr<FVNHInputBindingCaptureProcessor> InputBindingCaptureProcessor;
 	EVNHInputPromptFamily CachedPromptFamily;
 	float InputPromptRefreshAccumulator = 0.0f;
 };

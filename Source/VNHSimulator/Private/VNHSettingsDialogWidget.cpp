@@ -3,13 +3,16 @@
 #include "AudioDevice.h"
 #include "Containers/Ticker.h"
 #include "Components/Button.h"
+#include "Components/Border.h"
 #include "Components/CheckBox.h"
 #include "Components/ComboBoxString.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/Image.h"
-#include "Components/InputKeySelector.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
 #include "Components/PanelWidget.h"
+#include "Components/ScaleBox.h"
 #include "Components/SizeBox.h"
 #include "Components/Slider.h"
 #include "Components/TextBlock.h"
@@ -18,6 +21,8 @@
 #include "Components/WidgetSwitcher.h"
 #include "Engine/Engine.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Framework/Application/IInputProcessor.h"
+#include "Input/Events.h"
 #include "GameFramework/GameUserSettings.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/SaveGame.h"
@@ -28,7 +33,7 @@
 #include "Styling/SlateTypes.h"
 #include "UObject/UnrealType.h"
 #include "Blueprint/WidgetTree.h"
-#include "VNHInputBindingKeySelector.h"
+#include "VNHInputBindingButton.h"
 #include "VNHInputPromptLibrary.h"
 #include "VNHLog.h"
 #include "VNHPlayerController.h"
@@ -165,6 +170,58 @@ float BrightnessToDisplayGamma(float Brightness)
 }
 }
 
+class FVNHInputBindingCaptureProcessor final : public IInputProcessor
+{
+public:
+	explicit FVNHInputBindingCaptureProcessor(UVNHSettingsDialogWidget* InSettingsWidget)
+		: SettingsWidget(InSettingsWidget)
+	{
+	}
+
+	virtual void Tick(
+		const float DeltaTime,
+		FSlateApplication& SlateApp,
+		TSharedRef<ICursor> Cursor) override
+	{
+	}
+
+	virtual bool HandleKeyDownEvent(
+		FSlateApplication& SlateApp,
+		const FKeyEvent& InKeyEvent) override
+	{
+		return ForwardKey(InKeyEvent.GetKey());
+	}
+
+	virtual bool HandleMouseButtonDownEvent(
+		FSlateApplication& SlateApp,
+		const FPointerEvent& MouseEvent) override
+	{
+		return ForwardKey(MouseEvent.GetEffectingButton());
+	}
+
+	virtual bool HandleAnalogInputEvent(
+		FSlateApplication& SlateApp,
+		const FAnalogInputEvent& InAnalogInputEvent) override
+	{
+		return FMath::Abs(InAnalogInputEvent.GetAnalogValue()) >= 0.5f
+			&& ForwardKey(InAnalogInputEvent.GetKey());
+	}
+
+	virtual const TCHAR* GetDebugName() const override
+	{
+		return TEXT("VNHInputBindingCapture");
+	}
+
+private:
+	bool ForwardKey(const FKey Key) const
+	{
+		return SettingsWidget.IsValid()
+			&& SettingsWidget->HandleCapturedInput(Key);
+	}
+
+	TWeakObjectPtr<UVNHSettingsDialogWidget> SettingsWidget;
+};
+
 void UVNHSettingsDialogWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
@@ -256,6 +313,12 @@ void UVNHSettingsDialogWidget::NativeConstruct()
 	SetTab(0, NSLOCTEXT("VNH", "SettingsLoaded", "Settings loaded."));
 }
 
+void UVNHSettingsDialogWidget::NativeDestruct()
+{
+	EndInputBindingCapture();
+	Super::NativeDestruct();
+}
+
 void UVNHSettingsDialogWidget::NativeTick(const FGeometry& MyGeometry, const float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
@@ -267,7 +330,7 @@ void UVNHSettingsDialogWidget::NativeTick(const FGeometry& MyGeometry, const flo
 
 	InputPromptRefreshAccumulator = 0.0f;
 	const EVNHInputPromptFamily CurrentPromptFamily =
-		UVNHInputPromptLibrary::GetPromptFamily(GetOwningPlayer());
+		UVNHInputPromptLibrary::GetControllerPromptFamily(GetOwningPlayer());
 	if (CurrentPromptFamily != CachedPromptFamily)
 	{
 		CachedPromptFamily = CurrentPromptFamily;
@@ -706,7 +769,7 @@ void UVNHSettingsDialogWidget::BuildInputBindingRows()
 		return;
 	}
 
-	if (InputBindingSelectors.Num() > 0)
+	if (InputBindingButtons.Num() > 0)
 	{
 		RefreshInputBindingRows();
 		return;
@@ -763,42 +826,36 @@ void UVNHSettingsDialogWidget::BuildInputBindingRows()
 		HeaderLabel->SetColorAndOpacity(FSlateColor(FLinearColor(0.0f, 0.92f, 0.78f, 1.0f)));
 		HeaderLabel->SetFont(FSlateFontInfo(
 			FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 14)));
+		HeaderLabel->SetJustification(ETextJustify::Center);
 		HeaderSize->AddChild(HeaderLabel);
-		HeaderRow->AddChildToHorizontalBox(HeaderSize);
+		if (UHorizontalBoxSlot* HeaderSlot =
+			HeaderRow->AddChildToHorizontalBox(HeaderSize))
+		{
+			HeaderSlot->SetVerticalAlignment(VAlign_Center);
+		}
 	};
-	AddHeaderCell(NSLOCTEXT("VNH", "ControlHeaderAction", "ACTION"), 250.0f);
-	AddHeaderCell(NSLOCTEXT("VNH", "ControlHeaderKeyboard", "KEYBOARD / MOUSE"), 285.0f);
-	AddHeaderCell(NSLOCTEXT("VNH", "ControlHeaderController", "CONTROLLER"), 285.0f);
+	AddHeaderCell(NSLOCTEXT("VNH", "ControlHeaderAction", "ACTION"), 300.0f);
+	AddHeaderCell(
+		NSLOCTEXT("VNH", "ControlHeaderKeyboardMouse", "KEYBOARD + MOUSE"),
+		240.0f);
+	AddHeaderCell(NSLOCTEXT("VNH", "ControlHeaderController", "CONTROLLER"), 180.0f);
 
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindMoveForward", "MOVE FORWARD"), TEXT("VNH_AlienMoveForward"), true, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindMoveBackward", "MOVE BACKWARD"), TEXT("VNH_AlienMoveForward"), true, -1.0f, true, false);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindMoveLeft", "MOVE LEFT"), TEXT("VNH_AlienMoveRight"), true, -1.0f, true, false);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindMoveRight", "MOVE RIGHT"), TEXT("VNH_AlienMoveRight"), true, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindLookHorizontal", "LOOK HORIZONTAL"), TEXT("Turn Right / Left Gamepad"), true, 1.0f, false, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindLookVertical", "LOOK VERTICAL"), TEXT("Look Up / Down Gamepad"), true, 1.0f, false, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindJump", "JUMP / CLIMB"), TEXT("Jump"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindDive", "DIVE (JUMP + DIVE IN AIR)"), TEXT("PP_Dive"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindGrab", "GRAB / HOLD"), TEXT("PP_Grab"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindThrow", "THROW (HOLD TO CHARGE)"), TEXT("VNH_AlienActNatural"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindAssist", "ASSIST PARTNER"), TEXT("PP_Assist"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindInteract", "INTERACT"), TEXT("VNH_Interact"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindCrouch", "CROUCH"), TEXT("Crouch"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindSprint", "FAST WALK / SPRINT"), TEXT("VNH_AlienFastWalk"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindFocus", "TARGET FOCUS"), TEXT("VNH_TargetFocus"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindQuickChat", "QUICK CHAT"), TEXT("VNH_QuickChat"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindPickUp", "PICK UP"), TEXT("VNH_PickUp"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindDrop", "DROP"), TEXT("VNH_Drop"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindRole1", "ROLE ACTION 1"), TEXT("VNH_RoleAction1"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindRole2", "ROLE ACTION 2"), TEXT("VNH_RoleAction2"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindRole3", "ROLE ACTION 3"), TEXT("VNH_RoleAction3"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindRole4", "ROLE ACTION 4"), TEXT("VNH_RoleAction4"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindRole5", "ROLE ACTION 5"), TEXT("VNH_RoleAction5"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindRole6", "ROLE ACTION 6"), TEXT("VNH_RoleAction6"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindMark", "MARK SUSPECT"), TEXT("VNH_MarkSuspect"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindFakeAccuse", "FAKE ACCUSE"), TEXT("VNH_FakeAccuse"), false, 1.0f, true, true);
-	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindAccuse", "ACCUSE"), TEXT("VNH_Accuse"), false, 1.0f, true, true);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindMoveForward", "MOVE FORWARD"), TEXT("VNH_AlienMoveForward"), true, 1.0f, false, true, true, EKeys::Gamepad_LeftStick_Up);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindMoveBackward", "MOVE BACKWARD"), TEXT("VNH_AlienMoveForward"), true, -1.0f, false, true, true, EKeys::Gamepad_LeftStick_Down);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindMoveLeft", "MOVE LEFT"), TEXT("VNH_AlienMoveRight"), true, -1.0f, false, true, true, EKeys::Gamepad_LeftStick_Left);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindMoveRight", "MOVE RIGHT"), TEXT("VNH_AlienMoveRight"), true, 1.0f, false, true, true, EKeys::Gamepad_LeftStick_Right);
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindLookHorizontal", "LOOK HORIZONTAL"), TEXT("Turn Right / Left Gamepad"), true, 1.0f, false, false, true, FKey());
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindLookVertical", "LOOK VERTICAL"), TEXT("Look Up / Down Gamepad"), true, 1.0f, false, false, true, FKey());
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindJump", "JUMP / CLIMB"), TEXT("Jump"), false, 1.0f, true, true, true, FKey());
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindDive", "DIVE (JUMP + DIVE IN AIR)"), TEXT("PP_Dive"), false, 1.0f, true, true, true, FKey());
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindGrab", "GRAB / HOLD / PICK UP"), TEXT("PP_Grab"), false, 1.0f, true, true, true, FKey());
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindThrow", "THROW (HOLD TO CHARGE)"), TEXT("VNH_AlienActNatural"), false, 1.0f, true, true, true, FKey());
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindAssist", "ASSIST PARTNER"), TEXT("PP_Assist"), false, 1.0f, true, true, true, FKey());
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindInteract", "INTERACT"), TEXT("VNH_Interact"), false, 1.0f, true, true, true, FKey());
+	AddInputBindingRow(BindingList, NSLOCTEXT("VNH", "BindCrouch", "CROUCH"), TEXT("Crouch"), false, 1.0f, true, true, true, FKey());
 
-	CachedPromptFamily = UVNHInputPromptLibrary::GetPromptFamily(GetOwningPlayer());
+	CachedPromptFamily =
+		UVNHInputPromptLibrary::GetControllerPromptFamily(GetOwningPlayer());
 	RefreshInputBindingRows();
 }
 
@@ -808,8 +865,10 @@ void UVNHSettingsDialogWidget::AddInputBindingRow(
 	const FName MappingName,
 	const bool bAxisMapping,
 	const float AxisScale,
+	const bool bAllowMouse,
 	const bool bAllowKeyboard,
-	const bool bAllowGamepad)
+	const bool bAllowGamepad,
+	const FKey ControllerDisplayKey)
 {
 	if (!BindingList || !WidgetTree)
 	{
@@ -818,121 +877,319 @@ void UVNHSettingsDialogWidget::AddInputBindingRow(
 
 	UHorizontalBox* BindingRow = WidgetTree->ConstructWidget<UHorizontalBox>(
 		UHorizontalBox::StaticClass());
-	if (UVerticalBoxSlot* BindingRowSlot = BindingList->AddChildToVerticalBox(BindingRow))
+	const int32 BindingRowIndex =
+		FMath::Max(0, BindingList->GetChildrenCount() - 1);
+	UBorder* RowBackground =
+		WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
+	RowBackground->SetBrushColor(
+		BindingRowIndex % 2 == 0
+			? FLinearColor(0.015f, 0.025f, 0.03f, 0.12f)
+			: FLinearColor(0.04f, 0.065f, 0.07f, 0.32f));
+	RowBackground->SetPadding(FMargin(0.0f));
+	RowBackground->AddChild(BindingRow);
+	if (UVerticalBoxSlot* BindingRowSlot =
+		BindingList->AddChildToVerticalBox(RowBackground))
 	{
-		BindingRowSlot->SetPadding(FMargin(0.0f, 5.0f));
+		BindingRowSlot->SetPadding(FMargin(0.0f, 1.0f));
 	}
 
 	USizeBox* LabelSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-	LabelSize->SetWidthOverride(250.0f);
+	LabelSize->SetWidthOverride(300.0f);
+	LabelSize->SetHeightOverride(54.0f);
+	UOverlay* LabelContent =
+		WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+	LabelSize->AddChild(LabelContent);
 	UTextBlock* LabelText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
 	LabelText->SetText(ActionLabel);
 	LabelText->SetColorAndOpacity(FSlateColor(FLinearColor(0.92f, 0.90f, 0.85f, 1.0f)));
 	LabelText->SetFont(FSlateFontInfo(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"), 13)));
-	LabelSize->AddChild(LabelText);
-	BindingRow->AddChildToHorizontalBox(LabelSize);
-
-	auto AddBindingCell = [this, BindingRow, MappingName, bAxisMapping, AxisScale](
-		const bool bGamepadCell,
-		const bool bCellEnabled)
+	LabelText->SetJustification(ETextJustify::Left);
+	if (UOverlaySlot* LabelContentSlot =
+		LabelContent->AddChildToOverlay(LabelText))
 	{
-		USizeBox* CellSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-		CellSize->SetWidthOverride(285.0f);
-		UHorizontalBox* CellRow = WidgetTree->ConstructWidget<UHorizontalBox>(
-			UHorizontalBox::StaticClass());
-		CellSize->AddChild(CellRow);
-		BindingRow->AddChildToHorizontalBox(CellSize);
+		LabelContentSlot->SetHorizontalAlignment(HAlign_Left);
+		LabelContentSlot->SetVerticalAlignment(VAlign_Center);
+		LabelContentSlot->SetPadding(FMargin(10.0f, 0.0f, 14.0f, 0.0f));
+	}
+	if (UHorizontalBoxSlot* LabelSlot = BindingRow->AddChildToHorizontalBox(LabelSize))
+	{
+		LabelSlot->SetVerticalAlignment(VAlign_Center);
+	}
 
-		if (!bCellEnabled)
+	auto CreateBindingButton =
+		[this, MappingName, bAxisMapping](
+			const EVNHInputBindingDevice BindingDevice,
+			const float BindingAxisScale,
+			const FKey DisplayOverrideKey)
+	{
+		UVNHInputBindingButton* BindingButton =
+			WidgetTree->ConstructWidget<UVNHInputBindingButton>(
+				UVNHInputBindingButton::StaticClass());
+		FButtonStyle IconButtonStyle;
+		FSlateBrush NormalBrush;
+		NormalBrush.DrawAs = ESlateBrushDrawType::NoDrawType;
+		FSlateBrush HoveredBrush = NormalBrush;
+		HoveredBrush.DrawAs = ESlateBrushDrawType::Box;
+		HoveredBrush.TintColor =
+			FSlateColor(FLinearColor(0.0f, 0.92f, 0.78f, 0.16f));
+		FSlateBrush PressedBrush = NormalBrush;
+		PressedBrush.DrawAs = ESlateBrushDrawType::Box;
+		PressedBrush.TintColor =
+			FSlateColor(FLinearColor(0.0f, 0.92f, 0.78f, 0.28f));
+		IconButtonStyle.SetNormal(NormalBrush);
+		IconButtonStyle.SetHovered(HoveredBrush);
+		IconButtonStyle.SetPressed(PressedBrush);
+		IconButtonStyle.SetDisabled(NormalBrush);
+		IconButtonStyle.SetNormalPadding(FMargin(3.0f));
+		IconButtonStyle.SetPressedPadding(FMargin(3.0f));
+		BindingButton->SetStyle(IconButtonStyle);
+
+		UOverlay* ButtonContent =
+			WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+		BindingButton->AddChild(ButtonContent);
+
+		USizeBox* IconFrame =
+			WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		IconFrame->SetWidthOverride(64.0f);
+		IconFrame->SetHeightOverride(42.0f);
+		UScaleBox* IconScaleBox =
+			WidgetTree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass());
+		IconScaleBox->SetStretch(EStretch::ScaleToFit);
+		IconScaleBox->SetStretchDirection(EStretchDirection::DownOnly);
+		IconFrame->AddChild(IconScaleBox);
+		UImage* PromptImage =
+			WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		IconScaleBox->AddChild(PromptImage);
+		if (UOverlaySlot* PromptSlot =
+			ButtonContent->AddChildToOverlay(IconFrame))
+		{
+			PromptSlot->SetHorizontalAlignment(HAlign_Center);
+			PromptSlot->SetVerticalAlignment(VAlign_Center);
+		}
+
+		UTextBlock* FallbackText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+		FallbackText->SetColorAndOpacity(
+			FSlateColor(FLinearColor(0.72f, 0.76f, 0.79f, 1.0f)));
+		FallbackText->SetFont(FSlateFontInfo(
+			FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 13)));
+		FallbackText->SetJustification(ETextJustify::Center);
+		if (UOverlaySlot* FallbackSlot = ButtonContent->AddChildToOverlay(FallbackText))
+		{
+			FallbackSlot->SetHorizontalAlignment(HAlign_Center);
+			FallbackSlot->SetVerticalAlignment(VAlign_Center);
+		}
+
+		UBorder* WaitingPopup = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
+		WaitingPopup->SetBrushColor(FLinearColor(0.025f, 0.05f, 0.06f, 0.98f));
+		WaitingPopup->SetPadding(FMargin(10.0f, 5.0f));
+		WaitingPopup->SetVisibility(ESlateVisibility::Collapsed);
+		UTextBlock* WaitingText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+		WaitingText->SetText(NSLOCTEXT("VNH", "WaitingForInput", "PRESS INPUT"));
+		WaitingText->SetColorAndOpacity(
+			FSlateColor(FLinearColor(0.0f, 0.92f, 0.78f, 1.0f)));
+		WaitingText->SetFont(FSlateFontInfo(
+			FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 11)));
+		WaitingText->SetJustification(ETextJustify::Center);
+		WaitingPopup->AddChild(WaitingText);
+		if (UOverlaySlot* PopupSlot = ButtonContent->AddChildToOverlay(WaitingPopup))
+		{
+			PopupSlot->SetHorizontalAlignment(HAlign_Center);
+			PopupSlot->SetVerticalAlignment(VAlign_Center);
+		}
+
+		BindingButton->InitializeBinding(
+			this,
+			MappingName,
+			bAxisMapping,
+			BindingAxisScale,
+			BindingDevice,
+			DisplayOverrideKey,
+			PromptImage,
+			FallbackText,
+			WaitingPopup);
+		InputBindingButtons.Add(BindingButton);
+		return BindingButton;
+	};
+
+	auto AddBindingColumn =
+		[this, BindingRow, &CreateBindingButton](
+			const float ColumnWidth,
+			const TOptional<EVNHInputBindingDevice> BindingDevice,
+			const float BindingAxisScale,
+			const FKey DisplayOverrideKey)
+	{
+		USizeBox* ColumnSize =
+			WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		ColumnSize->SetWidthOverride(ColumnWidth);
+		ColumnSize->SetHeightOverride(54.0f);
+		UOverlay* ColumnContent =
+			WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+		ColumnSize->AddChild(ColumnContent);
+
+		if (!BindingDevice.IsSet())
 		{
 			UTextBlock* NotApplicableText =
 				WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
 			NotApplicableText->SetText(NSLOCTEXT("VNH", "BindingNotApplicable", "-"));
 			NotApplicableText->SetColorAndOpacity(
 				FSlateColor(FLinearColor(0.30f, 0.33f, 0.36f, 1.0f)));
-			CellRow->AddChildToHorizontalBox(NotApplicableText);
-			return;
+			NotApplicableText->SetJustification(ETextJustify::Center);
+			if (UOverlaySlot* NotApplicableSlot =
+				ColumnContent->AddChildToOverlay(NotApplicableText))
+			{
+				NotApplicableSlot->SetHorizontalAlignment(HAlign_Center);
+				NotApplicableSlot->SetVerticalAlignment(VAlign_Center);
+			}
+		}
+		else
+		{
+			UVNHInputBindingButton* BindingButton =
+				CreateBindingButton(
+					BindingDevice.GetValue(),
+					BindingAxisScale,
+					DisplayOverrideKey);
+			if (UOverlaySlot* ButtonSlot =
+				ColumnContent->AddChildToOverlay(BindingButton))
+			{
+				ButtonSlot->SetPadding(FMargin(5.0f, 3.0f));
+				ButtonSlot->SetHorizontalAlignment(HAlign_Center);
+				ButtonSlot->SetVerticalAlignment(VAlign_Center);
+			}
 		}
 
-		USizeBox* IconSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-		IconSize->SetWidthOverride(42.0f);
-		IconSize->SetHeightOverride(42.0f);
-		UImage* PromptImage = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
-		IconSize->AddChild(PromptImage);
-		if (UHorizontalBoxSlot* IconSlot = CellRow->AddChildToHorizontalBox(IconSize))
+		if (UHorizontalBoxSlot* ColumnSlot =
+			BindingRow->AddChildToHorizontalBox(ColumnSize))
 		{
-			IconSlot->SetPadding(FMargin(0.0f, 0.0f, 8.0f, 0.0f));
-			IconSlot->SetVerticalAlignment(VAlign_Center);
+			ColumnSlot->SetHorizontalAlignment(HAlign_Center);
+			ColumnSlot->SetVerticalAlignment(VAlign_Center);
 		}
-
-		UVNHInputBindingKeySelector* BindingSelector =
-			WidgetTree->ConstructWidget<UVNHInputBindingKeySelector>(
-				UVNHInputBindingKeySelector::StaticClass());
-		if (UHorizontalBoxSlot* SelectorSlot =
-			CellRow->AddChildToHorizontalBox(BindingSelector))
-		{
-			SelectorSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-			SelectorSlot->SetVerticalAlignment(VAlign_Center);
-		}
-		BindingSelector->InitializeBinding(
-			this,
-			MappingName,
-			bAxisMapping,
-			AxisScale,
-			bGamepadCell,
-			PromptImage);
-		InputBindingSelectors.Add(BindingSelector);
 	};
 
-	AddBindingCell(false, bAllowKeyboard);
-	AddBindingCell(true, bAllowGamepad);
+	TOptional<EVNHInputBindingDevice> KeyboardMouseDevice;
+	if (bAllowKeyboard || bAllowMouse)
+	{
+		KeyboardMouseDevice = EVNHInputBindingDevice::KeyboardMouse;
+	}
+	AddBindingColumn(240.0f, KeyboardMouseDevice, AxisScale, FKey());
+
+	TOptional<EVNHInputBindingDevice> ControllerDevice;
+	if (bAllowGamepad)
+	{
+		ControllerDevice = EVNHInputBindingDevice::Controller;
+	}
+	const float ControllerAxisScale =
+		bAxisMapping && ControllerDisplayKey.IsValid()
+			? 1.0f
+			: AxisScale;
+	AddBindingColumn(
+		180.0f,
+		ControllerDevice,
+		ControllerAxisScale,
+		ControllerDisplayKey);
 }
 
 void UVNHSettingsDialogWidget::RefreshInputBindingRows()
 {
-	for (UVNHInputBindingKeySelector* BindingSelector : InputBindingSelectors)
+	for (UVNHInputBindingButton* BindingButton : InputBindingButtons)
 	{
-		if (BindingSelector)
+		if (BindingButton)
 		{
-			BindingSelector->RefreshFromInputSettings();
+			BindingButton->RefreshFromInputSettings();
 		}
 	}
 }
 
-void UVNHSettingsDialogWidget::HandleInputBindingSelected(
-	UVNHInputBindingKeySelector* BindingSelector,
-	const FKey NewKey)
+void UVNHSettingsDialogWidget::BeginInputBindingCapture(
+	UVNHInputBindingButton* BindingButton)
 {
-	if (!BindingSelector || !NewKey.IsValid())
+	EndInputBindingCapture();
+	if (!BindingButton || !FSlateApplication::IsInitialized())
 	{
 		return;
 	}
 
-	const bool bGamepadBinding = BindingSelector->IsGamepadBinding();
-	if (NewKey.IsGamepadKey() != bGamepadBinding)
+	ActiveInputBindingButton = BindingButton;
+	ActiveInputBindingButton->SetWaitingForInput(true);
+	InputBindingCaptureProcessor =
+		MakeShared<FVNHInputBindingCaptureProcessor>(this);
+	FSlateApplication::Get().RegisterInputPreProcessor(
+		InputBindingCaptureProcessor,
+		0);
+	SetStatus(NSLOCTEXT(
+		"VNH",
+		"WaitingForInputStatus",
+		"Press the new input. Escape cancels."));
+}
+
+void UVNHSettingsDialogWidget::EndInputBindingCapture()
+{
+	if (ActiveInputBindingButton)
 	{
-		SetStatus(bGamepadBinding
-			? NSLOCTEXT("VNH", "ControllerBindingRequired", "Choose a controller input for the controller column.")
-			: NSLOCTEXT("VNH", "KeyboardBindingRequired", "Choose a keyboard or mouse input for the keyboard column."));
-		BindingSelector->RefreshFromInputSettings();
-		return;
+		ActiveInputBindingButton->SetWaitingForInput(false);
+	}
+	ActiveInputBindingButton = nullptr;
+
+	if (InputBindingCaptureProcessor.IsValid()
+		&& FSlateApplication::IsInitialized())
+	{
+		FSlateApplication::Get().UnregisterInputPreProcessor(
+			InputBindingCaptureProcessor);
+	}
+	InputBindingCaptureProcessor.Reset();
+}
+
+bool UVNHSettingsDialogWidget::HandleCapturedInput(const FKey NewKey)
+{
+	UVNHInputBindingButton* BindingButton = ActiveInputBindingButton;
+	if (!BindingButton || !NewKey.IsValid())
+	{
+		return false;
+	}
+	if (NewKey == EKeys::Escape)
+	{
+		EndInputBindingCapture();
+		SetStatus(NSLOCTEXT("VNH", "BindingCancelled", "Input binding cancelled."));
+		return true;
 	}
 
-	const bool bBindingUpdated = BindingSelector->IsAxisMapping()
-		? UVNHInputPromptLibrary::RebindAxis(
-			BindingSelector->GetMappingName(),
-			BindingSelector->GetAxisScale(),
+	const EVNHInputBindingDevice BindingDevice =
+		BindingButton->GetBindingDevice();
+	if (!UVNHInputPromptLibrary::IsKeyForBindingDevice(NewKey, BindingDevice))
+	{
+		switch (BindingDevice)
+		{
+		case EVNHInputBindingDevice::Mouse:
+			SetStatus(NSLOCTEXT("VNH", "MouseBindingRequired", "Choose a mouse input for the mouse column."));
+			break;
+		case EVNHInputBindingDevice::Controller:
+			SetStatus(NSLOCTEXT("VNH", "ControllerBindingRequired", "Choose a controller input for the controller column."));
+			break;
+		case EVNHInputBindingDevice::KeyboardMouse:
+			SetStatus(NSLOCTEXT("VNH", "KeyboardMouseBindingRequired", "Choose a keyboard or mouse input for the keyboard + mouse column."));
+			break;
+		default:
+			SetStatus(NSLOCTEXT("VNH", "KeyboardBindingRequired", "Choose a keyboard input for the keyboard column."));
+			break;
+		}
+		return true;
+	}
+
+	EndInputBindingCapture();
+	const bool bBindingUpdated = BindingButton->IsAxisMapping()
+		? UVNHInputPromptLibrary::RebindAxisForDevice(
+			BindingButton->GetMappingName(),
+			BindingButton->GetAxisScale(),
 			NewKey,
-			bGamepadBinding)
-		: UVNHInputPromptLibrary::RebindAction(
-			BindingSelector->GetMappingName(),
+			BindingDevice)
+		: UVNHInputPromptLibrary::RebindActionForDevice(
+			BindingButton->GetMappingName(),
 			NewKey,
-			bGamepadBinding);
+			BindingDevice);
 	if (!bBindingUpdated)
 	{
 		SetStatus(NSLOCTEXT("VNH", "BindingFailed", "That input could not be rebound."));
-		BindingSelector->RefreshFromInputSettings();
-		return;
+		BindingButton->RefreshFromInputSettings();
+		return true;
 	}
 
 	UVNHInputPromptLibrary::RefreshPlayerInput(GetOwningPlayer());
@@ -944,7 +1201,8 @@ void UVNHSettingsDialogWidget::HandleInputBindingSelected(
 	RefreshInputBindingRows();
 	SetStatus(FText::Format(
 		NSLOCTEXT("VNH", "BindingUpdated", "{0} updated."),
-		FText::FromName(BindingSelector->GetMappingName())));
+		FText::FromName(BindingButton->GetMappingName())));
+	return true;
 }
 
 void UVNHSettingsDialogWidget::ApplyAudioSettings()

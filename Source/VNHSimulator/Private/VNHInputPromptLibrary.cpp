@@ -36,7 +36,7 @@ bool IsVNHGamepadDevice(
 FString VNHKeyboardTexturePath(const FString& TextureToken)
 {
 	return FString::Printf(
-		TEXT("/Game/Input_Prompts_Pack/Keyboard_Mouse/Dark/T_%s_Key_Dark.T_%s_Key_Dark"),
+		TEXT("/Game/Input_Prompts_Pack/Keyboard_Mouse/White/T_%s_Key_White.T_%s_Key_White"),
 		*TextureToken,
 		*TextureToken);
 }
@@ -58,9 +58,10 @@ FString VNHGamepadTexturePath(
 		Prefix = TEXT("P5");
 	}
 
-	const FString AssetName = FString::Printf(TEXT("T_%s_%s"), Prefix, *TextureToken);
+	const FString AssetName =
+		FString::Printf(TEXT("T_%s_%s_Light"), Prefix, *TextureToken);
 	return FString::Printf(
-		TEXT("/Game/Input_Prompts_Pack/%s/Default/%s.%s"),
+		TEXT("/Game/Input_Prompts_Pack/%s/Light/%s.%s"),
 		Folder,
 		*AssetName,
 		*AssetName);
@@ -151,6 +152,12 @@ EVNHInputPromptFamily UVNHInputPromptLibrary::GetPromptFamily(const APlayerContr
 		return EVNHInputPromptFamily::KeyboardMouse;
 	}
 
+	return GetControllerPromptFamily(PlayerController);
+}
+
+EVNHInputPromptFamily UVNHInputPromptLibrary::GetControllerPromptFamily(
+	const APlayerController* PlayerController)
+{
 	const FString ControllerIdentifier = GetControllerIdentifier(PlayerController);
 	if (ControllerIdentifier.Contains(TEXT("DualSense"), ESearchCase::IgnoreCase)
 		|| ControllerIdentifier.Contains(TEXT("PS5"), ESearchCase::IgnoreCase)
@@ -205,6 +212,65 @@ FKey UVNHInputPromptLibrary::GetPrimaryAxisKey(
 	return FKey();
 }
 
+bool UVNHInputPromptLibrary::IsKeyForBindingDevice(
+	const FKey Key,
+	const EVNHInputBindingDevice BindingDevice)
+{
+	const bool bMouseKey = Key.IsMouseButton()
+		|| Key.GetFName().ToString().StartsWith(TEXT("Mouse"));
+	switch (BindingDevice)
+	{
+	case EVNHInputBindingDevice::Mouse:
+		return bMouseKey;
+	case EVNHInputBindingDevice::Controller:
+		return Key.IsGamepadKey();
+	case EVNHInputBindingDevice::KeyboardMouse:
+		return !Key.IsGamepadKey();
+	default:
+		return !Key.IsGamepadKey() && !bMouseKey;
+	}
+}
+
+FKey UVNHInputPromptLibrary::GetPrimaryActionKeyForDevice(
+	const FName ActionName,
+	const EVNHInputBindingDevice BindingDevice)
+{
+	TArray<FInputActionKeyMapping> ActionMappings;
+	if (const UInputSettings* InputSettings = UInputSettings::GetInputSettings())
+	{
+		InputSettings->GetActionMappingByName(ActionName, ActionMappings);
+	}
+	for (const FInputActionKeyMapping& ActionMapping : ActionMappings)
+	{
+		if (IsKeyForBindingDevice(ActionMapping.Key, BindingDevice))
+		{
+			return ActionMapping.Key;
+		}
+	}
+	return FKey();
+}
+
+FKey UVNHInputPromptLibrary::GetPrimaryAxisKeyForDevice(
+	const FName AxisName,
+	const float Scale,
+	const EVNHInputBindingDevice BindingDevice)
+{
+	TArray<FInputAxisKeyMapping> AxisMappings;
+	if (const UInputSettings* InputSettings = UInputSettings::GetInputSettings())
+	{
+		InputSettings->GetAxisMappingByName(AxisName, AxisMappings);
+	}
+	for (const FInputAxisKeyMapping& AxisMapping : AxisMappings)
+	{
+		if (IsKeyForBindingDevice(AxisMapping.Key, BindingDevice)
+			&& FMath::IsNearlyEqual(AxisMapping.Scale, Scale))
+		{
+			return AxisMapping.Key;
+		}
+	}
+	return FKey();
+}
+
 UTexture2D* UVNHInputPromptLibrary::GetKeyIcon(
 	const FKey Key,
 	const EVNHInputPromptFamily PromptFamily)
@@ -234,9 +300,12 @@ UTexture2D* UVNHInputPromptLibrary::GetKeyIcon(
 		}
 	}
 
-	return TexturePath.IsEmpty()
-		? nullptr
-		: LoadObject<UTexture2D>(nullptr, *TexturePath);
+	if (TexturePath.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	return LoadObject<UTexture2D>(nullptr, *TexturePath);
 }
 
 FText UVNHInputPromptLibrary::GetKeyDisplayText(
@@ -311,6 +380,68 @@ bool UVNHInputPromptLibrary::RebindAxis(
 	for (const FInputAxisKeyMapping& ExistingMapping : ExistingMappings)
 	{
 		if (ExistingMapping.Key.IsGamepadKey() == bGamepad
+			&& FMath::IsNearlyEqual(ExistingMapping.Scale, Scale))
+		{
+			InputSettings->RemoveAxisMapping(ExistingMapping, false);
+		}
+	}
+	InputSettings->AddAxisMapping(FInputAxisKeyMapping(AxisName, NewKey, Scale), false);
+	InputSettings->SaveKeyMappings();
+	return true;
+}
+
+bool UVNHInputPromptLibrary::RebindActionForDevice(
+	const FName ActionName,
+	const FKey NewKey,
+	const EVNHInputBindingDevice BindingDevice)
+{
+	if (!NewKey.IsValid() || !IsKeyForBindingDevice(NewKey, BindingDevice))
+	{
+		return false;
+	}
+
+	UInputSettings* InputSettings = UInputSettings::GetInputSettings();
+	if (!InputSettings)
+	{
+		return false;
+	}
+
+	TArray<FInputActionKeyMapping> ExistingMappings;
+	InputSettings->GetActionMappingByName(ActionName, ExistingMappings);
+	for (const FInputActionKeyMapping& ExistingMapping : ExistingMappings)
+	{
+		if (IsKeyForBindingDevice(ExistingMapping.Key, BindingDevice))
+		{
+			InputSettings->RemoveActionMapping(ExistingMapping, false);
+		}
+	}
+	InputSettings->AddActionMapping(FInputActionKeyMapping(ActionName, NewKey), false);
+	InputSettings->SaveKeyMappings();
+	return true;
+}
+
+bool UVNHInputPromptLibrary::RebindAxisForDevice(
+	const FName AxisName,
+	const float Scale,
+	const FKey NewKey,
+	const EVNHInputBindingDevice BindingDevice)
+{
+	if (!NewKey.IsValid() || !IsKeyForBindingDevice(NewKey, BindingDevice))
+	{
+		return false;
+	}
+
+	UInputSettings* InputSettings = UInputSettings::GetInputSettings();
+	if (!InputSettings)
+	{
+		return false;
+	}
+
+	TArray<FInputAxisKeyMapping> ExistingMappings;
+	InputSettings->GetAxisMappingByName(AxisName, ExistingMappings);
+	for (const FInputAxisKeyMapping& ExistingMapping : ExistingMappings)
+	{
+		if (IsKeyForBindingDevice(ExistingMapping.Key, BindingDevice)
 			&& FMath::IsNearlyEqual(ExistingMapping.Scale, Scale))
 		{
 			InputSettings->RemoveAxisMapping(ExistingMapping, false);

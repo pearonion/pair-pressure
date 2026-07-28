@@ -1,18 +1,18 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Components/InputKeySelector.h"
+#include "Components/Button.h"
 #include "VNHInputPromptLibrary.h"
-#include "VNHInputBindingKeySelector.generated.h"
+#include "VNHInputBindingButton.generated.h"
 
 class UImage;
 class UTextBlock;
 class UWidget;
 class UVNHSettingsDialogWidget;
 
-/** Runtime key selector carrying the binding identity for one settings cell. */
+/** Stable icon button carrying the binding identity for one settings cell. */
 UCLASS()
-class VNHSIMULATOR_API UVNHInputBindingKeySelector : public UInputKeySelector
+class VNHSIMULATOR_API UVNHInputBindingButton : public UButton
 {
 	GENERATED_BODY()
 
@@ -23,11 +23,13 @@ public:
 		bool bInAxisMapping,
 		float InAxisScale,
 		EVNHInputBindingDevice InBindingDevice,
+		FKey InDisplayOverrideKey,
 		UImage* InPromptImage,
 		UTextBlock* InFallbackText,
 		UWidget* InWaitingPopup);
 
 	void RefreshFromInputSettings();
+	void SetWaitingForInput(bool bWaitingForInput);
 
 	FName GetMappingName() const { return MappingName; }
 	bool IsAxisMapping() const { return bAxisMapping; }
@@ -36,10 +38,7 @@ public:
 
 private:
 	UFUNCTION()
-	void HandleSelectedKey(FInputChord SelectedChord);
-
-	UFUNCTION()
-	void HandleIsSelectingKeyChanged();
+	void HandleClicked();
 
 	UPROPERTY(Transient)
 	TObjectPtr<UVNHSettingsDialogWidget> SettingsOwner;
@@ -54,6 +53,7 @@ private:
 	TObjectPtr<UWidget> WaitingPopup;
 
 	FName MappingName;
+	FKey DisplayOverrideKey;
 	float AxisScale = 1.0f;
 	bool bAxisMapping = false;
 	EVNHInputBindingDevice BindingDevice = EVNHInputBindingDevice::Keyboard;

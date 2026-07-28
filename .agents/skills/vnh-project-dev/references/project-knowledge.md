@@ -1,6 +1,14 @@
 # VNHSimulator Project Knowledge
 
-Last updated: 2026-07-21.
+Last updated: 2026-07-24.
+
+## Two to Tangle Input and Prompt System
+
+- Runtime binding and glyph lookup is centralized in `UVNHInputPromptLibrary`. The settings controls grid uses the light prompt theme: keyboard/mouse art resolves from `/Game/Input_Prompts_Pack/Keyboard_Mouse/White`, while controller art resolves from the `Light` subfolder under `XGamepad`, `P4Gamepad`, or `P5Gamepad`.
+- A connected gamepad always takes prompt priority. The input-device subsystem distinguishes DualSense/PS5 and DualShock/PS4 identifiers; unknown/generic gamepads deliberately fall back to Xbox glyphs.
+- `UVNHSettingsDialogWidget` builds the bindable Controls grid at runtime inside the Designer-owned `ControlsBindingList`. The visible grid has two input columns: one keyboard-or-mouse glyph button and one controller glyph button per action. Clicking a glyph uses a short-lived Slate input preprocessor and compact in-button prompt to capture the next matching input; this deliberately avoids layering transparent `UInputKeySelector` widgets over runtime overlays, which caused a repeatable Slate invalidation/prepass crash when the Controls tab became visible. Non-gamepad and controller mappings are persisted separately through `UInputSettings::SaveKeyMappings`. Glyphs are scaled to fit a fixed frame without changing aspect ratio, and controller cells default to Xbox art until DualShock/PS4 or DualSense/PS5 hardware is detected.
+- Pair Pressure defaults follow a Fall Guys-style face layout: left stick movement, A/Cross jump, X/Square dive, RT/R2 grab, LB/L1 charged throw, and B/Circle assist. Role action slots now bind through the configured `VNH_RoleAction1..6` mappings rather than direct `BindKey` calls.
+- The role HUDs expose `ActionHotkeyImage_*` hooks, the Pair Pressure control hint exposes `ControlHintImage_Move/Jump/Dive/Grab/Throw/Assist`, and the lobby start prompt exposes `LobbyStartPromptKeyImage`. Native code supplies the detected-device glyph and hides the legacy text hotkey when art is available.
 
 ## Recent Pair Pressure Input Fixes
 
@@ -71,7 +79,7 @@ Course obstacle follow-up: runtime matching recognizes `Spinner_V2`, `SwingBall`
 - Legacy shopper Composure/automatic fart behavior and legacy role/suspect/Composure HUD creation are disabled in `PP_` maps. Native Pair Pressure HUD creation requires both a local controller and attached `ULocalPlayer`, preventing debug controllers from calling `CreateWidget` without a player.
 - `/Game/PairPressure/Player/Controller/BP_PP_PlayerController` guards its asset-only HUD creation with `Is Local Controller`. Do not gate it with `Get Local Player Controller ID >= 0`: Enhanced Input/platform-user PIE can return `-1` for a valid local player and suppress the HUD. A short PIE check verified `bPairPressureHUDAdded=True` and a live `WBP_PP_HUD_Root_C_0`; the playtest screenshot capture omits Slate/UMG overlays.
 - The implementation and handoff matrix is tracked in `Documentation/PairPressure/GDD_IMPLEMENTATION_STATUS.md`.
-- Do not invoke Live Coding for this track while the current user is away. A prior patch compiled but crashed during module patch loading in `Z_Construct_UPackage__Script_VNHSimulator`.
+- Do not invoke Live Coding for reflected/native widget layout changes in this track. On 2026-07-27, Live Coding reloaded the modified `UVNHInputBindingKeySelector` class with a warning that it could not find the existing class cleanly; a later MainMenu settings PIE session crashed in Slate/UMG. The on-disk `/Game/UI/WBP_SettingsDialog` remained valid and compiled cleanly after restart. Close the editor and use a full `VNHSimulatorEditor Win64 Development` build for these changes.
 - Known tool issue: NeoStack `add_timeline` produced a private `CurveFloat` reference in `BP_PP_PistonWall`, preventing levels containing an instance from saving. The prototype map therefore uses a static piston blockout while retaining the authored Blueprint asset. Report id: `arep_848fc3c30f0b40528bd536d5e0759d9b`.
 - Known tool issue: Blueprint compile can report `Use force=true` while the exposed `compile()` API has no working force parameter when Live Coding patches/instances are present. Report id: `arep_f8d871994d034707acf67dd77c5c8ee4`.
 - Known tool issue: after duplicating `PP_FriendshipPhysics` in memory, `load_level('/Game/PairPressure/Maps/PP_AttachedPrototype')` access-violated, rolled back the duplicate, and temporarily disconnected the editor bridge. Later issue-report/editor calls were cancelled before execution, so no report id was returned. Recreate the map only after the bridge is healthy; do not patch the `.umap` externally.
@@ -278,7 +286,7 @@ Settings dialog:
 - Parent class: `VNHSettingsDialogWidget`
 - Existing Blueprint save/load path uses `/Game/UI/BP_SettingsSaveGame` and slot name `PlayerSettings`.
 - `VNHSettingsDialogWidget` mirrors settings into the same `PlayerSettings` SaveGame and applies master/music/SFX audio, brightness gamma, and mute-when-unfocused at runtime. Master volume is applied as a multiplier into the effective Music/SFX SoundClass overrides; the transient primary audio device volume is reserved for focus mute.
-- Accessibility tab, Hold to Act Natural, and Act Natural controls are intentionally hidden. Controls list includes Jump `SPACEBAR` and Crouch `CTRL`.
+- Accessibility tab, Hold to Act Natural, and Act Natural controls are intentionally hidden. The bindable Controls list ends at Crouch; Sprint and later rows are intentionally omitted from this menu while their gameplay mappings remain intact. Movement keeps one shared controller Y-axis mapping and one shared X-axis mapping, but the four directional rows display direction-specific left-stick glyphs (up/down/left/right) for clarity. Controls include Jump `SPACEBAR` and Crouch `CTRL`.
 
 ## Debug/Test Deck
 
