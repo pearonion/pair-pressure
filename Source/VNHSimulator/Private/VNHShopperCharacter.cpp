@@ -582,6 +582,14 @@ void AVNHShopperCharacter::UpdateAdaptiveFollowCamera(float DeltaSeconds)
 		FollowCameraBoom->bDoCollisionTest = false;
 		return;
 	}
+	if (bPairPressureDirectionalHitPresentationActive)
+	{
+		// A directional bump is visual-only. Freeze every adaptive camera input for
+		// its duration and bypass spring-arm collision so the contacted wall/player
+		// cannot compress the boom or feed a one-frame pitch/height correction.
+		FollowCameraBoom->bDoCollisionTest = false;
+		return;
+	}
 	FollowCameraBoom->bDoCollisionTest = !bInsideCourseCameraVolume;
 	FollowCameraBoom->TargetArmLength = FMath::FInterpTo(
 		FollowCameraBoom->TargetArmLength,
@@ -1551,6 +1559,105 @@ void AVNHShopperCharacter::PlayPairPressureMascotAnimation(UAnimSequence* Animat
 		0.0f);
 }
 
+void AVNHShopperCharacter::PlayPairPressureDirectionalHitReaction(const FVector& ReactionDirection)
+{
+	if (!HasAuthority() || !ShouldUsePairPressureMascotVisuals() || ReactionDirection.IsNearlyZero())
+	{
+		return;
+	}
+
+	MulticastPlayPairPressureDirectionalHitReaction(ReactionDirection.GetSafeNormal2D());
+}
+
+void AVNHShopperCharacter::MulticastPlayPairPressureDirectionalHitReaction_Implementation(FVector ReactionDirection)
+{
+	UAnimSequence* HitAnimation = ResolvePairPressureDirectionalHitAnimation(ReactionDirection);
+	USkeletalMeshComponent* CharacterMesh = GetMesh();
+	UAnimInstance* AnimInstance = CharacterMesh ? CharacterMesh->GetAnimInstance() : nullptr;
+	if (!HitAnimation || !AnimInstance)
+	{
+		return;
+	}
+
+	// Directional damage sequences may contain authored root translation. Extract
+	// and discard it so the capsule, spring arm, and camera never inherit montage
+	// motion while the visible mesh still plays the full reaction.
+	bPairPressureDirectionalHitPresentationActive = true;
+	AnimInstance->SetRootMotionMode(ERootMotionMode::IgnoreRootMotion);
+	PlayPairPressureMascotAnimation(HitAnimation, false);
+	GetWorldTimerManager().ClearTimer(PairPressureDirectionalHitTimerHandle);
+	GetWorldTimerManager().SetTimer(
+		PairPressureDirectionalHitTimerHandle,
+		this,
+		&AVNHShopperCharacter::FinishPairPressureDirectionalHitReaction,
+		FMath::Max(0.05f, HitAnimation->GetPlayLength()),
+		false);
+}
+
+void AVNHShopperCharacter::FinishPairPressureDirectionalHitReaction()
+{
+	bPairPressureDirectionalHitPresentationActive = false;
+	if (USkeletalMeshComponent* CharacterMesh = GetMesh())
+	{
+		if (UAnimInstance* AnimInstance = CharacterMesh->GetAnimInstance())
+		{
+			AnimInstance->SetRootMotionMode(ERootMotionMode::RootMotionFromMontagesOnly);
+		}
+	}
+}
+
+UAnimSequence* AVNHShopperCharacter::ResolvePairPressureDirectionalHitAnimation(const FVector& ReactionDirection) const
+{
+	const FPPMascotAnimationRow* ActiveMascotRow = ResolveActiveMascotRow(TEXT("Directional bump reaction"));
+	const FVector ReactionDirection2D = ReactionDirection.GetSafeNormal2D();
+	if (!ActiveMascotRow || ReactionDirection2D.IsNearlyZero())
+	{
+		return nullptr;
+	}
+
+	const float ForwardAmount = FVector::DotProduct(GetActorForwardVector().GetSafeNormal2D(), ReactionDirection2D);
+	const float RightAmount = FVector::DotProduct(GetActorRightVector().GetSafeNormal2D(), ReactionDirection2D);
+	const float LocalAngleDegrees = FMath::RadiansToDegrees(FMath::Atan2(RightAmount, ForwardAmount));
+	const int32 DirectionSector = (FMath::FloorToInt((LocalAngleDegrees + 22.5f) / 45.0f) + 8) % 8;
+
+	const TSoftObjectPtr<UAnimSequence>* RequestedAnimation = nullptr;
+	switch (DirectionSector)
+	{
+	case 0:
+		RequestedAnimation = &ActiveMascotRow->HitFront;
+		break;
+	case 1:
+		RequestedAnimation = &ActiveMascotRow->HitFrontRight;
+		break;
+	case 2:
+		RequestedAnimation = &ActiveMascotRow->HitRight;
+		break;
+	case 3:
+		RequestedAnimation = &ActiveMascotRow->HitBackRight;
+		break;
+	case 4:
+		RequestedAnimation = &ActiveMascotRow->HitBack;
+		break;
+	case 5:
+		RequestedAnimation = &ActiveMascotRow->HitBackLeft;
+		break;
+	case 6:
+		RequestedAnimation = &ActiveMascotRow->HitLeft;
+		break;
+	case 7:
+		RequestedAnimation = &ActiveMascotRow->HitFrontLeft;
+		break;
+	default:
+		break;
+	}
+
+	if (RequestedAnimation && !RequestedAnimation->IsNull())
+	{
+		return RequestedAnimation->LoadSynchronous();
+	}
+	return ActiveMascotRow->HitFront.LoadSynchronous();
+}
+
 void AVNHShopperCharacter::RestorePairPressureLocomotionAnimation()
 {
 	if (bPairPressureObstacleFallPresentationActive)
@@ -1837,7 +1944,7 @@ UAnimSequence* AVNHShopperCharacter::ResolvePairPressureMascotAnimation(EPPGrabS
 		RequestedAnimation = ActiveMascotRow->Reach.IsNull() ? &ActiveMascotRow->Grab : &ActiveMascotRow->Reach;
 		break;
 	case EPPGrabState::HoldingItem:
-		RequestedAnimation = ActiveMascotRow->HoldItem.IsNull() ? &ActiveMascotRow->OverheadThrow : &ActiveMascotRow->HoldItem;
+		RequestedAnimation = ActiveMascotRow->PickUp.IsNull() ? &ActiveMascotRow->OverheadThrow : &ActiveMascotRow->PickUp;
 		break;
 	case EPPGrabState::GrabbingPlayer:
 		RequestedAnimation = ActiveMascotRow->PlayerGrab.IsNull() ? &ActiveMascotRow->Punch : &ActiveMascotRow->PlayerGrab;

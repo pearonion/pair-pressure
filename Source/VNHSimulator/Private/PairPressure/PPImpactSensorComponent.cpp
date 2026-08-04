@@ -59,6 +59,35 @@ bool IsPPImpactSensorPusherObstacle(const AActor* ObstacleActor)
 	return ObstacleName.Contains(TEXT("Pusher"), ESearchCase::IgnoreCase);
 }
 
+bool IsPPImpactSensorLedgeOrHandle(const AActor* ObstacleActor)
+{
+	if (!ObstacleActor)
+	{
+		return false;
+	}
+
+	if (ObstacleActor->ActorHasTag(TEXT("PP.Grab.Ledge"))
+		|| ObstacleActor->ActorHasTag(TEXT("PP.Grab.Handle"))
+		|| ObstacleActor->GetName().Contains(TEXT("Bridge_V1"), ESearchCase::IgnoreCase))
+	{
+		return true;
+	}
+
+	const FStructProperty* GrabProfileProperty = FindFProperty<FStructProperty>(
+		ObstacleActor->GetClass(),
+		TEXT("GrabProfile"));
+	if (!GrabProfileProperty || GrabProfileProperty->Struct != FPPGrabProfile::StaticStruct())
+	{
+		return false;
+	}
+
+	FPPGrabProfile GrabProfile;
+	FPPGrabProfile::StaticStruct()->CopyScriptStruct(
+		&GrabProfile,
+		GrabProfileProperty->ContainerPtrToValuePtr<void>(ObstacleActor));
+	return GrabProfile.TargetType == EPPGrabTargetType::LedgeOrHandle;
+}
+
 bool IsPPImpactSensorPusherContactComponent(const AActor* ObstacleActor, const UPrimitiveComponent* ObstacleComponent)
 {
 	if (!IsPPImpactSensorPusherObstacle(ObstacleActor) || !ObstacleComponent)
@@ -433,6 +462,7 @@ void UPPImpactSensorComponent::TickComponent(
 			true,
 			PusherImpactPoint,
 			PusherImpactDirection,
+			false,
 			PusherComponent,
 			ResolvePPAuthoredCourseObstacleSpeed(PusherActor, PusherComponent));
 		RememberImpact(PusherActor);
@@ -454,6 +484,7 @@ void UPPImpactSensorComponent::ReportImpact(
 		bHeavyObstacle,
 		OwnerActor ? OwnerActor->GetActorLocation() : FVector::ZeroVector,
 		FVector::UpVector,
+		false,
 		nullptr,
 		-1.0f);
 }
@@ -506,6 +537,55 @@ void UPPImpactSensorComponent::HandleComponentHit(
 		// moving course contact must still enter its deterministic knockdown path.
 		Severity = FMath::Max(Severity, 30.0f);
 	}
+	// Keep a single convention for ordinary bumps: this vector is the direction
+	// the owner should recoil. Relative velocity handles both a moving owner hitting
+	// a wall and another player running into a stationary owner. The contact normal
+	// is the stable fallback once movement has already been stopped by the solver.
+	const FVector OwnerVelocity = HitComponent ? HitComponent->GetComponentVelocity() : FVector::ZeroVector;
+	const FVector OtherVelocity = OtherComponent ? OtherComponent->GetComponentVelocity() : FVector::ZeroVector;
+	FVector ReactionDirection = (OtherVelocity - OwnerVelocity).GetSafeNormal2D();
+	if (ReactionDirection.IsNearlyZero())
+	{
+		ReactionDirection = Hit.ImpactNormal.GetSafeNormal2D();
+	}
+	if (ReactionDirection.IsNearlyZero())
+	{
+		ReactionDirection = NormalImpulse.GetSafeNormal2D();
+	}
+
+	const bool bPlayerImpact = Cast<ACharacter>(OtherActor) != nullptr;
+	bool bPlayDirectionalHitReaction = bPlayerImpact;
+	if (!bPlayerImpact)
+	{
+		const FVector IntoSurfaceDirection = -Hit.ImpactNormal.GetSafeNormal2D();
+		FVector AttemptedMoveDirection = (Hit.TraceEnd - Hit.TraceStart).GetSafeNormal2D();
+		if (AttemptedMoveDirection.IsNearlyZero())
+		{
+			if (const ACharacter* OwnerCharacter = Cast<ACharacter>(OwnerActor))
+			{
+				AttemptedMoveDirection = OwnerCharacter->GetLastMovementInputVector().GetSafeNormal2D();
+			}
+		}
+		if (AttemptedMoveDirection.IsNearlyZero())
+		{
+			AttemptedMoveDirection = OwnerVelocity.GetSafeNormal2D();
+		}
+
+		const float AttemptedIntoSurfaceAmount = FVector::DotProduct(
+			AttemptedMoveDirection,
+			IntoSurfaceDirection);
+		bPlayDirectionalHitReaction = Hit.bBlockingHit
+			&& !Hit.bStartPenetrating
+			&& AttemptedIntoSurfaceAmount >= 0.55f
+			&& !IsPPImpactSensorLedgeOrHandle(OtherActor);
+	}
+	// CharacterMovement can report a zero solver impulse after a blocking sweep
+	// has already removed the into-wall velocity. Once the contact itself proves
+	// this was a real wall stop, preserve the minimum ordinary-bump severity.
+	if (bPlayDirectionalHitReaction && !bPlayerImpact)
+	{
+		Severity = FMath::Max(Severity, MinimumReportedSeverity);
+	}
 	if (Severity < MinimumReportedSeverity)
 	{
 		return;
@@ -518,7 +598,8 @@ void UPPImpactSensorComponent::HandleComponentHit(
 		bSpinnerImpact || bPusherImpact || bDropPropellerImpact
 			|| (OtherActor && OtherActor->ActorHasTag(HeavyObstacleTag)),
 		Hit.ImpactPoint,
-		NormalImpulse.IsNearlyZero() ? -Hit.ImpactNormal : NormalImpulse.GetSafeNormal(),
+		ReactionDirection,
+		bPlayDirectionalHitReaction,
 		OtherComponent,
 		CourseObstacleSpeed);
 	RememberImpact(OtherActor);
@@ -531,6 +612,7 @@ void UPPImpactSensorComponent::ReportResolvedImpact(
 	bool bHeavyObstacle,
 	const FVector& ImpactPoint,
 	const FVector& ImpactDirection,
+	bool bPlayDirectionalHitReaction,
 	UPrimitiveComponent* ImpactSourceComponent,
 	float CourseObstacleSpeed)
 {
@@ -580,6 +662,7 @@ void UPPImpactSensorComponent::ReportResolvedImpact(
 	ImpactData.BodyRegion = BodyRegion;
 	ImpactData.InstigatorActor = InstigatorActor;
 	ImpactData.bHeavyObstacle = bHeavyObstacle;
+	ImpactData.bPlayDirectionalHitReaction = bPlayDirectionalHitReaction;
 	PhysicalState->ReceiveImpactData_Implementation(ImpactData);
 }
 

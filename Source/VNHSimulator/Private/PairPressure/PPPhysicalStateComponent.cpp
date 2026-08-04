@@ -776,7 +776,16 @@ void UPPPhysicalStateComponent::OnRep_PhysicalState()
 	}
 	else
 	{
-		ExitRagdollVisualState();
+		const ACharacter* PhysicalStateOwnerCharacter = Cast<ACharacter>(GetOwner());
+		const USkeletalMeshComponent* PhysicalStateOwnerMesh = PhysicalStateOwnerCharacter
+			? PhysicalStateOwnerCharacter->GetMesh()
+			: nullptr;
+		if (bCourseObstacleKnockdownVisualActive
+			|| bRagdollRecoveryBlendActive
+			|| (PhysicalStateOwnerMesh && PhysicalStateOwnerMesh->IsAnySimulatingPhysics()))
+		{
+			ExitRagdollVisualState();
+		}
 	}
 	OnPhysicalStateChanged.Broadcast(PhysicalState, GetDazeNormalized_Implementation());
 }
@@ -1084,11 +1093,27 @@ void UPPPhysicalStateComponent::ApplyImpactAuthoritative(const FPPImpactData& Im
 
 	if (EffectiveSeverity <= 25.0f)
 	{
+		if (!ImpactData.bPlayDirectionalHitReaction)
+		{
+			return;
+		}
+		if (AVNHShopperCharacter* ShopperCharacter = Cast<AVNHShopperCharacter>(GetOwner()))
+		{
+			ShopperCharacter->PlayPairPressureDirectionalHitReaction(ImpactData.ImpactDirection);
+		}
 		AddDazeAuthoritative(2.0f);
 		SetPhysicalStateAuthoritative(EPPPhysicalState::Reactive, 0.35f);
 	}
 	else if (EffectiveSeverity <= 50.0f)
 	{
+		if (!ImpactData.bPlayDirectionalHitReaction)
+		{
+			return;
+		}
+		if (AVNHShopperCharacter* ShopperCharacter = Cast<AVNHShopperCharacter>(GetOwner()))
+		{
+			ShopperCharacter->PlayPairPressureDirectionalHitReaction(ImpactData.ImpactDirection);
+		}
 		AddDazeAuthoritative(5.0f);
 		SetPhysicalStateAuthoritative(EPPPhysicalState::Stumbling, 0.75f);
 	}

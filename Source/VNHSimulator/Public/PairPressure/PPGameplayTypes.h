@@ -8,6 +8,7 @@ class UAnimInstance;
 class UAnimSequence;
 class UPrimitiveComponent;
 class USkeletalMesh;
+class USoundCue;
 class UTexture2D;
 
 UENUM(BlueprintType)
@@ -60,14 +61,23 @@ struct FPPMascotAnimationRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Locomotion")
 	TSoftObjectPtr<UAnimSequence> Jump;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Audio")
+	TSoftObjectPtr<USoundCue> JumpSound;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Actions")
 	TSoftObjectPtr<UAnimSequence> Grab;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Audio")
+	TSoftObjectPtr<USoundCue> GrabSound;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Grab Presentation")
 	TSoftObjectPtr<UAnimSequence> Reach;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Grab Presentation")
-	TSoftObjectPtr<UAnimSequence> HoldItem;
+	TSoftObjectPtr<UAnimSequence> PickUp;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Audio", meta = (DisplayName = "Pick Up Sound"))
+	TSoftObjectPtr<USoundCue> PickUpSound;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Grab Presentation")
 	TSoftObjectPtr<UAnimSequence> PlayerGrab;
@@ -90,8 +100,14 @@ struct FPPMascotAnimationRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Actions")
 	TSoftObjectPtr<UAnimSequence> OverheadThrow;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Audio")
+	TSoftObjectPtr<USoundCue> WindUpSound;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Actions")
 	TSoftObjectPtr<UAnimSequence> Throw;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Audio")
+	TSoftObjectPtr<USoundCue> ThrowSound;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Actions")
 	TSoftObjectPtr<UAnimSequence> Hanging;
@@ -102,8 +118,14 @@ struct FPPMascotAnimationRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Actions")
 	TSoftObjectPtr<UAnimSequence> Dive;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Audio")
+	TSoftObjectPtr<USoundCue> DiveSound;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Reactions")
 	TSoftObjectPtr<UAnimSequence> HitFront;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Audio")
+	TSoftObjectPtr<USoundCue> HitSound;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Reactions")
 	TSoftObjectPtr<UAnimSequence> HitLeft;
@@ -111,12 +133,30 @@ struct FPPMascotAnimationRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Reactions")
 	TSoftObjectPtr<UAnimSequence> HitRight;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Reactions")
+	TSoftObjectPtr<UAnimSequence> HitBack;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Reactions")
+	TSoftObjectPtr<UAnimSequence> HitBackLeft;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Reactions")
+	TSoftObjectPtr<UAnimSequence> HitBackRight;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Reactions")
+	TSoftObjectPtr<UAnimSequence> HitFrontLeft;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Reactions")
+	TSoftObjectPtr<UAnimSequence> HitFrontRight;
+
 	// Deterministic course-hazard falls. These are animation-driven so the
 	// character capsule remains authoritative and network-predicted; they are
 	// deliberately separate from short hit reactions and physical throws.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Obstacle Falls")
 	TSoftObjectPtr<UAnimSequence> ObstacleFallFront = TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(
 		TEXT("/Game/CuteChubbyPenguin/Penguin/Animations/AS_Penguin_UE_Anim_falls_forward.AS_Penguin_UE_Anim_falls_forward")));
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Audio")
+	TSoftObjectPtr<USoundCue> FallSound;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Obstacle Falls")
 	TSoftObjectPtr<UAnimSequence> ObstacleFallBack = TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(
@@ -141,6 +181,9 @@ struct FPPMascotAnimationRow : public FTableRowBase
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Actions")
 	TSoftObjectPtr<UAnimSequence> Punch;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Audio")
+	TSoftObjectPtr<USoundCue> PunchSound;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Mascot|Presentation")
 	TSoftObjectPtr<UAnimSequence> Confirm;
@@ -284,6 +327,9 @@ struct FPPImpactData
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pair Pressure|Impact")
 	bool bHeavyObstacle = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pair Pressure|Impact")
+	bool bPlayDirectionalHitReaction = false;
 };
 
 USTRUCT(BlueprintType)
