@@ -167,8 +167,10 @@ void AVNHPlayerState::OnRep_AssignedRole()
 
 void AVNHPlayerState::OnRep_SelectedMascotRowName()
 {
-	AController* OwningController = Cast<AController>(GetOwner());
-	APawn* ControlledPawn = OwningController ? OwningController->GetPawn() : nullptr;
+	// Remote PlayerStates are not owned by their remote controllers on each peer.
+	// APlayerState::PawnPrivate is replicated specifically for this lookup, so use
+	// GetPawn() to apply mascot changes to both locally and remotely controlled pawns.
+	APawn* ControlledPawn = GetPawn();
 	if (ControlledPawn && ControlledPawn->GetClass()->ImplementsInterface(UPPMascotSelectionInterface::StaticClass()))
 	{
 		IPPMascotSelectionInterface::Execute_ApplySelectedMascotRowName(

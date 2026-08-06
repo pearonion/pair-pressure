@@ -51,6 +51,7 @@ private:
 		bool bHeavyObstacle,
 		const FVector& ImpactPoint,
 		const FVector& ImpactDirection,
+		bool bPlayDirectionalHitReaction,
 		UPrimitiveComponent* ImpactSourceComponent,
 		float CourseObstacleSpeed);
 	void RegisterCourseObstacleActor(AActor* CourseObstacleActor);

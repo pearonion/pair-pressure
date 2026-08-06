@@ -68,7 +68,7 @@ const FLinearColor LobbyBlue(0.02f, 0.38f, 0.88f, 1.0f);
 const FLinearColor LobbyGreen(0.12f, 0.62f, 0.20f, 1.0f);
 constexpr int32 DefaultLobbyMaxPlayers = 8;
 constexpr float LobbyMascotIdleSettleSeconds = 0.25f;
-constexpr float LobbyMascotNonRaccoonPortraitYOffset = 14.0f;
+constexpr float LobbyMascotNonRaccoonPortraitYOffset = 0.0f;
 constexpr float LobbyMascotNonRaccoonPreviewYOffset = 10.0f;
 
 float GetLobbyMascotPortraitYOffset(FName MascotRowName)

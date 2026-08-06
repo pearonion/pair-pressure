@@ -192,6 +192,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VNH|Interaction")
 	void PlayDirectionalKnockdown(const FVector& ImpactOrigin);
 
+	void PlayPairPressureDirectionalHitReaction(const FVector& ReactionDirection);
+
 	UFUNCTION(BlueprintPure, Category = "VNH|Shopper|Debug")
 	FString DescribeAnimationDebugState() const;
 
@@ -386,6 +388,7 @@ private:
 	FTimerHandle PublicTestReactionTimerHandle;
 	FTimerHandle UniversalActionMovementLockTimerHandle;
 	FTimerHandle PairPressurePresentationTimerHandle;
+	FTimerHandle PairPressureDirectionalHitTimerHandle;
 	FTimerHandle PairPressureDiveRecoveryPresentationTimerHandle;
 	FTimerHandle PairPressureObstacleFallHoldTimerHandle;
 	UPROPERTY(Transient)
@@ -399,6 +402,7 @@ private:
 	bool bPairPressureDiveRecoveryPresentationPlayed = false;
 	bool bPairPressureObstacleFallPresentationActive = false;
 	bool bPairPressureObstacleFallRecoveryActive = false;
+	bool bPairPressureDirectionalHitPresentationActive = false;
 	bool bFirstPersonViewEnabled = false;
 	bool bStandingStillPenaltyApplied = false;
 	bool bWasWatchedByHunter = false;
@@ -431,6 +435,9 @@ private:
 	UFUNCTION(NetMulticast, Unreliable)
 	void MulticastPlayUniversalActionMontage(UAnimMontage* Montage);
 
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastPlayPairPressureDirectionalHitReaction(FVector ReactionDirection);
+
 	void SetFrozenByPublicTest(bool bNewFrozen);
 	void UpdateComposureSystem(float DeltaSeconds);
 	void UpdateComposureState();
@@ -452,4 +459,6 @@ private:
 	void ApplyColorToMesh(USkeletalMeshComponent* MeshComponent, const FLinearColor& Color);
 	UAnimMontage* ResolveFartKnockdownMontage(EVNHPlayerRole PlayerRole, FName RowName) const;
 	FName GetFartKnockdownRowName(const AVNHShopperCharacter* HitShopper, const FVector& CloudCenter) const;
+	UAnimSequence* ResolvePairPressureDirectionalHitAnimation(const FVector& ReactionDirection) const;
+	void FinishPairPressureDirectionalHitReaction();
 };
